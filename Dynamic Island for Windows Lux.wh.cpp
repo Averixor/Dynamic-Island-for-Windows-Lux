@@ -71,6 +71,22 @@
     - espresso: Еспресо
     - plum: Слива
     - porcelain: Порцеляна
+  - AdaptiveTheme: true
+    $name: Адаптивна тема
+    $description: Колір пігулки підлаштовується під фон за островом
+  - AuraStyle: glow
+    $name: Ореол
+    $description: Підсвітка навколо острова в такт музиці
+    $options:
+    - off: Вимкнено
+    - glow: Свічення
+    - equalizer: Еквалайзер
+    - rays: Промені
+    - pulse: Кільця
+    - orbit: Орбіта
+  - AuraIntensity: 70
+    $name: Сила ореолу
+    $description: Яскравість підсвітки навколо острова (від 0 до 100)
 - Modules:
   - Media: true
     $name: Медіа
@@ -243,8 +259,8 @@ constexpr UINT WM_APP_APPLY_HOTKEY = WM_APP + 0x447;
 constexpr UINT WM_APP_APPLY_BACKDROP = WM_APP + 0x448;
 constexpr int ID_HIDE_SHOW_HOTKEY = 1;
 constexpr int ID_LOOKUP_HOTKEY = 2;
-constexpr float kRenderPadX = 28.0f;
-constexpr float kRenderPadY = 22.0f;
+constexpr float kRenderPadX = 40.0f;
+constexpr float kRenderPadY = 34.0f;
 constexpr UINT kClipboardImageThumbMaxDim = 160;
 namespace MediaLayout {
     constexpr float kExpandedWidth = 380.0f;
@@ -464,6 +480,14 @@ enum class SpectrumStyle {
     Plasma,
     Led,
 };
+enum class AuraStyle {
+    Off,
+    Glow,
+    Equalizer,
+    Rays,
+    Pulse,
+    Orbit,
+};
 constexpr int kSpectrumBands = 24;
 enum class CalendarAccentMode {
     Red,
@@ -608,6 +632,9 @@ struct Settings {
     bool w11Style = false;
     bool notchStyle = false;
     ThemePreset themePreset = ThemePreset::Obsidian;
+    bool adaptiveTheme = true;
+    AuraStyle auraStyle = AuraStyle::Glow;
+    float auraIntensity = 0.70f;
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
     D2D1_COLOR_F textPrimaryColor = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
     D2D1_COLOR_F textSecondaryColor = D2D1::ColorF(0.608f, 0.608f, 0.647f, 1.0f);
@@ -1846,6 +1873,97 @@ D2D1_COLOR_F EnsureContrastAgainstBackground(D2D1_COLOR_F candidate, D2D1_COLOR_
     }
     return candidate;
 }
+struct PillClientRect {
+    float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
+    bool valid = false;
+};
+extern PillClientRect g_pillClientRect;
+bool SampleDesktopBackdrop(HWND hwnd, D2D1_COLOR_F* outColor) {
+    if (!hwnd || !outColor || !g_pillClientRect.valid) {
+        return false;
+    }
+    RECT wr = {};
+    if (!GetWindowRect(hwnd, &wr)) {
+        return false;
+    }
+    const int pillL = wr.left + static_cast<int>(std::lround(g_pillClientRect.left));
+    const int pillT = wr.top + static_cast<int>(std::lround(g_pillClientRect.top));
+    const int pillR = wr.left + static_cast<int>(std::lround(g_pillClientRect.right));
+    const int pillB = wr.top + static_cast<int>(std::lround(g_pillClientRect.bottom));
+    const int pillW = std::max(8, pillR - pillL);
+    const int pillH = std::max(8, pillB - pillT);
+    const int cx = (pillL + pillR) / 2;
+    const int cy = (pillT + pillB) / 2;
+    const int ring = 14;
+    const POINT samples[] = {
+        {pillL - ring, cy},
+        {pillR + ring, cy},
+        {cx, pillT - ring},
+        {cx, pillB + ring},
+        {pillL - ring, pillT + pillH / 4},
+        {pillR + ring, pillT + pillH / 4},
+        {pillL - ring, pillB - pillH / 4},
+        {pillR + ring, pillB - pillH / 4},
+        {pillL + pillW / 4, pillT - ring},
+        {pillR - pillW / 4, pillT - ring},
+        {pillL + pillW / 4, pillB + ring},
+        {pillR - pillW / 4, pillB + ring},
+        {pillL - ring, pillT - ring},
+        {pillR + ring, pillT - ring},
+        {pillL - ring, pillB + ring},
+        {pillR + ring, pillB + ring},
+    };
+    HDC dc = GetDC(nullptr);
+    if (!dc) {
+        return false;
+    }
+    float sr = 0.0f, sg = 0.0f, sb = 0.0f;
+    int count = 0;
+    int nearBlack = 0;
+    for (const POINT& pt : samples) {
+        if (pt.x < wr.left - 80 || pt.y < wr.top - 80 ||
+            pt.x > wr.right + 80 || pt.y > wr.bottom + 80) {
+            continue;
+        }
+        const COLORREF pixel = GetPixel(dc, pt.x, pt.y);
+        if (pixel == CLR_INVALID) {
+            continue;
+        }
+        const float r = GetRValue(pixel) / 255.0f;
+        const float g = GetGValue(pixel) / 255.0f;
+        const float b = GetBValue(pixel) / 255.0f;
+        if (r + g + b < 0.04f) {
+            ++nearBlack;
+        }
+        sr += r;
+        sg += g;
+        sb += b;
+        ++count;
+    }
+    ReleaseDC(nullptr, dc);
+    if (count < 4 || nearBlack * 2 >= count) {
+        return false;
+    }
+    *outColor = D2D1::ColorF(sr / count, sg / count, sb / count, 1.0f);
+    return true;
+}
+void DeriveAdaptivePalette(D2D1_COLOR_F sampled, D2D1_COLOR_F& pill, D2D1_COLOR_F& text,
+                           D2D1_COLOR_F& muted) {
+    float h = 0.0f, s = 0.0f, l = 0.0f;
+    RgbToHsl(sampled.r, sampled.g, sampled.b, h, s, l);
+    const bool lightBg = RelativeLuminance(sampled) > 0.52;
+    const float sat = Clamp(s * (lightBg ? 0.22f : 0.42f), lightBg ? 0.02f : 0.05f,
+                            lightBg ? 0.14f : 0.28f);
+    if (lightBg) {
+        pill = HslToRgb(h, sat, Clamp(0.86f + l * 0.08f, 0.84f, 0.94f), 1.0f);
+        text = HslToRgb(h, Clamp(s * 0.18f, 0.02f, 0.12f), 0.14f, 1.0f);
+        muted = HslToRgb(h, Clamp(s * 0.16f, 0.02f, 0.10f), 0.36f, 1.0f);
+    } else {
+        pill = HslToRgb(h, sat, Clamp(0.055f + l * 0.12f, 0.045f, 0.16f), 1.0f);
+        text = HslToRgb(h, Clamp(s * 0.10f, 0.00f, 0.08f), 0.96f, 1.0f);
+        muted = HslToRgb(h, Clamp(s * 0.14f, 0.02f, 0.12f), 0.68f, 1.0f);
+    }
+}
 bool IsForegroundFullscreen(HWND targetHwnd) {
     HWND fg = GetForegroundWindow();
     if (!fg || fg == targetHwnd || fg == GetDesktopWindow() || fg == GetShellWindow()) {
@@ -2091,8 +2209,33 @@ void LoadSettings() {
     } else {
         next.spectrumStyle = SpectrumStyle::Bars;
     }
+    const int adaptiveOverride = Wh_GetIntValue(L"AdaptiveThemeOverride", -1);
+    next.adaptiveTheme = adaptiveOverride >= 0
+        ? adaptiveOverride != 0
+        : (Wh_GetIntSetting(L"Themes.AdaptiveTheme") != 0);
+    const int auraOverride = Wh_GetIntValue(L"AuraStyleOverride", -1);
+    if (auraOverride >= 0 && auraOverride <= static_cast<int>(AuraStyle::Orbit)) {
+        next.auraStyle = static_cast<AuraStyle>(auraOverride);
+    } else {
+        const std::wstring auraStr = GetStringSettingCopy(L"Themes.AuraStyle");
+        if (EqualsNoCase(auraStr, L"off")) {
+            next.auraStyle = AuraStyle::Off;
+        } else if (EqualsNoCase(auraStr, L"equalizer")) {
+            next.auraStyle = AuraStyle::Equalizer;
+        } else if (EqualsNoCase(auraStr, L"rays")) {
+            next.auraStyle = AuraStyle::Rays;
+        } else if (EqualsNoCase(auraStr, L"pulse")) {
+            next.auraStyle = AuraStyle::Pulse;
+        } else if (EqualsNoCase(auraStr, L"orbit")) {
+            next.auraStyle = AuraStyle::Orbit;
+        } else {
+            next.auraStyle = AuraStyle::Glow;
+        }
+    }
+    next.auraIntensity = Clamp(Wh_GetIntSetting(L"Themes.AuraIntensity") / 100.0f, 0.0f, 1.5f);
     g_spectrumBandsNeeded.store(next.spectrumStyle == SpectrumStyle::Orb ||
-                                    next.spectrumStyle == SpectrumStyle::Plasma,
+                                    next.spectrumStyle == SpectrumStyle::Plasma ||
+                                    next.auraStyle != AuraStyle::Off,
                                 std::memory_order_relaxed);
     next.expandedMediaAnim = Wh_GetIntSetting(L"Animations.ExpandedMediaTransitions") != 0;
     next.pillCoverAnim = Wh_GetIntSetting(L"Animations.PillCoverSpin") != 0;
@@ -2522,6 +2665,9 @@ void LoadSettings() {
         next.fileTrayModule = defaults.fileTrayModule;
         next.materialDepth = defaults.materialDepth;
         next.dropShadow = defaults.dropShadow;
+        next.adaptiveTheme = defaults.adaptiveTheme;
+        next.auraStyle = defaults.auraStyle;
+        next.auraIntensity = defaults.auraIntensity;
         next.clockAccentGlow = defaults.clockAccentGlow;
         next.contourBorderEnabled = defaults.contourBorderEnabled;
         next.expandedMediaAnim = defaults.expandedMediaAnim;
@@ -2552,6 +2698,10 @@ void LoadSettings() {
         next.clockFollowSystem = defaults.clockFollowSystem;
         next.use24HourClock = defaults.use24HourClock;
     }
+    g_spectrumBandsNeeded.store(next.spectrumStyle == SpectrumStyle::Orb ||
+                                    next.spectrumStyle == SpectrumStyle::Plasma ||
+                                    next.auraStyle != AuraStyle::Off,
+                                std::memory_order_relaxed);
     Wh_SetIntValue(L"PinnedExpanded", 0);
     next.sizeScale = next.baseSizeScale;
     bool cityChanged = false;
@@ -3105,10 +3255,6 @@ struct StageLayout {
     int height = 0;
     float pillLeft = 0.0f;
     float pillTop = 0.0f;
-};
-struct PillClientRect {
-    float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
-    bool valid = false;
 };
 PillClientRect g_pillClientRect;
 inline bool UsesFixedStage(const Settings&) {
@@ -9034,6 +9180,7 @@ void DismissTransientState() {
 static constexpr UINT kMediaSourceMenuIdBase = 100;
 static constexpr UINT kShapeMenuIdBase = 50;
 static constexpr UINT kLyricsSyncMenuIdBase = 60;
+static constexpr UINT kAuraMenuIdBase = 70;
 void AdjustLyricsNudge(int deltaMs) {
     const bool bt = g_defaultOutputIsBluetooth.load(std::memory_order_relaxed);
     const wchar_t* key = bt ? L"LyricsNudgeBtMs" : L"LyricsNudgeMs";
@@ -9235,6 +9382,20 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     AppendMenuW(themeMenu, MF_STRING | (activeTheme >= kCustomThemeIndex ? MF_CHECKED : 0),
                 kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), L"Власні кольори");
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Тема");
+    AppendMenuW(menu, MF_STRING | (settings.adaptiveTheme ? MF_CHECKED : 0), 16,
+                L"Адаптивна тема");
+    {
+        HMENU auraMenu = CreatePopupMenu();
+        const UINT auraCmd = kAuraMenuIdBase + static_cast<UINT>(settings.auraStyle);
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, L"Вимкнено");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, L"Свічення");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 2, L"Еквалайзер");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, L"Промені");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, L"Кільця");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, L"Орбіта");
+        CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 5, auraCmd, MF_BYCOMMAND);
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), L"Ореол");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 9, L"Відкрити налаштування Windhawk");
     SetForegroundWindow(hwnd);
@@ -9248,6 +9409,11 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     if (cmd >= kThemeMenuIdBase &&
         cmd <= kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex)) {
         Wh_SetIntValue(kThemeValueName, static_cast<int>(cmd - kThemeMenuIdBase));
+        LoadSettings();
+        return;
+    }
+    if (cmd >= kAuraMenuIdBase && cmd <= kAuraMenuIdBase + 5) {
+        Wh_SetIntValue(L"AuraStyleOverride", static_cast<int>(cmd - kAuraMenuIdBase));
         LoadSettings();
         return;
     }
@@ -9373,6 +9539,12 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             LoadSettings();
             g_layoutDirty = true;
             TriggerNudge();
+            break;
+        }
+        case 16: {
+            Wh_SetIntValue(L"AdaptiveThemeOverride", settings.adaptiveTheme ? 0 : 1);
+            LoadSettings();
+            g_layoutDirty = true;
             break;
         }
         case 30:
@@ -10246,14 +10418,54 @@ class Renderer {
         lastFontScale_ = scale;
         lastFontFamily_ = fontFamily;
     }
+    void TickAdaptiveTheme(const Settings& settings, double now) {
+        if (!settings.adaptiveTheme) {
+            adaptiveReady_ = false;
+            return;
+        }
+        const bool due = adaptiveSampleAt_ < 0.0 || (now - adaptiveSampleAt_) >= 0.28;
+        if (due) {
+            D2D1_COLOR_F sampled = {};
+            if (SampleDesktopBackdrop(hwnd_, &sampled)) {
+                adaptiveSample_ = sampled;
+                adaptiveSampleAt_ = now;
+            } else if (!adaptiveReady_) {
+                adaptiveSample_ = GetSystemAccentColor();
+                adaptiveSampleAt_ = now;
+            }
+            D2D1_COLOR_F pill = settings.pillBgColor;
+            D2D1_COLOR_F text = settings.textPrimaryColor;
+            D2D1_COLOR_F muted = settings.textSecondaryColor;
+            DeriveAdaptivePalette(adaptiveSample_, pill, text, muted);
+            adaptiveTargetBg_ = pill;
+            adaptiveTargetText_ = text;
+            adaptiveTargetMuted_ = muted;
+            if (!adaptiveReady_) {
+                adaptivePillBg_ = adaptiveTargetBg_;
+                adaptiveTextPrimary_ = adaptiveTargetText_;
+                adaptiveTextSecondary_ = adaptiveTargetMuted_;
+                adaptiveReady_ = true;
+            }
+        }
+        if (!adaptiveReady_) {
+            return;
+        }
+        const float k = 1.0f - std::exp(-0.08f);
+        adaptivePillBg_ = MixColor(adaptivePillBg_, adaptiveTargetBg_, k);
+        adaptiveTextPrimary_ = MixColor(adaptiveTextPrimary_, adaptiveTargetText_, k);
+        adaptiveTextSecondary_ = MixColor(adaptiveTextSecondary_, adaptiveTargetMuted_, k);
+    }
     void EnsureBrushes(const Settings& settings, const SharedState& state, double now) {
+        TickAdaptiveTheme(settings, now);
+        const D2D1_COLOR_F themeBg = settings.adaptiveTheme && adaptiveReady_
+            ? adaptivePillBg_ : settings.pillBgColor;
         D2D1_COLOR_F targetAccent = settings.customAccent;
         if (settings.accentMode == AccentMode::System) {
             targetAccent = GetSystemAccentColor();
         } else if (settings.accentMode == AccentMode::Auto && state.media.art) {
             targetAccent = state.media.art->sampledAccent;
         } else {
-            targetAccent = EnsureContrastAgainstBackground(targetAccent, settings.pillBgColor);
+            targetAccent = EnsureContrastAgainstBackground(targetAccent, themeBg);
         }
         if (lastAccentTime_ < 0.0) {
             currentAccent_ = targetAccent;
@@ -10271,15 +10483,17 @@ class Renderer {
         if (!accentBrush_) target_->CreateSolidColorBrush(accent, &accentBrush_);
         else accentBrush_->SetColor(accent);
         if (!redBrush_) target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.27f, 0.27f, 1.0f), &redBrush_);
-        D2D1_COLOR_F primary = settings.textPrimaryColor;
+        D2D1_COLOR_F primary = settings.adaptiveTheme && adaptiveReady_
+            ? adaptiveTextPrimary_ : settings.textPrimaryColor;
         primary.a = 0.98f;
         if (!textBrush_) target_->CreateSolidColorBrush(primary, &textBrush_);
         else textBrush_->SetColor(primary);
-        D2D1_COLOR_F secondary = settings.textSecondaryColor;
+        D2D1_COLOR_F secondary = settings.adaptiveTheme && adaptiveReady_
+            ? adaptiveTextSecondary_ : settings.textSecondaryColor;
         secondary.a = 0.90f;
         if (!mutedBrush_) target_->CreateSolidColorBrush(secondary, &mutedBrush_);
         else mutedBrush_->SetColor(secondary);
-        pillBgColor_ = settings.pillBgColor;
+        pillBgColor_ = themeBg;
         D2D1_COLOR_F tintColor = D2D1::ColorF(0.010f, 0.010f, 0.012f, settings.tintOpacity);
         if (!tintBrush_) target_->CreateSolidColorBrush(tintColor, &tintBrush_);
         else tintBrush_->SetColor(tintColor);
@@ -10481,9 +10695,13 @@ class Renderer {
         t.stroke = settings.contourBorderColor;
         t.accent = currentAccent_;
         t.accentSoft = WithAlpha(currentAccent_, 0.18f);
-        t.textPrimary = WithAlpha(settings.textPrimaryColor, 0.98f);
-        t.textSecondary = WithAlpha(settings.textSecondaryColor, 0.88f);
-        t.textTertiary = WithAlpha(MixColor(settings.textSecondaryColor, t.base, 0.35f), 0.72f);
+        const D2D1_COLOR_F textPri = settings.adaptiveTheme && adaptiveReady_
+            ? adaptiveTextPrimary_ : settings.textPrimaryColor;
+        const D2D1_COLOR_F textSec = settings.adaptiveTheme && adaptiveReady_
+            ? adaptiveTextSecondary_ : settings.textSecondaryColor;
+        t.textPrimary = WithAlpha(textPri, 0.98f);
+        t.textSecondary = WithAlpha(textSec, 0.88f);
+        t.textTertiary = WithAlpha(MixColor(textSec, t.base, 0.35f), 0.72f);
         material_ = t;
         SetPersistentBrush(raisedBrush_, t.raised);
         SetPersistentBrush(raisedStrongBrush_, t.raisedStrong);
@@ -10506,6 +10724,7 @@ class Renderer {
             pillRadii_[pillCount_] = radius;
             ++pillCount_;
         }
+        DrawMusicAura(state, settings, rect, radius, now);
         DrawSoftShadow(rect, radius);
         DrawPillSurface(rect, radius, activity.kind, settings);
         if (activity.kind == IslandKind::Progress) {
@@ -10572,6 +10791,169 @@ class Renderer {
         }
         DrawPrivacyDots(state, settings, unscaledRect, now);
         target_->SetTransform(oldTransform);
+    }
+    void TickSpectrumMotion(const SharedState& state, double now) {
+        const bool recentlyDrawn = specLastDrawn_ >= 0.0 && (now - specLastDrawn_) < 0.25;
+        float dt = recentlyDrawn ? static_cast<float>(now - specLastDrawn_) : 0.016f;
+        dt = Clamp(dt, 0.001f, 0.05f);
+        specLastDrawn_ = now;
+        const float bass = SpecBandRange(state, 0.0f, 4.0f);
+        specBassSlow_ += (bass - specBassSlow_) * (1.0f - std::exp(-dt / 0.45f));
+        const float beat = std::max(0.0f, bass - specBassSlow_ - 0.04f);
+        specKick_ = std::max(specKick_ * std::exp(-dt / 0.18f), Clamp(beat * 3.2f, 0.0f, 1.0f));
+        specBass_ += (bass - specBass_) * (1.0f - std::exp(-dt / 0.07f));
+        specPhase_ += dt * (1.6f + 5.0f * specBass_ + 8.0f * specKick_);
+        specDt_ = dt;
+    }
+    void DrawMusicAura(const SharedState& state, const Settings& settings, D2D1_RECT_F rect,
+                       float radius, double now) {
+        if (settings.auraStyle == AuraStyle::Off || settings.auraIntensity <= 0.01f) {
+            return;
+        }
+        TickSpectrumMotion(state, now);
+        const float energy = Clamp(0.28f * specBass_ + 0.72f * specKick_, 0.0f, 1.0f);
+        const float idle = state.media.playing ? 0.22f : 0.10f;
+        const float strength = Clamp((idle + 0.88f * energy) * settings.auraIntensity, 0.0f, 1.0f);
+        if (strength <= 0.02f) {
+            return;
+        }
+        switch (settings.auraStyle) {
+            case AuraStyle::Equalizer: DrawAuraEqualizer(state, rect, radius, strength); break;
+            case AuraStyle::Rays: DrawAuraRays(state, rect, radius, strength); break;
+            case AuraStyle::Pulse: DrawAuraPulse(rect, radius, strength); break;
+            case AuraStyle::Orbit: DrawAuraOrbit(state, rect, radius, strength); break;
+            case AuraStyle::Glow:
+            default: DrawAuraGlow(rect, radius, strength); break;
+        }
+        if (state.media.playing || energy > 0.04f) {
+            g_layoutDirty = true;
+        }
+    }
+    void DrawAuraGlow(D2D1_RECT_F rect, float radius, float strength) {
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        if (!brush) {
+            return;
+        }
+        const float pulse = 1.0f + 0.35f * specKick_ + 0.18f * specBass_;
+        for (int i = 6; i >= 1; --i) {
+            const float t = static_cast<float>(i) / 6.0f;
+            const float grow = (7.0f + 16.0f * strength) * t * pulse;
+            const float alpha = strength * (1.0f - t) * (1.0f - t) * 0.42f;
+            if (alpha <= 0.01f) {
+                continue;
+            }
+            brush->SetOpacity(alpha);
+            FillIslandShape(D2D1::RectF(rect.left - grow, rect.top - grow,
+                                        rect.right + grow, rect.bottom + grow),
+                            radius + grow, frameSettings_.w11Style, frameSettings_.notchStyle,
+                            brush);
+        }
+        brush->SetOpacity(1.0f);
+    }
+    void DrawAuraEqualizer(const SharedState& state, D2D1_RECT_F rect, float radius,
+                           float strength) {
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        if (!brush) {
+            return;
+        }
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = (rect.top + rect.bottom) * 0.5f;
+        const float rx = (rect.right - rect.left) * 0.5f + 5.0f;
+        const float ry = (rect.bottom - rect.top) * 0.5f + 5.0f;
+        constexpr int kBars = 22;
+        constexpr float kTwoPi = 6.28318531f;
+        for (int i = 0; i < kBars; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(kBars);
+            const float ang = u * kTwoPi + specPhase_ * 0.08f;
+            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kBars)];
+            const float len = (5.0f + 18.0f * band * (0.45f + 0.55f * strength)) *
+                              (0.75f + 0.25f * specBass_);
+            const float nx = std::cos(ang);
+            const float ny = std::sin(ang);
+            const float x0 = cx + nx * rx;
+            const float y0 = cy + ny * ry;
+            const float hw = 1.6f + 0.7f * strength;
+            brush->SetOpacity(Clamp(0.18f + 0.72f * band * strength, 0.0f, 1.0f));
+            target_->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(std::min(x0, x0 + nx * len) - hw * std::fabs(ny),
+                                              std::min(y0, y0 + ny * len) - hw * std::fabs(nx),
+                                              std::max(x0, x0 + nx * len) + hw * std::fabs(ny),
+                                              std::max(y0, y0 + ny * len) + hw * std::fabs(nx)),
+                                  hw, hw),
+                brush);
+            (void)radius;
+        }
+        brush->SetOpacity(1.0f);
+    }
+    void DrawAuraRays(const SharedState& state, D2D1_RECT_F rect, float radius, float strength) {
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        if (!brush) {
+            return;
+        }
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = (rect.top + rect.bottom) * 0.5f;
+        const float rx = (rect.right - rect.left) * 0.5f + radius * 0.08f;
+        const float ry = (rect.bottom - rect.top) * 0.5f + radius * 0.08f;
+        constexpr int kRays = 18;
+        constexpr float kTwoPi = 6.28318531f;
+        ID2D1StrokeStyle* stroke = RoundStroke();
+        for (int i = 0; i < kRays; ++i) {
+            const float ang = specPhase_ * 0.35f + static_cast<float>(i) * kTwoPi / kRays;
+            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kRays)];
+            const float len = (10.0f + 22.0f * band) * (0.40f + 0.60f * strength);
+            const float nx = std::cos(ang);
+            const float ny = std::sin(ang);
+            brush->SetOpacity(Clamp(0.12f + 0.70f * band * strength, 0.0f, 0.95f));
+            target_->DrawLine(D2D1::Point2F(cx + nx * rx, cy + ny * ry),
+                              D2D1::Point2F(cx + nx * (rx + len), cy + ny * (ry + len)),
+                              brush, 1.4f + 1.8f * band, stroke);
+        }
+        brush->SetOpacity(1.0f);
+    }
+    void DrawAuraPulse(D2D1_RECT_F rect, float radius, float strength) {
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        if (!brush) {
+            return;
+        }
+        const float wave = 0.5f + 0.5f * std::sin(specPhase_ * 1.8f);
+        for (int i = 0; i < 3; ++i) {
+            const float t = (wave + static_cast<float>(i) * 0.33f);
+            const float frac = t - std::floor(t);
+            const float grow = (6.0f + 20.0f * strength) * frac * (0.65f + 0.35f * specKick_);
+            const float alpha = strength * (1.0f - frac) * (0.22f + 0.45f * specKick_);
+            if (alpha <= 0.02f) {
+                continue;
+            }
+            brush->SetOpacity(alpha);
+            DrawIslandShape(D2D1::RectF(rect.left - grow, rect.top - grow,
+                                        rect.right + grow, rect.bottom + grow),
+                            radius + grow, frameSettings_.w11Style, frameSettings_.notchStyle,
+                            brush, 1.6f + 1.2f * (1.0f - frac));
+        }
+        brush->SetOpacity(1.0f);
+    }
+    void DrawAuraOrbit(const SharedState& state, D2D1_RECT_F rect, float radius, float strength) {
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        if (!brush) {
+            return;
+        }
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = (rect.top + rect.bottom) * 0.5f;
+        const float rx = (rect.right - rect.left) * 0.5f + 10.0f + 4.0f * specBass_;
+        const float ry = (rect.bottom - rect.top) * 0.5f + 10.0f + 3.0f * specKick_;
+        constexpr int kDots = 10;
+        constexpr float kTwoPi = 6.28318531f;
+        for (int i = 0; i < kDots; ++i) {
+            const float ang = specPhase_ * 1.15f + static_cast<float>(i) * kTwoPi / kDots;
+            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kDots)];
+            const float r = 1.6f + 2.8f * band * strength + 1.2f * specKick_;
+            brush->SetOpacity(Clamp(0.20f + 0.75f * band * strength, 0.0f, 1.0f));
+            target_->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(cx + std::cos(ang) * rx, cy + std::sin(ang) * ry), r, r),
+                brush);
+            (void)radius;
+        }
+        brush->SetOpacity(1.0f);
     }
     void DrawSoftShadow(D2D1_RECT_F rect, float radius) {
         if (!frameSettings_.dropShadow || frameSettings_.backdropMaterial != BackdropMaterial::None) {
@@ -15257,9 +15639,8 @@ class Renderer {
     void DrawSpectrum(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now) {
         constexpr double kSpecDur = 1.15;
         const bool recentlyDrawn = specLastDrawn_ >= 0.0 && (now - specLastDrawn_) < 0.25;
-        float dt = recentlyDrawn ? static_cast<float>(now - specLastDrawn_) : 0.016f;
-        dt = Clamp(dt, 0.001f, 0.05f);
-        specLastDrawn_ = now;
+        TickSpectrumMotion(state, now);
+        const float dt = specDt_;
         const size_t key = std::hash<std::wstring>{}(state.media.title) * 31u +
                            std::hash<std::wstring>{}(state.media.artist);
         if (!specInit_ || !recentlyDrawn) {
@@ -15293,12 +15674,6 @@ class Renderer {
                 g_layoutDirty = true;
             }
         }
-        const float bass = SpecBandRange(state, 0.0f, 4.0f);
-        specBassSlow_ += (bass - specBassSlow_) * (1.0f - std::exp(-dt / 0.45f));
-        const float beat = std::max(0.0f, bass - specBassSlow_ - 0.04f);
-        specKick_ = std::max(specKick_ * std::exp(-dt / 0.18f), Clamp(beat * 3.2f, 0.0f, 1.0f));
-        specBass_ += (bass - specBass_) * (1.0f - std::exp(-dt / 0.07f));
-        specPhase_ += dt * (1.6f + 5.0f * specBass_ + 8.0f * specKick_);
         switch (settings.spectrumStyle) {
             case SpectrumStyle::Orb: DrawSpectrumOrb(state, rect); break;
             case SpectrumStyle::Plasma: DrawSpectrumPlasma(state, rect); break;
@@ -17105,6 +17480,15 @@ class Renderer {
     float settingsOpacity_ = 0.96f;
     Settings frameSettings_{};
     D2D1_COLOR_F pillBgColor_ = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
+    D2D1_COLOR_F adaptiveSample_ = D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+    D2D1_COLOR_F adaptiveTargetBg_ = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
+    D2D1_COLOR_F adaptiveTargetText_ = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    D2D1_COLOR_F adaptiveTargetMuted_ = D2D1::ColorF(0.65f, 0.65f, 0.70f, 1.0f);
+    D2D1_COLOR_F adaptivePillBg_ = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
+    D2D1_COLOR_F adaptiveTextPrimary_ = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    D2D1_COLOR_F adaptiveTextSecondary_ = D2D1::ColorF(0.65f, 0.65f, 0.70f, 1.0f);
+    double adaptiveSampleAt_ = -1.0;
+    bool adaptiveReady_ = false;
     MaterialTokens material_{};
     D2D1_COLOR_F currentAccent_ = D2D1::ColorF(0x4cc9f0);
     double lastAccentTime_ = -1.0;
@@ -17175,6 +17559,7 @@ class Renderer {
     float specBass_ = 0.0f;
     float specBassSlow_ = 0.0f;
     float specKick_ = 0.0f;
+    float specDt_ = 0.016f;
     float specPeak_[kSpectrumBands] = {};
     float specPeakVel_[kSpectrumBands] = {};
     float progressAmp_ = 1.0f;
