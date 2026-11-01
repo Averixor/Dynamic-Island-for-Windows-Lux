@@ -76,14 +76,15 @@
     $description: Колір пігулки підлаштовується під фон за островом
   - AuraStyle: glow
     $name: Ореол
-    $description: Підсвітка навколо острова в такт музиці
+    $description: Підсвітка навколо острова в такт басу і голосу
     $options:
     - off: Вимкнено
     - glow: Свічення
-    - equalizer: Еквалайзер
+    - sweep: Неон
     - rays: Промені
     - pulse: Кільця
     - orbit: Орбіта
+    - chase: Контур
   - AuraIntensity: 70
     $name: Сила ореолу
     $description: Яскравість підсвітки навколо острова (від 0 до 100)
@@ -483,11 +484,18 @@ enum class SpectrumStyle {
 enum class AuraStyle {
     Off,
     Glow,
-    Equalizer,
+    Sweep,
     Rays,
     Pulse,
     Orbit,
+    Chase,
 };
+struct AuraSpark {
+    float seed = 0.0f;
+    float speed = 1.0f;
+    float weight = 1.0f;
+};
+constexpr int kAuraSparks = 56;
 constexpr int kSpectrumBands = 24;
 enum class CalendarAccentMode {
     Red,
@@ -1886,66 +1894,82 @@ bool SampleDesktopBackdrop(HWND hwnd, D2D1_COLOR_F* outColor) {
     if (!GetWindowRect(hwnd, &wr)) {
         return false;
     }
-    const int pillL = wr.left + static_cast<int>(std::lround(g_pillClientRect.left));
+    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (!GetMonitorInfoW(mon, &mi)) {
+        return false;
+    }
     const int pillT = wr.top + static_cast<int>(std::lround(g_pillClientRect.top));
-    const int pillR = wr.left + static_cast<int>(std::lround(g_pillClientRect.right));
     const int pillB = wr.top + static_cast<int>(std::lround(g_pillClientRect.bottom));
-    const int pillW = std::max(8, pillR - pillL);
-    const int pillH = std::max(8, pillB - pillT);
-    const int cx = (pillL + pillR) / 2;
-    const int cy = (pillT + pillB) / 2;
-    const int ring = 14;
-    const POINT samples[] = {
-        {pillL - ring, cy},
-        {pillR + ring, cy},
-        {cx, pillT - ring},
-        {cx, pillB + ring},
-        {pillL - ring, pillT + pillH / 4},
-        {pillR + ring, pillT + pillH / 4},
-        {pillL - ring, pillB - pillH / 4},
-        {pillR + ring, pillB - pillH / 4},
-        {pillL + pillW / 4, pillT - ring},
-        {pillR - pillW / 4, pillT - ring},
-        {pillL + pillW / 4, pillB + ring},
-        {pillR - pillW / 4, pillB + ring},
-        {pillL - ring, pillT - ring},
-        {pillR + ring, pillT - ring},
-        {pillL - ring, pillB + ring},
-        {pillR + ring, pillB + ring},
-    };
-    HDC dc = GetDC(nullptr);
-    if (!dc) {
+    constexpr int kCapW = 12;
+    constexpr int kCapH = 6;
+    int x = wr.left - kCapW - 2;
+    int y = (pillT + pillB) / 2 - kCapH / 2;
+    if (x < mi.rcMonitor.left) {
+        x = wr.right + 2;
+    }
+    if (x + kCapW > mi.rcMonitor.right) {
+        x = std::max(mi.rcMonitor.left, wr.left + 2);
+        y = (wr.bottom + 2 < mi.rcMonitor.bottom) ? wr.bottom + 2 : wr.top - kCapH - 2;
+    }
+    y = std::clamp(y, static_cast<int>(mi.rcMonitor.top),
+                   static_cast<int>(mi.rcMonitor.bottom) - kCapH);
+    x = std::clamp(x, static_cast<int>(mi.rcMonitor.left),
+                   static_cast<int>(mi.rcMonitor.right) - kCapW);
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = kCapW;
+    bmi.bmiHeader.biHeight = -kCapH;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC screen = GetDC(nullptr);
+    if (!screen) {
         return false;
     }
-    float sr = 0.0f, sg = 0.0f, sb = 0.0f;
-    int count = 0;
-    int nearBlack = 0;
-    for (const POINT& pt : samples) {
-        if (pt.x < wr.left - 80 || pt.y < wr.top - 80 ||
-            pt.x > wr.right + 80 || pt.y > wr.bottom + 80) {
-            continue;
+    HDC mem = CreateCompatibleDC(screen);
+    HBITMAP dib = mem ? CreateDIBSection(mem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    HGDIOBJ old = nullptr;
+    bool ok = false;
+    if (mem && dib && bits) {
+        old = SelectObject(mem, dib);
+        if (BitBlt(mem, 0, 0, kCapW, kCapH, screen, x, y, SRCCOPY)) {
+            const auto* px = static_cast<const uint32_t*>(bits);
+            float sr = 0.0f, sg = 0.0f, sb = 0.0f;
+            int count = 0;
+            int nearBlack = 0;
+            const int n = kCapW * kCapH;
+            for (int i = 0; i < n; ++i) {
+                const uint32_t p = px[i];
+                const float b = ((p >> 0) & 255) / 255.0f;
+                const float g = ((p >> 8) & 255) / 255.0f;
+                const float r = ((p >> 16) & 255) / 255.0f;
+                if (r + g + b < 0.04f) {
+                    ++nearBlack;
+                }
+                sr += r;
+                sg += g;
+                sb += b;
+                ++count;
+            }
+            if (count >= 8 && nearBlack * 2 < count) {
+                *outColor = D2D1::ColorF(sr / count, sg / count, sb / count, 1.0f);
+                ok = true;
+            }
         }
-        const COLORREF pixel = GetPixel(dc, pt.x, pt.y);
-        if (pixel == CLR_INVALID) {
-            continue;
-        }
-        const float r = GetRValue(pixel) / 255.0f;
-        const float g = GetGValue(pixel) / 255.0f;
-        const float b = GetBValue(pixel) / 255.0f;
-        if (r + g + b < 0.04f) {
-            ++nearBlack;
-        }
-        sr += r;
-        sg += g;
-        sb += b;
-        ++count;
     }
-    ReleaseDC(nullptr, dc);
-    if (count < 4 || nearBlack * 2 >= count) {
-        return false;
+    if (mem && old) {
+        SelectObject(mem, old);
     }
-    *outColor = D2D1::ColorF(sr / count, sg / count, sb / count, 1.0f);
-    return true;
+    if (dib) {
+        DeleteObject(dib);
+    }
+    if (mem) {
+        DeleteDC(mem);
+    }
+    ReleaseDC(nullptr, screen);
+    return ok;
 }
 void DeriveAdaptivePalette(D2D1_COLOR_F sampled, D2D1_COLOR_F& pill, D2D1_COLOR_F& text,
                            D2D1_COLOR_F& muted) {
@@ -2214,20 +2238,22 @@ void LoadSettings() {
         ? adaptiveOverride != 0
         : (Wh_GetIntSetting(L"Themes.AdaptiveTheme") != 0);
     const int auraOverride = Wh_GetIntValue(L"AuraStyleOverride", -1);
-    if (auraOverride >= 0 && auraOverride <= static_cast<int>(AuraStyle::Orbit)) {
+    if (auraOverride >= 0 && auraOverride <= static_cast<int>(AuraStyle::Chase)) {
         next.auraStyle = static_cast<AuraStyle>(auraOverride);
     } else {
         const std::wstring auraStr = GetStringSettingCopy(L"Themes.AuraStyle");
         if (EqualsNoCase(auraStr, L"off")) {
             next.auraStyle = AuraStyle::Off;
-        } else if (EqualsNoCase(auraStr, L"equalizer")) {
-            next.auraStyle = AuraStyle::Equalizer;
+        } else if (EqualsNoCase(auraStr, L"sweep") || EqualsNoCase(auraStr, L"equalizer")) {
+            next.auraStyle = AuraStyle::Sweep;
         } else if (EqualsNoCase(auraStr, L"rays")) {
             next.auraStyle = AuraStyle::Rays;
         } else if (EqualsNoCase(auraStr, L"pulse")) {
             next.auraStyle = AuraStyle::Pulse;
         } else if (EqualsNoCase(auraStr, L"orbit")) {
             next.auraStyle = AuraStyle::Orbit;
+        } else if (EqualsNoCase(auraStr, L"chase")) {
+            next.auraStyle = AuraStyle::Chase;
         } else {
             next.auraStyle = AuraStyle::Glow;
         }
@@ -2700,7 +2726,7 @@ void LoadSettings() {
     }
     g_spectrumBandsNeeded.store(next.spectrumStyle == SpectrumStyle::Orb ||
                                     next.spectrumStyle == SpectrumStyle::Plasma ||
-                                    next.auraStyle != AuraStyle::Off,
+                                    next.media || next.auraStyle != AuraStyle::Off,
                                 std::memory_order_relaxed);
     Wh_SetIntValue(L"PinnedExpanded", 0);
     next.sizeScale = next.baseSizeScale;
@@ -9389,11 +9415,12 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         const UINT auraCmd = kAuraMenuIdBase + static_cast<UINT>(settings.auraStyle);
         AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, L"Вимкнено");
         AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, L"Свічення");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 2, L"Еквалайзер");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 2, L"Неон");
         AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, L"Промені");
         AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, L"Кільця");
         AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, L"Орбіта");
-        CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 5, auraCmd, MF_BYCOMMAND);
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 6, L"Контур");
+        CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 6, auraCmd, MF_BYCOMMAND);
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), L"Ореол");
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -9412,7 +9439,7 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         LoadSettings();
         return;
     }
-    if (cmd >= kAuraMenuIdBase && cmd <= kAuraMenuIdBase + 5) {
+    if (cmd >= kAuraMenuIdBase && cmd <= kAuraMenuIdBase + 6) {
         Wh_SetIntValue(L"AuraStyleOverride", static_cast<int>(cmd - kAuraMenuIdBase));
         LoadSettings();
         return;
@@ -10423,15 +10450,14 @@ class Renderer {
             adaptiveReady_ = false;
             return;
         }
-        const bool due = adaptiveSampleAt_ < 0.0 || (now - adaptiveSampleAt_) >= 0.28;
+        const bool due = adaptiveSampleAt_ < 0.0 || (now - adaptiveSampleAt_) >= 2.0;
         if (due) {
+            adaptiveSampleAt_ = now;
             D2D1_COLOR_F sampled = {};
             if (SampleDesktopBackdrop(hwnd_, &sampled)) {
                 adaptiveSample_ = sampled;
-                adaptiveSampleAt_ = now;
             } else if (!adaptiveReady_) {
                 adaptiveSample_ = GetSystemAccentColor();
-                adaptiveSampleAt_ = now;
             }
             D2D1_COLOR_F pill = settings.pillBgColor;
             D2D1_COLOR_F text = settings.textPrimaryColor;
@@ -10450,7 +10476,16 @@ class Renderer {
         if (!adaptiveReady_) {
             return;
         }
-        const float k = 1.0f - std::exp(-0.08f);
+        const float dr = std::fabs(adaptivePillBg_.r - adaptiveTargetBg_.r) +
+                         std::fabs(adaptivePillBg_.g - adaptiveTargetBg_.g) +
+                         std::fabs(adaptivePillBg_.b - adaptiveTargetBg_.b);
+        if (dr < 0.012f) {
+            adaptivePillBg_ = adaptiveTargetBg_;
+            adaptiveTextPrimary_ = adaptiveTargetText_;
+            adaptiveTextSecondary_ = adaptiveTargetMuted_;
+            return;
+        }
+        const float k = 0.18f;
         adaptivePillBg_ = MixColor(adaptivePillBg_, adaptiveTargetBg_, k);
         adaptiveTextPrimary_ = MixColor(adaptiveTextPrimary_, adaptiveTargetText_, k);
         adaptiveTextSecondary_ = MixColor(adaptiveTextSecondary_, adaptiveTargetMuted_, k);
@@ -10792,16 +10827,41 @@ class Renderer {
         DrawPrivacyDots(state, settings, unscaledRect, now);
         target_->SetTransform(oldTransform);
     }
+    float InstantWaveEnergy(const SharedState& state) const {
+        if (state.waveform.empty()) {
+            return 0.0f;
+        }
+        const size_t n = state.waveform.size();
+        const size_t write = state.waveformWrite;
+        float peak = 0.0f;
+        float sum = 0.0f;
+        constexpr int kLook = 8;
+        for (int i = 1; i <= kLook; ++i) {
+            const float v = state.waveform[(write + n - static_cast<size_t>(i)) % n];
+            peak = std::max(peak, v);
+            sum += v;
+        }
+        return Clamp(0.65f * peak + 0.35f * (sum / static_cast<float>(kLook)), 0.0f, 1.0f);
+    }
     void TickSpectrumMotion(const SharedState& state, double now) {
         const bool recentlyDrawn = specLastDrawn_ >= 0.0 && (now - specLastDrawn_) < 0.25;
         float dt = recentlyDrawn ? static_cast<float>(now - specLastDrawn_) : 0.016f;
         dt = Clamp(dt, 0.001f, 0.05f);
         specLastDrawn_ = now;
-        const float bass = SpecBandRange(state, 0.0f, 4.0f);
-        specBassSlow_ += (bass - specBassSlow_) * (1.0f - std::exp(-dt / 0.45f));
-        const float beat = std::max(0.0f, bass - specBassSlow_ - 0.04f);
-        specKick_ = std::max(specKick_ * std::exp(-dt / 0.18f), Clamp(beat * 3.2f, 0.0f, 1.0f));
-        specBass_ += (bass - specBass_) * (1.0f - std::exp(-dt / 0.07f));
+        const float bass = SpecBandRange(state, 0.0f, 3.0f);
+        const float voice = SpecBandRange(state, 6.0f, 14.0f);
+        const float wave = InstantWaveEnergy(state);
+        specInstant_ += (wave - specInstant_) * (1.0f - std::exp(-dt / 0.018f));
+        specBassSlow_ += (bass - specBassSlow_) * (1.0f - std::exp(-dt / 0.16f));
+        specVoiceSlow_ += (voice - specVoiceSlow_) * (1.0f - std::exp(-dt / 0.14f));
+        const float beat = std::max(0.0f, std::max(bass - specBassSlow_ - 0.012f,
+                                                   wave - specInstant_ * 0.72f - 0.03f));
+        const float voiceHit = std::max(0.0f, voice - specVoiceSlow_ - 0.014f);
+        specKick_ = std::max(specKick_ * std::exp(-dt / 0.08f), Clamp(beat * 4.8f, 0.0f, 1.0f));
+        specVoiceHit_ = std::max(specVoiceHit_ * std::exp(-dt / 0.09f),
+                                 Clamp(voiceHit * 4.2f, 0.0f, 1.0f));
+        specBass_ += (std::max(bass, wave * 0.55f) - specBass_) * (1.0f - std::exp(-dt / 0.022f));
+        specVoice_ += (voice - specVoice_) * (1.0f - std::exp(-dt / 0.020f));
         specPhase_ += dt * (1.6f + 5.0f * specBass_ + 8.0f * specKick_);
         specDt_ = dt;
     }
@@ -10811,34 +10871,44 @@ class Renderer {
             return;
         }
         TickSpectrumMotion(state, now);
-        const float energy = Clamp(0.28f * specBass_ + 0.72f * specKick_, 0.0f, 1.0f);
-        const float idle = state.media.playing ? 0.22f : 0.10f;
-        const float strength = Clamp((idle + 0.88f * energy) * settings.auraIntensity, 0.0f, 1.0f);
+        const float micBreath = state.system.micActive
+            ? (0.40f + 0.60f * (0.50f + 0.50f * std::sin(static_cast<float>(now) * 6.9f)))
+            : 0.0f;
+        const float energy = Clamp(0.18f * specInstant_ + 0.16f * specBass_ +
+                                   0.22f * specVoice_ + 0.14f * specKick_ +
+                                   0.18f * specVoiceHit_ + 0.22f * micBreath, 0.0f, 1.0f);
+        const float idle = (state.media.playing || state.system.micActive) ? 0.05f : 0.03f;
+        const float strength = Clamp((idle + 1.15f * energy) * settings.auraIntensity, 0.0f, 1.0f);
         if (strength <= 0.02f) {
             return;
         }
         switch (settings.auraStyle) {
-            case AuraStyle::Equalizer: DrawAuraEqualizer(state, rect, radius, strength); break;
+            case AuraStyle::Sweep: DrawAuraSweep(rect, radius, strength, now); break;
             case AuraStyle::Rays: DrawAuraRays(state, rect, radius, strength); break;
             case AuraStyle::Pulse: DrawAuraPulse(rect, radius, strength); break;
-            case AuraStyle::Orbit: DrawAuraOrbit(state, rect, radius, strength); break;
+            case AuraStyle::Orbit: DrawAuraOrbit(state, rect, radius, strength, now); break;
+            case AuraStyle::Chase: DrawAuraChase(rect, radius, strength, now); break;
             case AuraStyle::Glow:
-            default: DrawAuraGlow(rect, radius, strength); break;
+            default: DrawAuraGlow(rect, radius, strength, now, state.system.micActive); break;
         }
-        if (state.media.playing || energy > 0.04f) {
+        if (state.media.playing || state.system.micActive || energy > 0.04f) {
             g_layoutDirty = true;
         }
     }
-    void DrawAuraGlow(D2D1_RECT_F rect, float radius, float strength) {
+    void DrawAuraGlow(D2D1_RECT_F rect, float radius, float strength, double now, bool micActive) {
         ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
         if (!brush) {
             return;
         }
-        const float pulse = 1.0f + 0.35f * specKick_ + 0.18f * specBass_;
-        for (int i = 6; i >= 1; --i) {
-            const float t = static_cast<float>(i) / 6.0f;
-            const float grow = (7.0f + 16.0f * strength) * t * pulse;
-            const float alpha = strength * (1.0f - t) * (1.0f - t) * 0.42f;
+        const float breath = micActive
+            ? (0.72f + 0.28f * std::sin(static_cast<float>(now) * 6.6f))
+            : 1.0f;
+        const float pulse = (1.0f + 0.24f * specKick_ + 0.22f * specVoiceHit_ +
+                             0.26f * specVoice_ + 0.10f * specInstant_) * breath;
+        for (int i = 5; i >= 1; --i) {
+            const float t = static_cast<float>(i) / 5.0f;
+            const float grow = (6.0f + 20.0f * strength) * t * pulse;
+            const float alpha = strength * (1.0f - t) * (1.0f - t) * 0.48f;
             if (alpha <= 0.01f) {
                 continue;
             }
@@ -10848,40 +10918,325 @@ class Renderer {
                             radius + grow, frameSettings_.w11Style, frameSettings_.notchStyle,
                             brush);
         }
+        brush->SetOpacity(Clamp(0.10f + 0.28f * strength, 0.0f, 0.55f));
+        DrawIslandShape(D2D1::RectF(rect.left - 6.0f, rect.top - 6.0f,
+                                    rect.right + 6.0f, rect.bottom + 6.0f),
+                        radius + 6.0f, frameSettings_.w11Style, frameSettings_.notchStyle,
+                        brush, 8.0f);
+        brush->SetOpacity(Clamp(0.35f + 0.55f * strength, 0.0f, 0.95f));
+        DrawIslandShape(rect, radius, frameSettings_.w11Style, frameSettings_.notchStyle,
+                        brush, 1.35f);
         brush->SetOpacity(1.0f);
     }
-    void DrawAuraEqualizer(const SharedState& state, D2D1_RECT_F rect, float radius,
-                           float strength) {
-        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
-        if (!brush) {
+    float StationaryAuraBand(const SharedState& state, int index, int count) const {
+        const int mapped = std::clamp(index * kSpectrumBands / std::max(count, 1),
+                                      0, kSpectrumBands - 1);
+        float band = state.bands[static_cast<size_t>(mapped)];
+        if (mapped + 1 < kSpectrumBands) {
+            band = 0.72f * band + 0.28f * state.bands[static_cast<size_t>(mapped + 1)];
+        }
+        if (mapped <= 4) {
+            band = std::max(band, specBass_ * 0.55f + specKick_ * 0.35f);
+        } else if (mapped <= 16) {
+            band = std::max(band, specVoice_ * 0.62f + specVoiceHit_ * 0.38f);
+        }
+        return Clamp(band, 0.0f, 1.25f);
+    }
+    static D2D1_COLOR_F AuraSweepColor(float t) {
+        static const D2D1_COLOR_F kStops[4] = {
+            D2D1::ColorF(0.62f, 0.22f, 1.00f, 1.0f),
+            D2D1::ColorF(1.00f, 0.28f, 0.72f, 1.0f),
+            D2D1::ColorF(0.12f, 0.92f, 1.00f, 1.0f),
+            D2D1::ColorF(0.18f, 1.00f, 0.52f, 1.0f),
+        };
+        t -= std::floor(t);
+        const float scaled = t * 4.0f;
+        const int i0 = static_cast<int>(scaled) & 3;
+        const int i1 = (i0 + 1) & 3;
+        return MixColor(kStops[i0], kStops[i1], scaled - std::floor(scaled));
+    }
+    ComPtr<ID2D1PathGeometry> CreateEllipseArc(float cx, float cy, float rx, float ry,
+                                               float a0, float a1) {
+        ComPtr<ID2D1PathGeometry> geom;
+        if (!d2dFactory_ || FAILED(d2dFactory_->CreatePathGeometry(&geom)) || !geom) {
+            return nullptr;
+        }
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geom->Open(&sink)) || !sink) {
+            return nullptr;
+        }
+        const D2D1_POINT_2F p0 = D2D1::Point2F(cx + std::cos(a0) * rx, cy + std::sin(a0) * ry);
+        const D2D1_POINT_2F p1 = D2D1::Point2F(cx + std::cos(a1) * rx, cy + std::sin(a1) * ry);
+        sink->BeginFigure(p0, D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddArc(D2D1::ArcSegment(p1, D2D1::SizeF(rx, ry), 0.0f,
+                                      D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
+                                      D2D1_ARC_SIZE_SMALL));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        if (FAILED(sink->Close())) {
+            return nullptr;
+        }
+        return geom;
+    }
+    void DrawAuraSweep(D2D1_RECT_F rect, float radius, float strength, double now) {
+        if (!d2dFactory_) {
             return;
         }
         const float cx = (rect.left + rect.right) * 0.5f;
         const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float rx = (rect.right - rect.left) * 0.5f + 5.0f;
-        const float ry = (rect.bottom - rect.top) * 0.5f + 5.0f;
-        constexpr int kBars = 22;
+        const float rx = (rect.right - rect.left) * 0.5f + 8.0f + 3.0f * specKick_;
+        const float ry = (rect.bottom - rect.top) * 0.5f + 8.0f + 2.0f * specVoice_;
+        constexpr int kSeg = 8;
         constexpr float kTwoPi = 6.28318531f;
-        for (int i = 0; i < kBars; ++i) {
-            const float u = static_cast<float>(i) / static_cast<float>(kBars);
-            const float ang = u * kTwoPi + specPhase_ * 0.08f;
-            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kBars)];
-            const float len = (5.0f + 18.0f * band * (0.45f + 0.55f * strength)) *
-                              (0.75f + 0.25f * specBass_);
-            const float nx = std::cos(ang);
-            const float ny = std::sin(ang);
-            const float x0 = cx + nx * rx;
-            const float y0 = cy + ny * ry;
-            const float hw = 1.6f + 0.7f * strength;
-            brush->SetOpacity(Clamp(0.18f + 0.72f * band * strength, 0.0f, 1.0f));
-            target_->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(std::min(x0, x0 + nx * len) - hw * std::fabs(ny),
-                                              std::min(y0, y0 + ny * len) - hw * std::fabs(nx),
-                                              std::max(x0, x0 + nx * len) + hw * std::fabs(ny),
-                                              std::max(y0, y0 + ny * len) + hw * std::fabs(nx)),
-                                  hw, hw),
-                brush);
-            (void)radius;
+        const float phase = static_cast<float>(now) * (0.55f + 0.85f * specKick_ + 0.35f * specVoice_);
+        const float width = 7.0f + 5.0f * strength + 3.0f * specVoice_;
+        ID2D1StrokeStyle* stroke = RoundStroke();
+        for (int i = 0; i < kSeg; ++i) {
+            const float a0 = phase + static_cast<float>(i) * kTwoPi / kSeg;
+            const float a1 = a0 + kTwoPi / kSeg;
+            ComPtr<ID2D1PathGeometry> arc = CreateEllipseArc(cx, cy, rx, ry, a0, a1);
+            if (!arc) {
+                continue;
+            }
+            const D2D1_COLOR_F color = AuraSweepColor(phase / kTwoPi + static_cast<float>(i) / kSeg);
+            ID2D1SolidColorBrush* brush = AcquireBrush(color);
+            if (!brush) {
+                continue;
+            }
+            brush->SetOpacity(Clamp(0.10f + 0.55f * strength + 0.18f * specVoiceHit_, 0.0f, 0.88f));
+            target_->DrawGeometry(arc.Get(), brush, width, stroke);
+        }
+        ID2D1SolidColorBrush* beam = AcquireBrush(
+            MixColor(material_.accent, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), 0.40f));
+        if (beam) {
+            for (int s = 0; s < 2; ++s) {
+                const float hub = phase + static_cast<float>(s) * 3.14159265f;
+                for (int k = -3; k <= 3; ++k) {
+                    const float a = hub + static_cast<float>(k) * 0.075f;
+                    const float fall = 1.0f - std::fabs(static_cast<float>(k)) / 3.6f;
+                    const float nx = std::cos(a);
+                    const float ny = std::sin(a);
+                    const float len = (16.0f + 14.0f * strength) * fall;
+                    beam->SetOpacity(Clamp(0.08f + 0.42f * strength * fall, 0.0f, 0.75f));
+                    target_->DrawLine(D2D1::Point2F(cx + nx * rx, cy + ny * ry),
+                                      D2D1::Point2F(cx + nx * (rx + len), cy + ny * (ry + len)),
+                                      beam, 2.4f * fall, stroke);
+                }
+            }
+            beam->SetOpacity(1.0f);
+        }
+        (void)radius;
+    }
+    float MediaTrackProgress(const SharedState& state) const {
+        double pos = static_cast<double>(state.media.positionTicks) / 10000000.0;
+        const double dur = static_cast<double>(state.media.endTicks) / 10000000.0;
+        if (state.media.playing && state.media.lastUpdatedTicks > 0) {
+            pos += (GetTickCount64() - static_cast<ULONGLONG>(state.media.lastUpdatedTicks)) / 1000.0;
+        }
+        if (dur <= 0.05) {
+            return 0.0f;
+        }
+        return Clamp(static_cast<float>(pos / dur), 0.0f, 1.0f);
+    }
+    void TickArtRipples(float dt, float onset) {
+        if (onset > 0.46f && onset > lastRippleOnset_ + 0.10f) {
+            artRipples_[artRippleWrite_] = 0.001f;
+            artRippleWrite_ = (artRippleWrite_ + 1) % 4;
+            lastRippleOnset_ = onset;
+        }
+        lastRippleOnset_ *= std::exp(-dt / 0.18f);
+        for (float& age : artRipples_) {
+            if (age <= 0.0f) {
+                continue;
+            }
+            age += dt / 0.58f;
+            if (age >= 1.0f) {
+                age = 0.0f;
+            }
+        }
+    }
+    void DrawArtLedCrown(const SharedState& state, D2D1_RECT_F artRect, float artRadius,
+                         float alpha, double now) {
+        if (alpha <= 0.03f) {
+            return;
+        }
+        const float aw = artRect.right - artRect.left;
+        const float ah = artRect.bottom - artRect.top;
+        if (aw < 28.0f || ah < 28.0f) {
+            return;
+        }
+        TickSpectrumMotion(state, now);
+        const bool mic = state.system.micActive;
+        const bool live = state.media.playing || mic || specInstant_ > 0.03f || specVoice_ > 0.03f;
+        TickArtRipples(specDt_, std::max(specKick_, specVoiceHit_));
+        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        ID2D1SolidColorBrush* hot = AcquireBrush(
+            MixColor(material_.accent, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), 0.55f));
+        if (!brush) {
+            return;
+        }
+        const float cx = (artRect.left + artRect.right) * 0.5f;
+        const float cy = (artRect.top + artRect.bottom) * 0.5f;
+        const float rx = aw * 0.5f + 2.2f;
+        const float ry = ah * 0.5f + 2.2f;
+        const float breath = mic
+            ? (0.55f + 0.45f * (0.50f + 0.50f * std::sin(static_cast<float>(now) * 6.8f)))
+            : (0.22f + 0.78f * Clamp(0.35f * specVoice_ + 0.25f * specInstant_ +
+                                     0.25f * specKick_ + 0.20f * specVoiceHit_, 0.0f, 1.0f));
+        const float glowR = std::max(rx, ry) + 5.0f + 10.0f * breath;
+        if (breath > 0.06f) {
+            for (int i = 3; i >= 1; --i) {
+                const float t = static_cast<float>(i) / 3.0f;
+                brush->SetOpacity(Clamp(alpha * breath * (1.0f - t) * 0.22f, 0.0f, 0.55f));
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), glowR * t, glowR * t), brush);
+            }
+        }
+        ID2D1StrokeStyle* stroke = RoundStroke();
+        brush->SetOpacity(Clamp(0.10f + 0.22f * breath, 0.0f, 0.45f) * alpha);
+        target_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), rx + 3.5f, ry + 3.5f),
+                             brush, 7.5f, stroke);
+        brush->SetOpacity(Clamp(0.40f + 0.50f * breath, 0.0f, 0.95f) * alpha);
+        target_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), rx + 0.8f, ry + 0.8f),
+                             brush, 1.35f, stroke);
+        if (live) {
+            constexpr int kBars = 24;
+            constexpr float kTwoPi = 6.28318531f;
+            for (int i = 0; i < kBars; ++i) {
+                const float ang = static_cast<float>(i) * kTwoPi / kBars - 1.57079633f;
+                const float band = StationaryAuraBand(state, i, kBars);
+                const float inward = 1.6f + 3.2f * band;
+                const float outward = 2.2f + 10.5f * band * (0.55f + 0.45f * alpha);
+                const float nx = std::cos(ang);
+                const float ny = std::sin(ang);
+                const float x0 = cx + nx * (rx - inward);
+                const float y0 = cy + ny * (ry - inward);
+                const float x1 = cx + nx * (rx + outward);
+                const float y1 = cy + ny * (ry + outward);
+                const float hw = 1.05f + 0.22f * artRadius / 32.0f;
+                brush->SetOpacity(Clamp((0.16f + 0.80f * band) * alpha, 0.0f, 1.0f));
+                target_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(std::min(x0, x1) - hw * std::fabs(ny),
+                                                  std::min(y0, y1) - hw * std::fabs(nx),
+                                                  std::max(x0, x1) + hw * std::fabs(ny),
+                                                  std::max(y0, y1) + hw * std::fabs(nx)),
+                                      hw, hw),
+                    brush);
+            }
+        }
+        for (float age : artRipples_) {
+            if (age <= 0.01f) {
+                continue;
+            }
+            const float grow = 4.0f + 18.0f * age;
+            brush->SetOpacity(Clamp(alpha * (1.0f - age) * 0.42f, 0.0f, 0.70f));
+            target_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), rx + grow, ry + grow),
+                                 brush, 1.6f + 1.4f * (1.0f - age), stroke);
+        }
+        const float progress = MediaTrackProgress(state);
+        if (progress > 0.01f && d2dFactory_) {
+            constexpr int kSeg = 6;
+            constexpr float kTwoPi = 6.28318531f;
+            const float filled = progress * static_cast<float>(kSeg);
+            for (int i = 0; i < kSeg; ++i) {
+                const float a0 = -1.57079633f + static_cast<float>(i) * kTwoPi / kSeg + 0.04f;
+                const float a1 = -1.57079633f + static_cast<float>(i + 1) * kTwoPi / kSeg - 0.04f;
+                ComPtr<ID2D1PathGeometry> arc = CreateEllipseArc(cx, cy, rx + 5.2f, ry + 5.2f, a0, a1);
+                if (!arc) {
+                    continue;
+                }
+                const float part = Clamp(filled - static_cast<float>(i), 0.0f, 1.0f);
+                const D2D1_COLOR_F color = AuraSweepColor(static_cast<float>(i) / kSeg);
+                ID2D1SolidColorBrush* seg = AcquireBrush(color);
+                if (!seg) {
+                    continue;
+                }
+                seg->SetOpacity(Clamp(alpha * (0.12f + 0.78f * part), 0.0f, 0.95f));
+                target_->DrawGeometry(arc.Get(), seg, 2.1f, stroke);
+            }
+        }
+        if (live || mic) {
+            const float head = static_cast<float>(now) * (2.15f + 1.4f * specKick_);
+            for (int i = 0; i < 8; ++i) {
+                const float a = head - static_cast<float>(i) * 0.16f;
+                const float fade = 1.0f - static_cast<float>(i) / 8.0f;
+                const float pr = 1.35f + 1.8f * fade;
+                ID2D1SolidColorBrush* use = (i < 2 && hot) ? hot : brush;
+                use->SetOpacity(Clamp(alpha * fade * (0.35f + 0.55f * breath), 0.0f, 1.0f));
+                target_->FillEllipse(
+                    D2D1::Ellipse(D2D1::Point2F(cx + std::cos(a) * (rx + 1.2f),
+                                                cy + std::sin(a) * (ry + 1.2f)),
+                                  pr, pr),
+                    use);
+            }
+            for (int i = 0; i < 14; ++i) {
+                const float dir = (i & 1) ? -1.0f : 1.0f;
+                const float a = dir * (static_cast<float>(now) * (0.70f + 0.12f * static_cast<float>(i % 4)) +
+                                       0.45f * static_cast<float>(i));
+                const float flare = 2.0f + 9.0f * specKick_ * (0.4f + 0.6f * static_cast<float>(i % 3) / 2.0f);
+                const float px = cx + std::cos(a) * (rx + 3.0f + flare);
+                const float py = cy + std::sin(a) * (ry + 3.0f + flare);
+                brush->SetOpacity(Clamp(alpha * (0.18f + 0.55f * StationaryAuraBand(state, i, 14)) *
+                                            (1.0f - flare / 16.0f),
+                                        0.0f, 0.90f));
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(px, py), 1.1f, 1.1f), brush);
+            }
+        }
+        if (live || breath > 0.08f) {
+            g_layoutDirty = true;
+        }
+        brush->SetOpacity(1.0f);
+        if (hot) {
+            hot->SetOpacity(1.0f);
+        }
+    }
+    void DrawAuraChase(D2D1_RECT_F rect, float radius, float strength, double now) {
+        if (!d2dFactory_) {
+            return;
+        }
+        ID2D1SolidColorBrush* brush = AcquireBrush(
+            MixColor(material_.accent, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), 0.35f));
+        if (!brush) {
+            return;
+        }
+        const float dashes[2] = { 34.0f + 16.0f * specKick_, 390.0f };
+        const float period = dashes[0] + dashes[1];
+        const float speed = 88.0f + 120.0f * specKick_ + 50.0f * specVoice_;
+        const float offset = -std::fmod(static_cast<float>(now) * speed, period);
+        const D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties(
+            D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+            D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_CUSTOM, offset);
+        ComPtr<ID2D1StrokeStyle> chase;
+        if (FAILED(d2dFactory_->CreateStrokeStyle(props, dashes, 2, &chase)) || !chase) {
+            return;
+        }
+        const D2D1_RECT_F edge = D2D1::RectF(rect.left - 1.0f, rect.top - 1.0f,
+                                             rect.right + 1.0f, rect.bottom + 1.0f);
+        const float edgeR = radius + 1.0f;
+        ComPtr<ID2D1Geometry> geom =
+            CreateIslandMaskGeometry(edge, edgeR, frameSettings_.notchStyle);
+        auto strokeEdge = [&](ID2D1StrokeStyle* style, float width, float opacity) {
+            if (!style) {
+                return;
+            }
+            brush->SetOpacity(Clamp(opacity, 0.0f, 0.95f));
+            if (geom) {
+                target_->DrawGeometry(geom.Get(), brush, width, style);
+            } else {
+                target_->DrawRoundedRectangle(D2D1::RoundedRect(edge, edgeR, edgeR),
+                                              brush, width, style);
+            }
+        };
+        strokeEdge(chase.Get(), 2.4f, 0.28f + 0.62f * strength);
+        for (int i = 1; i <= 4; ++i) {
+            const float trail = offset - static_cast<float>(i) * 16.0f;
+            const D2D1_STROKE_STYLE_PROPERTIES trailProps = D2D1::StrokeStyleProperties(
+                D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+                D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_CUSTOM, trail);
+            ComPtr<ID2D1StrokeStyle> fade;
+            if (FAILED(d2dFactory_->CreateStrokeStyle(trailProps, dashes, 2, &fade)) || !fade) {
+                continue;
+            }
+            strokeEdge(fade.Get(), 3.6f - 0.35f * static_cast<float>(i),
+                       (0.20f + 0.50f * strength) * (1.0f - static_cast<float>(i) / 5.0f));
         }
         brush->SetOpacity(1.0f);
     }
@@ -10894,19 +11249,19 @@ class Renderer {
         const float cy = (rect.top + rect.bottom) * 0.5f;
         const float rx = (rect.right - rect.left) * 0.5f + radius * 0.08f;
         const float ry = (rect.bottom - rect.top) * 0.5f + radius * 0.08f;
-        constexpr int kRays = 18;
+        constexpr int kRays = 16;
         constexpr float kTwoPi = 6.28318531f;
         ID2D1StrokeStyle* stroke = RoundStroke();
         for (int i = 0; i < kRays; ++i) {
-            const float ang = specPhase_ * 0.35f + static_cast<float>(i) * kTwoPi / kRays;
-            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kRays)];
-            const float len = (10.0f + 22.0f * band) * (0.40f + 0.60f * strength);
+            const float ang = static_cast<float>(i) * kTwoPi / kRays;
+            const float band = StationaryAuraBand(state, i, kRays);
+            const float len = 7.0f + 24.0f * band * (0.40f + 0.60f * strength);
             const float nx = std::cos(ang);
             const float ny = std::sin(ang);
-            brush->SetOpacity(Clamp(0.12f + 0.70f * band * strength, 0.0f, 0.95f));
+            brush->SetOpacity(Clamp(0.10f + 0.78f * band * strength, 0.0f, 0.95f));
             target_->DrawLine(D2D1::Point2F(cx + nx * rx, cy + ny * ry),
                               D2D1::Point2F(cx + nx * (rx + len), cy + ny * (ry + len)),
-                              brush, 1.4f + 1.8f * band, stroke);
+                              brush, 1.3f + 1.6f * band, stroke);
         }
         brush->SetOpacity(1.0f);
     }
@@ -10915,12 +11270,17 @@ class Renderer {
         if (!brush) {
             return;
         }
-        const float wave = 0.5f + 0.5f * std::sin(specPhase_ * 1.8f);
+        const float wave = 0.32f * specKick_ + 0.30f * specVoiceHit_ +
+                           0.26f * specVoice_ + 0.12f * specInstant_;
         for (int i = 0; i < 3; ++i) {
-            const float t = (wave + static_cast<float>(i) * 0.33f);
-            const float frac = t - std::floor(t);
-            const float grow = (6.0f + 20.0f * strength) * frac * (0.65f + 0.35f * specKick_);
-            const float alpha = strength * (1.0f - frac) * (0.22f + 0.45f * specKick_);
+            const float frac = Clamp(wave - static_cast<float>(i) * 0.28f, 0.0f, 1.0f);
+            if (frac <= 0.02f) {
+                continue;
+            }
+            const float grow = (5.0f + 22.0f * strength) * frac;
+            const float alpha = strength * (1.0f - frac * 0.35f) *
+                                (0.14f + 0.32f * specKick_ + 0.30f * specVoiceHit_ +
+                                 0.28f * specVoice_);
             if (alpha <= 0.02f) {
                 continue;
             }
@@ -10932,28 +11292,54 @@ class Renderer {
         }
         brush->SetOpacity(1.0f);
     }
-    void DrawAuraOrbit(const SharedState& state, D2D1_RECT_F rect, float radius, float strength) {
+    void EnsureAuraSparks() {
+        if (auraSparksInit_) {
+            return;
+        }
+        for (int i = 0; i < kAuraSparks; ++i) {
+            auraSparks_[i].seed = 0.41f * static_cast<float>(i) + 0.17f * static_cast<float>(i % 3);
+            auraSparks_[i].speed = 0.48f + 0.11f * static_cast<float>(i % 5);
+            auraSparks_[i].weight = 0.58f + 0.42f * static_cast<float>((i * 7) % 5) / 4.0f;
+        }
+        auraSparksInit_ = true;
+    }
+    void DrawAuraOrbit(const SharedState& state, D2D1_RECT_F rect, float radius, float strength,
+                       double now) {
+        EnsureAuraSparks();
         ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
+        ID2D1SolidColorBrush* hot = AcquireBrush(
+            MixColor(material_.accent, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), 0.55f));
         if (!brush) {
             return;
         }
         const float cx = (rect.left + rect.right) * 0.5f;
         const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float rx = (rect.right - rect.left) * 0.5f + 10.0f + 4.0f * specBass_;
-        const float ry = (rect.bottom - rect.top) * 0.5f + 10.0f + 3.0f * specKick_;
-        constexpr int kDots = 10;
-        constexpr float kTwoPi = 6.28318531f;
-        for (int i = 0; i < kDots; ++i) {
-            const float ang = specPhase_ * 1.15f + static_cast<float>(i) * kTwoPi / kDots;
-            const float band = state.bands[static_cast<size_t>(i * kSpectrumBands / kDots)];
-            const float r = 1.6f + 2.8f * band * strength + 1.2f * specKick_;
-            brush->SetOpacity(Clamp(0.20f + 0.75f * band * strength, 0.0f, 1.0f));
+        const float baseRx = (rect.right - rect.left) * 0.5f + 9.0f;
+        const float baseRy = (rect.bottom - rect.top) * 0.5f + 9.0f;
+        const float boom = 6.0f + 20.0f * specKick_ + 10.0f * specVoiceHit_;
+        for (int i = 0; i < kAuraSparks; ++i) {
+            const AuraSpark& spark = auraSparks_[i];
+            const float dir = (i & 1) ? -1.0f : 1.0f;
+            const float ang = dir * (static_cast<float>(now) * spark.speed *
+                                     (1.15f + 0.90f * specBass_ + 0.55f * specVoice_) +
+                                     spark.seed);
+            const float flare = boom * spark.weight;
+            const float rx = baseRx + flare;
+            const float ry = baseRy + flare * 0.92f;
+            const float band = StationaryAuraBand(state, i, kAuraSparks);
+            const float fade = Clamp(1.0f - flare / 38.0f, 0.18f, 1.0f);
+            const float r = (1.15f + 2.6f * band * strength) * spark.weight;
+            ID2D1SolidColorBrush* use = (hot && specKick_ > 0.45f && (i % 3) == 0) ? hot : brush;
+            use->SetOpacity(Clamp((0.14f + 0.78f * band * strength) * fade, 0.0f, 1.0f));
             target_->FillEllipse(
                 D2D1::Ellipse(D2D1::Point2F(cx + std::cos(ang) * rx, cy + std::sin(ang) * ry), r, r),
-                brush);
+                use);
             (void)radius;
         }
         brush->SetOpacity(1.0f);
+        if (hot) {
+            hot->SetOpacity(1.0f);
+        }
     }
     void DrawSoftShadow(D2D1_RECT_F rect, float radius) {
         if (!frameSettings_.dropShadow || frameSettings_.backdropMaterial != BackdropMaterial::None) {
@@ -10981,6 +11367,28 @@ class Renderer {
                             frameSettings_.notchStyle, brush);
         }
         brush->SetOpacity(1.0f);
+        ID2D1SolidColorBrush* glow = AcquireBrush(material_.accent);
+        if (!glow) {
+            return;
+        }
+        const float lift = spread * 0.42f;
+        const float pulse = 0.45f + 0.35f * specKick_ + 0.28f * specVoice_;
+        constexpr int kGlowSteps = 5;
+        for (int i = kGlowSteps; i >= 1; --i) {
+            const float t = static_cast<float>(i) / static_cast<float>(kGlowSteps);
+            const float grow = spread * 0.82f * t;
+            const float alpha = (1.0f - t) * (1.0f - t) * 0.20f * pulse * settingsOpacity_;
+            if (alpha <= 0.004f) {
+                continue;
+            }
+            glow->SetOpacity(alpha);
+            const D2D1_RECT_F glowRect = D2D1::RectF(
+                rect.left - grow * 0.85f, rect.top - grow - lift,
+                rect.right + grow * 0.85f, rect.bottom + grow * 0.35f - lift);
+            FillIslandShape(glowRect, radius + grow * 0.65f, frameSettings_.w11Style,
+                            frameSettings_.notchStyle, glow);
+        }
+        glow->SetOpacity(1.0f);
     }
     void FillSurfaceDepth(D2D1_RECT_F rect, float radius, bool strong) {
         const float h = rect.bottom - rect.top;
@@ -13294,17 +13702,12 @@ class Renderer {
                 if (artMorph >= 1.0f) {
                     DrawAlbumArtFlip(state.media, expandedArtRect, now, expandedArtRadius,
                                      immersiveMix < 0.01f);
+                    DrawArtLedCrown(state, expandedArtRect, expandedArtRadius, expandedAlpha, now);
                 }
                 const bool normalFaded = BeginImmersiveFade(1.0f - immersiveMix);
                 if (immersiveMix < 0.999f) {
-                const float waveW = 32.0f;
-                const float waveH = 20.0f;
-                D2D1_RECT_F waveRect = D2D1::RectF(rect.right - 24.0f - waveW,
-                                                   rect.top + 20.0f + (artSize - waveH) * 0.5f,
-                                                   rect.right - 24.0f,
-                                                   rect.top + 20.0f + (artSize + waveH) * 0.5f);
                 const float textLeft = artRect.right + 18.0f;
-                const float textRight = waveRect.left - 16.0f;
+                const float textRight = rect.right - 24.0f;
                 IDWriteTextFormat* titleFmt = mediaTitleFormat_ ? mediaTitleFormat_.Get()
                     : (textFormat_ ? textFormat_.Get() : boldTextFormat_.Get());
                 IDWriteTextFormat* artistFmt = mediaArtistFormat_ ? mediaArtistFormat_.Get()
@@ -13335,20 +13738,6 @@ class Renderer {
                     }
                 }
                 mutedBrush_->SetOpacity(0.75f);
-                if (state.media.playing) {
-                    DrawSpectrum(state, waveRect, settings, now);
-                } else {
-                    const float gap = 2.5f;
-                    const float availableW = waveRect.right - waveRect.left;
-                    const int count = 7;
-                    const float barWidth = (availableW - gap * (count - 1)) / count;
-                    const float centerY = (waveRect.top + waveRect.bottom) * 0.5f;
-                    mutedBrush_->SetOpacity(0.5f);
-                    for (int i = 0; i < count; ++i) {
-                        const float dotX = waveRect.left + i * (barWidth + gap) + barWidth * 0.5f;
-                        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, centerY), 1.2f, 1.2f), mutedBrush_.Get());
-                    }
-                }
                 const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 88.0f);
                 DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 18.0f), now);
                 }
@@ -13685,6 +14074,9 @@ class Renderer {
                         artLayer);
                 }
                 DrawAlbumArtDrop(state.media, artDrawRect, now, artDrawRadius);
+                if (artMorph > 0.35f) {
+                    DrawArtLedCrown(state, artDrawRect, artDrawRadius, artAlphaEff * artMorph, now);
+                }
                 if (artLayer) {
                     target_->PopLayer();
                 }
@@ -15652,6 +16044,10 @@ class Renderer {
                 std::fill(std::begin(specPeakVel_), std::end(specPeakVel_), 0.0f);
                 specBassSlow_ = 0.0f;
                 specKick_ = 0.0f;
+                specInstant_ = 0.0f;
+                specVoice_ = 0.0f;
+                specVoiceSlow_ = 0.0f;
+                specVoiceHit_ = 0.0f;
             }
         } else if (key != specKey_ && !state.media.title.empty()) {
             const bool running = specStart_ >= 0.0 && (now - specStart_) < 0.35;
@@ -17559,6 +17955,15 @@ class Renderer {
     float specBass_ = 0.0f;
     float specBassSlow_ = 0.0f;
     float specKick_ = 0.0f;
+    float specInstant_ = 0.0f;
+    float specVoice_ = 0.0f;
+    float specVoiceSlow_ = 0.0f;
+    float specVoiceHit_ = 0.0f;
+    AuraSpark auraSparks_[kAuraSparks] = {};
+    bool auraSparksInit_ = false;
+    float artRipples_[4] = {};
+    int artRippleWrite_ = 0;
+    float lastRippleOnset_ = 0.0f;
     float specDt_ = 0.016f;
     float specPeak_[kSpectrumBands] = {};
     float specPeakVel_[kSpectrumBands] = {};
