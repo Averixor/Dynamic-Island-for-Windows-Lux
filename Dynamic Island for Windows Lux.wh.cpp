@@ -4,7 +4,7 @@
 // @description A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
 // @version 1.4.0
 // @author Himanshu
-// @github https://github.com/devcode90
+// @github https://github.com/Averixor
 // @include windhawk.exe
 // @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm
 // @license MIT
@@ -5548,7 +5548,7 @@ DWORD WINAPI WeatherThreadProc(void*) {
     return 0;
 }
 constexpr wchar_t kLyricsUserAgent[] =
-    L"DynamicIslandForWindowsLux/" WH_MOD_VERSION L" (https://github.com/devcode90/Dynamic-Island-for-Windows)";
+    L"DynamicIslandForWindowsLux/" WH_MOD_VERSION L" (https://github.com/Averixor/Dynamic-Island-for-Windows-Lux)";
 bool IsUrlSafeChar(unsigned char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
            c == '-' || c == '_' || c == '.' || c == '~';
@@ -7733,7 +7733,7 @@ int LookupRowAtContentPoint(const MediaContentPoint& pt, int rowCount, bool head
     return index;
 }
 constexpr wchar_t kLookupUserAgent[] =
-    L"DynamicIslandForWindowsLux/" WH_MOD_VERSION L" (https://github.com/devcode90/Dynamic-Island-for-Windows) QuickLookup";
+    L"DynamicIslandForWindowsLux/" WH_MOD_VERSION L" (https://github.com/Averixor/Dynamic-Island-for-Windows-Lux) QuickLookup";
 std::atomic<uint64_t> g_lookupRequestSeq{0};
 bool g_lookupHotkeyRegistered = false;
 namespace QuickLookup {
