@@ -36,6 +36,14 @@
   - OffsetY: 0
     $name: Зсув по Y
     $description: Додатковий вертикальний зсув у пікселях (разом із перетягуванням мишкою)
+  - Language: uk
+    $name: Мова
+    $description: Мова острова, меню і дат. Авто — мова Windows
+    $options:
+    - auto: Авто
+    - uk: Українська
+    - en: English
+    - ru: Русский
 - Behavior:
   - AlwaysOnTop: true
     $name: Поверх усіх вікон
@@ -86,6 +94,42 @@
   - AuraIntensity: 70
     $name: Сила ореолу
     $description: Яскравість підсвітки навколо острова (від 0 до 100)
+- Animations:
+  - AnimationStyle: smooth
+    $name: Стиль анімації
+    $description: Як острів розгортається, ховається і змінює розмір. Плавний — рекомендований
+    $options:
+    - smooth: Плавний (рекомендовано)
+    - default: Стандартний
+    - bouncy: Пружний
+    - snappy: Різкий
+  - AnimationSpeed: normal
+    $name: Швидкість анімації
+    $description: Множник тривалості переходів острова
+    $options:
+    - very-slow: Дуже повільно
+    - slow: Повільно
+    - normal: Нормально
+    - fast: Швидко
+    - very-fast: Дуже швидко
+    - ultra-fast: Максимально
+  - TargetFPS: auto
+    $name: Частота кадрів
+    $description: Максимум кадрів на секунду. Авто — частота монітора, не вище 240
+    $options:
+    - auto: Авто
+    - "30": 30 FPS
+    - "60": 60 FPS
+    - "120": 120 FPS
+    - "144": 144 FPS
+    - "165": 165 FPS
+    - "240": 240 FPS
+  - ExpandedMediaTransitions: false
+    $name: Переходи розгорнутого плеєра
+    $description: Анімація зміни джерела медіа в розгорнутому плеєрі
+  - PillCoverSpin: false
+    $name: Анімація обкладинки
+    $description: Обертання обкладинки на згорнутій пігулці під час відтворення
 - Modules:
   - Media: true
     $name: Медіа
@@ -513,14 +557,14 @@ struct ThemePalette {
     const wchar_t* border;
 };
 static constexpr ThemePalette kThemePalettes[] = {
-    {L"obsidian", L"Обсидіан (за замовчуванням)", L"#08080A", L"#FFFFFF", L"#9B9BA5", L"#1E1E22"},
-    {L"graphite", L"Графіт", L"#1C1C1E", L"#FFFFFF", L"#A8A8AE", L"#323236"},
-    {L"slate", L"Сланець", L"#111721", L"#E9EEF6", L"#92A2B8", L"#232C3A"},
+    {L"obsidian", L"Obsidian (default)", L"#08080A", L"#FFFFFF", L"#9B9BA5", L"#1E1E22"},
+    {L"graphite", L"Graphite", L"#1C1C1E", L"#FFFFFF", L"#A8A8AE", L"#323236"},
+    {L"slate", L"Slate", L"#111721", L"#E9EEF6", L"#92A2B8", L"#232C3A"},
     {L"nord", L"Nord", L"#2E3440", L"#ECEFF4", L"#A7B0C0", L"#3B4252"},
-    {L"evergreen", L"Вічнозелений", L"#0C1512", L"#E4F1EA", L"#8CAE9D", L"#1A2A23"},
-    {L"espresso", L"Еспресо", L"#1A1512", L"#F6EEE7", L"#B7A395", L"#2E2420"},
-    {L"plum", L"Слива", L"#16111C", L"#F1EAF6", L"#AC9BB9", L"#281F33"},
-    {L"porcelain", L"Порцеляна (світла)", L"#F5F6F8", L"#14161A", L"#5B6270", L"#D8DBE1"},
+    {L"evergreen", L"Evergreen", L"#0C1512", L"#E4F1EA", L"#8CAE9D", L"#1A2A23"},
+    {L"espresso", L"Espresso", L"#1A1512", L"#F6EEE7", L"#B7A395", L"#2E2420"},
+    {L"plum", L"Plum", L"#16111C", L"#F1EAF6", L"#AC9BB9", L"#281F33"},
+    {L"porcelain", L"Porcelain (light)", L"#F5F6F8", L"#14161A", L"#5B6270", L"#D8DBE1"},
 };
 static constexpr int kCustomThemeIndex = static_cast<int>(ARRAYSIZE(kThemePalettes));
 static constexpr const wchar_t* kThemeValueName = L"ColorThemeV2";
@@ -569,7 +613,7 @@ struct Settings {
     AccentMode accentMode = AccentMode::Auto;
     D2D1_COLOR_F customAccent = D2D1::ColorF(0x4cc9f0);
     int targetFps = 0;
-    AnimationStyle animationStyle = AnimationStyle::Default;
+    AnimationStyle animationStyle = AnimationStyle::Smooth;
     ProgressStyle progressStyle = ProgressStyle::Slim;
     SpectrumStyle spectrumStyle = SpectrumStyle::Bars;
     bool expandedMediaAnim = false;
@@ -664,7 +708,7 @@ struct Settings {
     bool mediaPillDate = true;
     bool dateFirst = false;
     int firstDayOfWeek = -1;
-    std::wstring language = L"auto";
+    std::wstring language = L"uk";
     bool fileTrayModule = false;
     int fileTrayMaxItems = 10;
     bool fileTrayPersist = true;
@@ -1263,23 +1307,39 @@ void StepIdleTab(int direction) {
     g_layoutDirty = true;
 }
 enum class UiLanguage {
+    Ukrainian,
     English,
-    French,
-    Spanish,
-    German,
-    Portuguese,
-    Italian,
     Russian,
-    Turkish,
-    Hindi,
-    ChineseSimplified,
-    Japanese,
-    Korean,
     Count,
 };
-std::atomic<int> g_uiLanguage{static_cast<int>(UiLanguage::English)};
-constexpr wchar_t kUiLocaleName[] = L"uk-UA";
+std::atomic<int> g_uiLanguage{static_cast<int>(UiLanguage::Ukrainian)};
 bool EqualsNoCase(std::wstring_view a, std::wstring_view b);
+inline const wchar_t* UiLocaleName() {
+    switch (static_cast<UiLanguage>(g_uiLanguage.load(std::memory_order_relaxed))) {
+        case UiLanguage::English: return L"en-US";
+        case UiLanguage::Russian: return L"ru-RU";
+        default: return L"uk-UA";
+    }
+}
+UiLanguage DetectUiLanguage() {
+    wchar_t name[LOCALE_NAME_MAX_LENGTH] = {};
+    if (GetUserDefaultLocaleName(name, ARRAYSIZE(name)) > 0) {
+        if (_wcsnicmp(name, L"uk", 2) == 0) return UiLanguage::Ukrainian;
+        if (_wcsnicmp(name, L"ru", 2) == 0) return UiLanguage::Russian;
+    }
+    return UiLanguage::English;
+}
+void ApplyUiLanguage(std::wstring_view value) {
+    UiLanguage lang = UiLanguage::Ukrainian;
+    if (EqualsNoCase(value, L"en") || EqualsNoCase(value, L"english")) {
+        lang = UiLanguage::English;
+    } else if (EqualsNoCase(value, L"ru") || EqualsNoCase(value, L"russian")) {
+        lang = UiLanguage::Russian;
+    } else if (EqualsNoCase(value, L"auto")) {
+        lang = DetectUiLanguage();
+    }
+    g_uiLanguage.store(static_cast<int>(lang), std::memory_order_relaxed);
+}
 const wchar_t* ResolveClockFormatPattern(const std::wstring& preset, bool forceSeconds) {
     if (preset.empty() || EqualsNoCase(preset, L"system")) {
         return nullptr;
@@ -1305,14 +1365,14 @@ std::wstring FormatIslandTime(const SYSTEMTIME& local, const std::wstring& clock
     const bool followSystem = clockFormat.empty() || EqualsNoCase(clockFormat, L"system");
     if (followSystem) {
         const DWORD flags = forceSeconds ? 0 : TIME_NOSECONDS;
-        if (GetTimeFormatEx(kUiLocaleName, flags, &local, nullptr, buffer,
+        if (GetTimeFormatEx(UiLocaleName(), flags, &local, nullptr, buffer,
                             ARRAYSIZE(buffer)) > 0) {
             return buffer;
         }
         return L"--:--";
     }
     const wchar_t* pattern = ResolveClockFormatPattern(clockFormat, forceSeconds);
-    if (pattern && GetTimeFormatEx(kUiLocaleName, 0, &local, pattern, buffer,
+    if (pattern && GetTimeFormatEx(UiLocaleName(), 0, &local, pattern, buffer,
                                    ARRAYSIZE(buffer)) > 0) {
         return buffer;
     }
@@ -1346,12 +1406,12 @@ std::wstring FormatIslandDate(const SYSTEMTIME& local, const std::wstring& custo
     const wchar_t* preset = ResolveDateFormatPattern(customFormat);
     const wchar_t* pattern = preset ? preset
                                     : (!customFormat.empty() ? customFormat.c_str() : fallbackPattern);
-    if (pattern && GetDateFormatEx(kUiLocaleName, 0, &local, pattern, buffer,
+    if (pattern && GetDateFormatEx(UiLocaleName(), 0, &local, pattern, buffer,
                                    ARRAYSIZE(buffer), nullptr) > 0) {
         return buffer;
     }
     if (fallbackPattern &&
-        GetDateFormatEx(kUiLocaleName, 0, &local, fallbackPattern, buffer,
+        GetDateFormatEx(UiLocaleName(), 0, &local, fallbackPattern, buffer,
                         ARRAYSIZE(buffer), nullptr) > 0) {
         return buffer;
     }
@@ -1362,92 +1422,194 @@ inline bool MediaPillShowsTimeOrDate(const Settings& settings) {
 }
 const wchar_t* Loc(const wchar_t* english) {
     struct Row {
-        const wchar_t* key;
+        const wchar_t* en;
         const wchar_t* uk;
+        const wchar_t* ru;
     };
     static const Row kRows[] = {
-        {L"Media", L"Медіа"},
-        {L"Calendar", L"Календар"},
-        {L"Weather", L"Погода"},
-        {L"Hardware Monitor", L"Монітор системи"},
-        {L"File Tray", L"Файловий лоток"},
-        {L"Bluetooth", L"Bluetooth"},
-        {L"Copied", L"Скопійовано"},
-        {L"Volume", L"Гучність"},
-        {L"Brightness", L"Яскравість"},
-        {L"Muted", L"Без звуку"},
-        {L"Low Battery", L"Низький заряд"},
-        {L"Charging", L"Заряджання"},
-        {L"Connected", L"Підключено"},
-        {L"Disconnected", L"Відключено"},
-        {L"Caps Lock", L"Caps Lock"},
-        {L"Num Lock", L"Num Lock"},
-        {L"On", L"Увімк"},
-        {L"Off", L"Вимк"},
-        {L"Do Not Disturb", L"Не турбувати"},
-        {L"Focus", L"Фокус"},
-        {L"Break", L"Перерва"},
-        {L"Unknown", L"Невідомо"},
-        {L"Loading...", L"Завантаження..."},
-        {L"Locating...", L"Визначення..."},
-        {L"Wind", L"Вітер"},
-        {L"Feels Like", L"Відчувається"},
-        {L"Humidity", L"Вологість"},
-        {L"Drag files here", L"Перетягніть файли сюди"},
-        {L"No devices", L"Немає пристроїв"},
-        {L"item", L"елемент"},
-        {L"items", L"елементів"},
-        {L"Media source", L"Джерело медіа"},
-        {L"Auto", L"Авто"},
-        {L"Playing from %s", L"Грає з %s"},
-        {L"Paused in %s", L"Пауза в %s"},
-        {L"Focus Complete", L"Фокус завершено"},
-        {L"Break Complete", L"Перерву завершено"},
-        {L"Focus Timer", L"Таймер фокусу"},
-        {L"Break Timer", L"Таймер перерви"},
-        {L"Device Connected", L"Пристрій підключено"},
-        {L"Device Removed", L"Пристрій відключено"},
-        {L"Bluetooth Device", L"Пристрій Bluetooth"},
-        {L"Power Connected", L"Живлення підключено"},
-        {L"Battery Alert", L"Сповіщення батареї"},
-        {L"Progress", L"Прогрес"},
-        {L"Image copied", L"Зображення скопійовано"},
-        {L"Clipboard", L"Буфер обміну"},
-        {L"Notification", L"Сповіщення"},
-        {L"USB Device", L"USB-пристрій"},
-        {L"USB Drive", L"USB-накопичувач"},
-        {L"COM Device", L"COM-пристрій"},
-        {L"System audio", L"Системний звук"},
-        {L"Local Weather", L"Місцева погода"},
-        {L"Camera in use", L"Камера використовується"},
-        {L"Microphone in use", L"Мікрофон використовується"},
-        {L"Camera & microphone in use", L"Камера і мікрофон використовуються"},
-        {L"%s is using your camera", L"%s використовує вашу камеру"},
-        {L"%s is using your microphone", L"%s використовує ваш мікрофон"},
-        {L"%s is using camera & microphone", L"%s використовує камеру і мікрофон"},
-        {L"%s & %s using camera & mic", L"%s і %s використовують камеру і мікрофон"},
-        {L"Looking up...", L"Пошук..."},
-        {L"No result found", L"Нічого не знайдено"},
-        {L"Type a word or phrase, then press Enter", L"Введіть слово або фразу й натисніть Enter"},
-        {L"Search a word or phrase", L"Пошук слова або фрази"},
-        {L"Recent", L"Нещодавні"},
-        {L"Clear", L"Очистити"},
-        {L"Look up", L"Шукати"},
-        {L"%d%% \u2022 %luh %02lum left", L"%d%% \u2022 залишилось %luh %02lum"},
-        {L"Lyrics", L"Текст пісні"},
-        {L"Fetching lyrics...", L"Завантаження тексту..."},
-        {L"No lyrics found for this track.", L"Текст для цього треку не знайдено."},
-        {L"No synced lyrics", L"Немає синхронізованого тексту"},
-        {L"No lyrics found", L"Текст не знайдено"},
-        {L"New notification", L"Нове сповіщення"},
+        {L"Media", L"Медіа", L"Медиа"},
+        {L"Calendar", L"Календар", L"Календарь"},
+        {L"Weather", L"Погода", L"Погода"},
+        {L"Hardware Monitor", L"Монітор системи", L"Монитор системы"},
+        {L"File Tray", L"Файловий лоток", L"Файловый лоток"},
+        {L"Bluetooth", L"Bluetooth", L"Bluetooth"},
+        {L"Speakers", L"Динаміки", L"Динамики"},
+        {L"Copied", L"Скопійовано", L"Скопировано"},
+        {L"Volume", L"Гучність", L"Громкость"},
+        {L"Brightness", L"Яскравість", L"Яркость"},
+        {L"Muted", L"Без звуку", L"Без звука"},
+        {L"Low Battery", L"Низький заряд", L"Низкий заряд"},
+        {L"Charging", L"Заряджання", L"Зарядка"},
+        {L"Connected", L"Підключено", L"Подключено"},
+        {L"Disconnected", L"Відключено", L"Отключено"},
+        {L"Caps Lock", L"Caps Lock", L"Caps Lock"},
+        {L"Num Lock", L"Num Lock", L"Num Lock"},
+        {L"On", L"Увімк", L"Вкл"},
+        {L"Off", L"Вимк", L"Выкл"},
+        {L"Do Not Disturb", L"Не турбувати", L"Не беспокоить"},
+        {L"Focus", L"Фокус", L"Фокус"},
+        {L"Break", L"Перерва", L"Перерыв"},
+        {L"Unknown", L"Невідомо", L"Неизвестно"},
+        {L"Loading...", L"Завантаження...", L"Загрузка..."},
+        {L"Locating...", L"Визначення...", L"Определение..."},
+        {L"Wind", L"Вітер", L"Ветер"},
+        {L"Feels Like", L"Відчувається", L"Ощущается"},
+        {L"Humidity", L"Вологість", L"Влажность"},
+        {L"Drag files here", L"Перетягніть файли сюди", L"Перетащите файлы сюда"},
+        {L"No devices", L"Немає пристроїв", L"Нет устройств"},
+        {L"item", L"елемент", L"элемент"},
+        {L"items", L"елементів", L"элементов"},
+        {L"Media source", L"Джерело медіа", L"Источник медиа"},
+        {L"Auto", L"Авто", L"Авто"},
+        {L"Playing from %s", L"Грає з %s", L"Играет из %s"},
+        {L"Paused in %s", L"Пауза в %s", L"Пауза в %s"},
+        {L"Focus Complete", L"Фокус завершено", L"Фокус завершён"},
+        {L"Break Complete", L"Перерву завершено", L"Перерыв завершён"},
+        {L"Focus Timer", L"Таймер фокусу", L"Таймер фокуса"},
+        {L"Break Timer", L"Таймер перерви", L"Таймер перерыва"},
+        {L"Device Connected", L"Пристрій підключено", L"Устройство подключено"},
+        {L"Device Removed", L"Пристрій відключено", L"Устройство отключено"},
+        {L"Bluetooth Device", L"Пристрій Bluetooth", L"Устройство Bluetooth"},
+        {L"Power Connected", L"Живлення підключено", L"Питание подключено"},
+        {L"Battery Alert", L"Сповіщення батареї", L"Уведомление батареи"},
+        {L"Progress", L"Прогрес", L"Прогресс"},
+        {L"Image copied", L"Зображення скопійовано", L"Изображение скопировано"},
+        {L"Clipboard", L"Буфер обміну", L"Буфер обмена"},
+        {L"Notification", L"Сповіщення", L"Уведомление"},
+        {L"USB Device", L"USB-пристрій", L"USB-устройство"},
+        {L"USB Drive", L"USB-накопичувач", L"USB-накопитель"},
+        {L"COM Device", L"COM-пристрій", L"COM-устройство"},
+        {L"System audio", L"Системний звук", L"Системный звук"},
+        {L"Local Weather", L"Місцева погода", L"Местная погода"},
+        {L"Camera in use", L"Камера використовується", L"Камера используется"},
+        {L"Microphone in use", L"Мікрофон використовується", L"Микрофон используется"},
+        {L"Camera & microphone in use", L"Камера і мікрофон використовуються", L"Камера и микрофон используются"},
+        {L"%s is using your camera", L"%s використовує вашу камеру", L"%s использует вашу камеру"},
+        {L"%s is using your microphone", L"%s використовує ваш мікрофон", L"%s использует ваш микрофон"},
+        {L"%s is using camera & microphone", L"%s використовує камеру і мікрофон", L"%s использует камеру и микрофон"},
+        {L"%s & %s using camera & mic", L"%s і %s використовують камеру і мікрофон", L"%s и %s используют камеру и микрофон"},
+        {L"Looking up...", L"Пошук...", L"Поиск..."},
+        {L"No result found", L"Нічого не знайдено", L"Ничего не найдено"},
+        {L"Type a word or phrase, then press Enter", L"Введіть слово або фразу й натисніть Enter", L"Введите слово или фразу и нажмите Enter"},
+        {L"Search a word or phrase", L"Пошук слова або фрази", L"Поиск слова или фразы"},
+        {L"Recent", L"Нещодавні", L"Недавние"},
+        {L"Clear", L"Очистити", L"Очистить"},
+        {L"Look up", L"Шукати", L"Искать"},
+        {L"%d%% \u2022 %luh %02lum left", L"%d%% \u2022 залишилось %lu год %02lu хв", L"%d%% \u2022 осталось %lu ч %02lu мин"},
+        {L"Lyrics", L"Текст пісні", L"Текст песни"},
+        {L"Fetching lyrics...", L"Завантаження тексту...", L"Загрузка текста..."},
+        {L"No lyrics found for this track.", L"Текст для цього треку не знайдено.", L"Текст для этого трека не найден."},
+        {L"No synced lyrics", L"Немає синхронізованого тексту", L"Нет синхронизированного текста"},
+        {L"No lyrics found", L"Текст не знайдено", L"Текст не найден"},
+        {L"New notification", L"Нове сповіщення", L"Новое уведомление"},
+        {L"Show island", L"Показати острів", L"Показать остров"},
+        {L"Hide island", L"Сховати острів", L"Скрыть остров"},
+        {L"Reset position", L"Скинути позицію", L"Сбросить позицию"},
+        {L"Close", L"Закрити", L"Закрыть"},
+        {L"Start 25 min focus", L"Старт 25 хв фокусу", L"Старт 25 мин фокуса"},
+        {L"Start 50 min focus", L"Старт 50 хв фокусу", L"Старт 50 мин фокуса"},
+        {L"Start 5 min break", L"Старт 5 хв перерви", L"Старт 5 мин перерыва"},
+        {L"Pause timer", L"Пауза таймера", L"Пауза таймера"},
+        {L"Resume timer", L"Продовжити таймер", L"Продолжить таймер"},
+        {L"Stop timer", L"Зупинити таймер", L"Остановить таймер"},
+        {L"Paste from clipboard", L"Вставити з буфера", L"Вставить из буфера"},
+        {L"Clear tray", L"Очистити лоток", L"Очистить лоток"},
+        {L"Pin expanded", L"Закріпити розгорнутим", L"Закрепить развёрнутым"},
+        {L"Hide game overlay", L"Сховати ігровий оверлей", L"Скрыть игровой оверлей"},
+        {L"Show game overlay", L"Показати ігровий оверлей", L"Показать игровой оверлей"},
+        {L"iPhone pill", L"Пігулка iPhone", L"Пилюля iPhone"},
+        {L"Windows 11 flyout", L"Виліт Windows 11", L"Вылет Windows 11"},
+        {L"macOS notch", L"Виріз macOS", L"Вырез macOS"},
+        {L"macOS notch (unavailable at bottom)", L"Виріз macOS (недоступно знизу)", L"Вырез macOS (недоступно снизу)"},
+        {L"Shape", L"Форма", L"Форма"},
+        {L"Expand on click", L"Розгортати кліком", L"Разворачивать кликом"},
+        {L"Expand on hover", L"Розгортати наведенням", L"Разворачивать наведением"},
+        {L"Lyrics on collapsed island", L"Текст пісні на згорнутому острові", L"Текст песни на свёрнутом острове"},
+        {L"Lyrics as first tab", L"Текст пісні першою вкладкою", L"Текст песни первой вкладкой"},
+        {L"Lyrics in media tab", L"Текст пісні у вкладці медіа", L"Текст песни во вкладке медиа"},
+        {L"Clear lyrics cache", L"Очистити кеш текстів", L"Очистить кэш текстов"},
+        {L"Earlier +10 ms", L"Раніше +10 мс", L"Раньше +10 мс"},
+        {L"Earlier +50 ms", L"Раніше +50 мс", L"Раньше +50 мс"},
+        {L"Earlier +250 ms", L"Раніше +250 мс", L"Раньше +250 мс"},
+        {L"Later -10 ms", L"Пізніше −10 мс", L"Позже −10 мс"},
+        {L"Later -50 ms", L"Пізніше −50 мс", L"Позже −50 мс"},
+        {L"Later -250 ms", L"Пізніше −250 мс", L"Позже −250 мс"},
+        {L"Reset this profile", L"Скинути цей профіль", L"Сбросить этот профиль"},
+        {L"Lyrics sync", L"Синхронізація тексту", L"Синхронизация текста"},
+        {L"100% (opaque)", L"100% (непрозора)", L"100% (непрозрачная)"},
+        {L"Use theme", L"Як у темі", L"Как в теме"},
+        {L"Opacity", L"Прозорість", L"Прозрачность"},
+        {L"Custom colors", L"Власні кольори", L"Свои цвета"},
+        {L"Theme", L"Тема", L"Тема"},
+        {L"Adaptive theme", L"Адаптивна тема", L"Адаптивная тема"},
+        {L"Disabled", L"Вимкнено", L"Выключено"},
+        {L"Glow", L"Свічення", L"Свечение"},
+        {L"Rays", L"Промені", L"Лучи"},
+        {L"Rings", L"Кільця", L"Кольца"},
+        {L"Orbit", L"Орбіта", L"Орбита"},
+        {L"Aura", L"Ореол", L"Ореол"},
+        {L"Open Windhawk settings", L"Відкрити налаштування Windhawk", L"Открыть настройки Windhawk"},
+        {L"CPU", L"ЦП", L"ЦП"},
+        {L"RAM", L"ОП", L"ОЗУ"},
+        {L"GPU", L"ГП", L"ГП"},
+        {L"DISK", L"ДИСК", L"ДИСК"},
+        {L"NET UP", L"МЕРЕЖА ↑", L"СЕТЬ ↑"},
+        {L"NET DOWN", L"МЕРЕЖА ↓", L"СЕТЬ ↓"},
+        {L"FPS", L"FPS", L"FPS"},
+        {L" km/h", L" км/год", L" км/ч"},
+        {L" mph", L" миль/год", L" миль/ч"},
+        {L"Mbps", L"Мбіт/с", L"Мбит/с"},
+        {L"GB", L"ГБ", L"ГБ"},
+        {L"ms", L"мс", L"мс"},
+        {L"noun", L"іменник", L"существительное"},
+        {L"verb", L"дієслово", L"глагол"},
+        {L"adjective", L"прикметник", L"прилагательное"},
+        {L"adverb", L"прислівник", L"наречие"},
+        {L"pronoun", L"займенник", L"местоимение"},
+        {L"preposition", L"прийменник", L"предлог"},
+        {L"conjunction", L"сполучник", L"союз"},
+        {L"interjection", L"вигук", L"междометие"},
+        {L"determiner", L"детермінатив", L"определитель"},
+        {L"exclamation", L"вигук", L"междометие"},
+        {L"Dictionary", L"Словник", L"Словарь"},
+        {L"Obsidian (default)", L"Обсидіан (за замовчуванням)", L"Обсидиан (по умолчанию)"},
+        {L"Graphite", L"Графіт", L"Графит"},
+        {L"Slate", L"Сланець", L"Сланец"},
+        {L"Nord", L"Nord", L"Nord"},
+        {L"Evergreen", L"Вічнозелений", L"Вечнозелёный"},
+        {L"Espresso", L"Еспресо", L"Эспрессо"},
+        {L"Plum", L"Слива", L"Слива"},
+        {L"Porcelain (light)", L"Порцеляна (світла)", L"Фарфор (светлая)"},
     };
-    (void)g_uiLanguage;
+    const int lang = g_uiLanguage.load(std::memory_order_relaxed);
+    if (lang == static_cast<int>(UiLanguage::English) || !english) {
+        return english;
+    }
     for (const Row& row : kRows) {
-        if (wcscmp(row.key, english) == 0) {
-            return row.uk;
+        if (wcscmp(row.en, english) == 0) {
+            return lang == static_cast<int>(UiLanguage::Russian) ? row.ru : row.uk;
         }
     }
     return english;
+}
+std::wstring LocalizePosTag(const std::wstring& pos) {
+    if (pos.empty()) {
+        return pos;
+    }
+    if (EqualsNoCase(pos, L"noun")) return Loc(L"noun");
+    if (EqualsNoCase(pos, L"verb")) return Loc(L"verb");
+    if (EqualsNoCase(pos, L"adjective")) return Loc(L"adjective");
+    if (EqualsNoCase(pos, L"adverb")) return Loc(L"adverb");
+    if (EqualsNoCase(pos, L"pronoun")) return Loc(L"pronoun");
+    if (EqualsNoCase(pos, L"preposition")) return Loc(L"preposition");
+    if (EqualsNoCase(pos, L"conjunction")) return Loc(L"conjunction");
+    if (EqualsNoCase(pos, L"interjection") || EqualsNoCase(pos, L"exclamation")) {
+        return Loc(L"interjection");
+    }
+    if (EqualsNoCase(pos, L"determiner") || EqualsNoCase(pos, L"article")) {
+        return Loc(L"determiner");
+    }
+    return pos;
 }
 MediaContentPoint MediaContentFromClient(int clientX, int clientY, bool allowStaleStamp = false) {
     MediaContentPoint out;
@@ -2193,16 +2355,17 @@ void LoadSettings() {
     } else {
         next.targetFps = _wtoi(fpsStr.c_str());
         if (next.targetFps < 0) next.targetFps = 0;
+        if (next.targetFps > 240) next.targetFps = 240;
     }
     const std::wstring styleStr = GetStringSettingWithFallback(L"Animations.AnimationStyle", L"Appearance.AnimationStyle");
-    if (EqualsNoCase(styleStr, L"smooth")) {
-        next.animationStyle = AnimationStyle::Smooth;
+    if (EqualsNoCase(styleStr, L"default")) {
+        next.animationStyle = AnimationStyle::Default;
     } else if (EqualsNoCase(styleStr, L"bouncy")) {
         next.animationStyle = AnimationStyle::Bouncy;
     } else if (EqualsNoCase(styleStr, L"snappy")) {
         next.animationStyle = AnimationStyle::Snappy;
     } else {
-        next.animationStyle = AnimationStyle::Default;
+        next.animationStyle = AnimationStyle::Smooth;
     }
     const std::wstring progressStr = GetStringSettingCopy(L"Appearance.ProgressStyle");
     if (EqualsNoCase(progressStr, L"wavy")) {
@@ -2387,8 +2550,11 @@ void LoadSettings() {
     next.mediaPillClock = Wh_GetIntSetting(L"Modules.MediaPillClock") != 0;
     next.mediaPillDate = Wh_GetIntSetting(L"Modules.MediaPillDate") != 0;
     {
-        next.language = L"uk";
-        g_uiLanguage.store(static_cast<int>(UiLanguage::English), std::memory_order_relaxed);
+        next.language = GetStringSettingCopy(L"Appearance.Language");
+        if (next.language.empty()) {
+            next.language = L"uk";
+        }
+        ApplyUiLanguage(next.language);
     }
     next.fileTrayModule = Wh_GetIntSetting(L"Modules.FileTrayModule") != 0;
     next.fileTrayMaxItems = ClampInt(Wh_GetIntSetting(L"Modules.FileTrayMaxItems"), 1, 25);
@@ -2688,6 +2854,11 @@ void LoadSettings() {
         next.contourBorderEnabled = defaults.contourBorderEnabled;
         next.expandedMediaAnim = defaults.expandedMediaAnim;
         next.pillCoverAnim = defaults.pillCoverAnim;
+        next.animationStyle = defaults.animationStyle;
+        next.animationSpeed = defaults.animationSpeed;
+        next.targetFps = defaults.targetFps;
+        next.language = defaults.language;
+        ApplyUiLanguage(next.language);
         next.autoDpiScale = defaults.autoDpiScale;
         next.unhideOnHover = defaults.unhideOnHover;
         next.alwaysOnTop = defaults.alwaysOnTop;
@@ -7925,14 +8096,20 @@ std::wstring CollapseWhitespace(const std::wstring& in, size_t maxChars = std::w
             pendingSpace = !out.empty();
             continue;
         }
+        if (out.size() >= maxChars) {
+            break;
+        }
         if (pendingSpace) {
+            if (out.size() + 1 >= maxChars) {
+                break;
+            }
             out.push_back(L' ');
             pendingSpace = false;
         }
-        out.push_back(ch);
-        if (out.size() > maxChars) {
+        if (out.size() >= maxChars) {
             break;
         }
+        out.push_back(ch);
     }
     return out;
 }
@@ -8183,14 +8360,14 @@ Outcome LookupDictionary(const std::wstring& word, Result* out) {
         if (!r.subtitle.empty()) {
             r.subtitle += L"  \u00b7  ";
         }
-        r.subtitle += pos;
+        r.subtitle += LocalizePosTag(pos);
     }
     r.body = ClipToChars(definition, kMaxBodyChars);
     const std::wstring example = CollapseWhitespace(JsonStringUnescape(exampleRaw));
     if (!example.empty()) {
         r.example = L"\u201c" + ClipToChars(example, 200) + L"\u201d";
     }
-    r.source = L"Dictionary";
+    r.source = Loc(L"Dictionary");
     *out = std::move(r);
     return Outcome::Found;
 }
@@ -8363,7 +8540,7 @@ bool ParseWiktionaryEnglish(const std::string& body, const std::wstring& title, 
         if (i > 0) {
             r.subtitle += L"  \u00b7  ";
         }
-        r.subtitle += partsOfSpeech[i];
+        r.subtitle += LocalizePosTag(partsOfSpeech[i]);
     }
     std::wstring bodyText;
     for (size_t i = 0; i < definitions.size(); ++i) {
@@ -9230,7 +9407,7 @@ std::vector<MediaSourceMenuItem> AppendMediaSourceItems(HMENU menu) {
         }
     }
     const bool autoMode = GetPreferredMediaSource().empty();
-    AppendMenuW(menu, MF_STRING | (autoMode ? MF_CHECKED : 0), kMediaSourceMenuIdBase, L"Авто");
+    AppendMenuW(menu, MF_STRING | (autoMode ? MF_CHECKED : 0), kMediaSourceMenuIdBase, Loc(L"Auto"));
     if (!items.empty()) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
@@ -9274,23 +9451,23 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         timerRunning = g_state.timer.running;
     }
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, 40, g_manuallyHidden.load() ? L"Показати острів" : L"Сховати острів");
-    AppendMenuW(menu, MF_STRING, 44, L"Скинути позицію");
-    AppendMenuW(menu, MF_STRING, 1, L"Закрити");
+    AppendMenuW(menu, MF_STRING, 40, g_manuallyHidden.load() ? Loc(L"Show island") : Loc(L"Hide island"));
+    AppendMenuW(menu, MF_STRING, 44, Loc(L"Reset position"));
+    AppendMenuW(menu, MF_STRING, 1, Loc(L"Close"));
     HMENU timerMenu = CreatePopupMenu();
-    AppendMenuW(timerMenu, MF_STRING, 30, L"Старт 25 хв фокусу");
-    AppendMenuW(timerMenu, MF_STRING, 31, L"Старт 50 хв фокусу");
-    AppendMenuW(timerMenu, MF_STRING, 32, L"Старт 5 хв перерви");
+    AppendMenuW(timerMenu, MF_STRING, 30, Loc(L"Start 25 min focus"));
+    AppendMenuW(timerMenu, MF_STRING, 31, Loc(L"Start 50 min focus"));
+    AppendMenuW(timerMenu, MF_STRING, 32, Loc(L"Start 5 min break"));
     if (timerActive) {
-        AppendMenuW(timerMenu, MF_STRING, 33, timerRunning ? L"Пауза таймера" : L"Продовжити таймер");
-        AppendMenuW(timerMenu, MF_STRING, 34, L"Зупинити таймер");
+        AppendMenuW(timerMenu, MF_STRING, 33, timerRunning ? Loc(L"Pause timer") : Loc(L"Resume timer"));
+        AppendMenuW(timerMenu, MF_STRING, 34, Loc(L"Stop timer"));
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), L"Таймер фокусу");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), Loc(L"Focus Timer"));
     std::vector<MediaSourceMenuItem> mediaSourceItems;
     {
         HMENU sourceMenu = CreatePopupMenu();
         mediaSourceItems = AppendMediaSourceItems(sourceMenu);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sourceMenu), L"Джерело медіа");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sourceMenu), Loc(L"Media source"));
     }
     if (settings.fileTrayModule) {
         size_t trayCount = 0;
@@ -9299,59 +9476,59 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             trayCount = g_state.fileTrayItems.size();
         }
         HMENU trayMenu = CreatePopupMenu();
-        AppendMenuW(trayMenu, MF_STRING, 42, L"Вставити з буфера");
+        AppendMenuW(trayMenu, MF_STRING, 42, Loc(L"Paste from clipboard"));
         const std::wstring clearLabel = trayCount == 0
-            ? std::wstring(L"Очистити лоток")
-            : L"Очистити лоток (" + std::to_wstring(trayCount) + L")";
+            ? std::wstring(Loc(L"Clear tray"))
+            : std::wstring(Loc(L"Clear tray")) + L" (" + std::to_wstring(trayCount) + L")";
         AppendMenuW(trayMenu, MF_STRING | (trayCount == 0 ? (MF_GRAYED | MF_DISABLED) : 0), 41,
                     clearLabel.c_str());
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), L"Файловий лоток");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), Loc(L"File Tray"));
     }
-    AppendMenuW(menu, MF_STRING, 2, L"Закріпити розгорнутим");
-    AppendMenuW(menu, MF_STRING, 3, g_gameOverlayPinned.load() ? L"Сховати ігровий оверлей" : L"Показати ігровий оверлей");
+    AppendMenuW(menu, MF_STRING, 2, Loc(L"Pin expanded"));
+    AppendMenuW(menu, MF_STRING, 3, g_gameOverlayPinned.load() ? Loc(L"Hide game overlay") : Loc(L"Show game overlay"));
     {
         const int currentShape = settings.notchStyle ? 2 : (settings.w11Style ? 1 : 0);
         HMENU shapeMenu = CreatePopupMenu();
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase, L"Пігулка iPhone");
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 1, L"Виліт Windows 11");
+        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase, Loc(L"iPhone pill"));
+        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 1, Loc(L"Windows 11 flyout"));
         if (IsBottomPosition(settings.position)) {
             AppendMenuW(shapeMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kShapeMenuIdBase + 2,
-                        L"Виріз macOS (недоступно знизу)");
+                        Loc(L"macOS notch (unavailable at bottom)"));
         } else {
-            AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 2, L"Виріз macOS");
+            AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 2, Loc(L"macOS notch"));
         }
         CheckMenuRadioItem(shapeMenu, kShapeMenuIdBase, kShapeMenuIdBase + 2,
                            kShapeMenuIdBase + static_cast<UINT>(currentShape), MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), L"Форма");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), Loc(L"Shape"));
     }
     const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
                           ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
                           : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-    AppendMenuW(menu, MF_STRING, 11, activeExpandOnHover ? L"Розгортати кліком" : L"Розгортати наведенням");
+    AppendMenuW(menu, MF_STRING, 11, activeExpandOnHover ? Loc(L"Expand on click") : Loc(L"Expand on hover"));
     AppendMenuW(menu, MF_STRING | (Wh_GetIntValue(L"CollapsedLyrics", 0) ? MF_CHECKED : 0), 13,
-                L"Текст пісні на згорнутому острові");
+                Loc(L"Lyrics on collapsed island"));
     AppendMenuW(menu,
                 MF_STRING | (Wh_GetIntValue(L"LyricsPinnedFirst", 0) ? MF_CHECKED : 0) |
                     (settings.lyrics ? 0 : (MF_GRAYED | MF_DISABLED)),
-                14, L"Текст пісні першою вкладкою");
+                14, Loc(L"Lyrics as first tab"));
     AppendMenuW(menu,
                 MF_STRING | (settings.mediaTabLyrics ? MF_CHECKED : 0),
-                15, L"Текст пісні у вкладці медіа");
+                15, Loc(L"Lyrics in media tab"));
     {
         bool cacheOn = false;
         {
             std::lock_guard lock(g_settingsMutex);
             cacheOn = settings.lyricsCache && settings.lyricsCacheMaxMB > 0;
         }
-        std::wstring cacheLabel = L"Очистити кеш текстів";
+        std::wstring cacheLabel = Loc(L"Clear lyrics cache");
         if (g_lyricsCacheCountsValid.load(std::memory_order_relaxed)) {
             const int songs = g_lyricsCacheFileCount.load(std::memory_order_relaxed);
             const uint64_t bytes = g_lyricsCacheBytes.load(std::memory_order_relaxed);
-            wchar_t detail[64] = {};
+            wchar_t detail[80] = {};
             if (bytes >= 1048576ull) {
-                swprintf_s(detail, L" (%d пісень, %.1f МБ)", songs, static_cast<double>(bytes) / 1048576.0);
+                swprintf_s(detail, L" (%d, %.1f MB)", songs, static_cast<double>(bytes) / 1048576.0);
             } else {
-                swprintf_s(detail, L" (%d пісень, %llu КБ)", songs,
+                swprintf_s(detail, L" (%d, %llu KB)", songs,
                            static_cast<unsigned long long>((bytes + 1023ull) / 1024ull));
             }
             cacheLabel += detail;
@@ -9362,57 +9539,58 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             const int effective = bt ? g_lyricsEffectiveOffsetBtMs.load(std::memory_order_relaxed)
                                      : g_lyricsEffectiveOffsetMs.load(std::memory_order_relaxed);
             wchar_t header[96] = {};
-            swprintf_s(header, L"%s: %+d мс", bt ? L"Bluetooth" : L"Динаміки", effective);
+            swprintf_s(header, L"%s: %+d %s", bt ? Loc(L"Bluetooth") : Loc(L"Speakers"),
+                       effective, Loc(L"ms"));
             HMENU lyricsSyncMenu = CreatePopupMenu();
             AppendMenuW(lyricsSyncMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kLyricsSyncMenuIdBase, header);
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 1, L"Раніше +10 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 2, L"Раніше +50 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 3, L"Раніше +250 мс");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 1, Loc(L"Earlier +10 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 2, Loc(L"Earlier +50 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 3, Loc(L"Earlier +250 ms"));
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 4, L"Пізніше −10 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 5, L"Пізніше −50 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 6, L"Пізніше −250 мс");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 4, Loc(L"Later -10 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 5, Loc(L"Later -50 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 6, Loc(L"Later -250 ms"));
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 7, L"Скинути цей профіль");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(lyricsSyncMenu), L"Синхронізація тексту");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 7, Loc(L"Reset this profile"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(lyricsSyncMenu), Loc(L"Lyrics sync"));
         }
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     const int activeOpacity = g_pillOpacityOverride.load();
     HMENU opacityMenu = CreatePopupMenu();
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 100 ? MF_CHECKED : 0), 4, L"100% (непрозора)");
+    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 100 ? MF_CHECKED : 0), 4, Loc(L"100% (opaque)"));
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 85 ? MF_CHECKED : 0), 5, L"85%");
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 70 ? MF_CHECKED : 0), 6, L"70%");
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 55 ? MF_CHECKED : 0), 7, L"55%");
     AppendMenuW(opacityMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity < 0 ? MF_CHECKED : 0), 8, L"Як у темі");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), L"Прозорість");
+    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity < 0 ? MF_CHECKED : 0), 8, Loc(L"Use theme"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), Loc(L"Opacity"));
     const int activeTheme = Wh_GetIntValue(kThemeValueName, static_cast<int>(settings.themePreset));
     HMENU themeMenu = CreatePopupMenu();
     for (int i = 0; i < kCustomThemeIndex; ++i) {
         AppendMenuW(themeMenu, MF_STRING | (activeTheme == i ? MF_CHECKED : 0),
-                    kThemeMenuIdBase + static_cast<UINT>(i), kThemePalettes[i].label);
+                    kThemeMenuIdBase + static_cast<UINT>(i), Loc(kThemePalettes[i].label));
     }
     AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(themeMenu, MF_STRING | (activeTheme >= kCustomThemeIndex ? MF_CHECKED : 0),
-                kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), L"Власні кольори");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Тема");
+                kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), Loc(L"Custom colors"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), Loc(L"Theme"));
     AppendMenuW(menu, MF_STRING | (settings.adaptiveTheme ? MF_CHECKED : 0), 16,
-                L"Адаптивна тема");
+                Loc(L"Adaptive theme"));
     {
         HMENU auraMenu = CreatePopupMenu();
         const UINT auraCmd = kAuraMenuIdBase + static_cast<UINT>(settings.auraStyle);
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, L"Вимкнено");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, L"Свічення");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, L"Промені");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, L"Кільця");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, L"Орбіта");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, Loc(L"Disabled"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, Loc(L"Glow"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, Loc(L"Rays"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, Loc(L"Rings"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, Loc(L"Orbit"));
         CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 5, auraCmd, MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), L"Ореол");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), Loc(L"Aura"));
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 9, L"Відкрити налаштування Windhawk");
+    AppendMenuW(menu, MF_STRING, 9, Loc(L"Open Windhawk settings"));
     SetForegroundWindow(hwnd);
     DwmBackdrop::EnsureBehind(hwnd);
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -11355,16 +11533,16 @@ class Renderer {
             calendarCachedDate_.wDay != local.wDay ||
             calendarCachedFirstDaySetting_ != settings.firstDayOfWeek) {
             wchar_t monthNameBuf[32] = {};
-            GetDateFormatEx(kUiLocaleName, 0, &local, L"MMMM", monthNameBuf, ARRAYSIZE(monthNameBuf), nullptr);
+            GetDateFormatEx(UiLocaleName(), 0, &local, L"MMMM", monthNameBuf, ARRAYSIZE(monthNameBuf), nullptr);
             calendarCachedMonthName_ = monthNameBuf;
             wchar_t weekdayNameBuf[32] = {};
-            GetDateFormatEx(kUiLocaleName, 0, &local, L"dddd", weekdayNameBuf, ARRAYSIZE(weekdayNameBuf), nullptr);
+            GetDateFormatEx(UiLocaleName(), 0, &local, L"dddd", weekdayNameBuf, ARRAYSIZE(weekdayNameBuf), nullptr);
             calendarCachedWeekdayName_ = weekdayNameBuf;
             calendarCachedFirstDay_ = settings.firstDayOfWeek;
             if (calendarCachedFirstDay_ < 0) {
                 DWORD localeFirstDay = 0;
                 calendarCachedFirstDay_ =
-                    GetLocaleInfoEx(kUiLocaleName, LOCALE_IFIRSTDAYOFWEEK | LOCALE_RETURN_NUMBER,
+                    GetLocaleInfoEx(UiLocaleName(), LOCALE_IFIRSTDAYOFWEEK | LOCALE_RETURN_NUMBER,
                                     reinterpret_cast<LPWSTR>(&localeFirstDay),
                                     sizeof(localeFirstDay) / sizeof(wchar_t)) > 0
                         ? static_cast<int>((localeFirstDay + 1) % 7)
@@ -11375,7 +11553,7 @@ class Renderer {
                 wchar_t initialBuf[16] = {};
                 const CALTYPE calType = CAL_SSHORTESTDAYNAME1 + static_cast<CALTYPE>((weekday + 6) % 7);
                 calendarCachedInitials_[weekday] =
-                    GetCalendarInfoEx(kUiLocaleName, CAL_GREGORIAN, nullptr, calType,
+                    GetCalendarInfoEx(UiLocaleName(), CAL_GREGORIAN, nullptr, calType,
                                       initialBuf, ARRAYSIZE(initialBuf), nullptr) > 0
                         ? initialBuf
                         : kFallbackInitials[weekday];
@@ -11833,7 +12011,7 @@ class Renderer {
             const wchar_t* label;
             std::wstring value;
         };
-        const std::wstring windUnit = settings.weatherFahrenheit ? L" mph" : L" km/h";
+        const std::wstring windUnit = settings.weatherFahrenheit ? Loc(L" mph") : Loc(L" km/h");
         const Metric metrics[3] = {
             {0, Loc(L"Wind"),
              hasWeather ? state.weather.windSpeed + windUnit + L" " + WindDirToArrow(state.weather.windDir)
@@ -12165,16 +12343,16 @@ class Renderer {
                                textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
             boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         }
-        wchar_t cpuBuf[32], ramBuf[40], gpuBuf[32], upBuf[32], downBuf[32], diskBuf[32];
+        wchar_t cpuBuf[32], ramBuf[48], gpuBuf[32], upBuf[40], downBuf[40], diskBuf[32];
         swprintf_s(cpuBuf, L"%d%%", state.system.cpuPercent);
-        swprintf_s(ramBuf, L"%.1f / %.1f GB", state.system.memoryUsedGB, state.system.memoryTotalGB);
+        swprintf_s(ramBuf, L"%.1f / %.1f %s", state.system.memoryUsedGB, state.system.memoryTotalGB, Loc(L"GB"));
         if (state.system.gpuPercent >= 0) {
             swprintf_s(gpuBuf, L"%d%%", state.system.gpuPercent);
         } else {
             wcscpy_s(gpuBuf, L"--");
         }
-        swprintf_s(upBuf, L"%.1f Mbps", state.system.netUpMbps);
-        swprintf_s(downBuf, L"%.1f Mbps", state.system.netDownMbps);
+        swprintf_s(upBuf, L"%.1f %s", state.system.netUpMbps, Loc(L"Mbps"));
+        swprintf_s(downBuf, L"%.1f %s", state.system.netDownMbps, Loc(L"Mbps"));
         const int diskUsed = 100 - state.system.diskFreePercent;
         swprintf_s(diskBuf, L"%d%%", diskUsed);
         const float ramFraction = (state.system.memoryTotalGB > 0.01f)
@@ -12187,14 +12365,14 @@ class Renderer {
             float fraction;
         };
         const HwMetric metrics[6] = {
-            {3, L"ЦП", cpuBuf, Clamp(state.system.cpuPercent / 100.0f, 0.0f, 1.0f)},
-            {6, L"МЕРЕЖА ↑", upBuf, -1.0f},
-            {4, L"ОП", ramBuf, ramFraction},
-            {7, L"МЕРЕЖА ↓", downBuf, -1.0f},
-            {5, L"ГП", gpuBuf, state.system.gpuPercent >= 0
+            {3, Loc(L"CPU"), cpuBuf, Clamp(state.system.cpuPercent / 100.0f, 0.0f, 1.0f)},
+            {6, Loc(L"NET UP"), upBuf, -1.0f},
+            {4, Loc(L"RAM"), ramBuf, ramFraction},
+            {7, Loc(L"NET DOWN"), downBuf, -1.0f},
+            {5, Loc(L"GPU"), gpuBuf, state.system.gpuPercent >= 0
                                           ? Clamp(state.system.gpuPercent / 100.0f, 0.0f, 1.0f)
                                           : -1.0f},
-            {8, L"ДИСК", diskBuf, Clamp(diskUsed / 100.0f, 0.0f, 1.0f)},
+            {8, Loc(L"DISK"), diskBuf, Clamp(diskUsed / 100.0f, 0.0f, 1.0f)},
         };
         const float colGap = 9.0f * scale;
         const float colW = (rect.right - rect.left - padX * 2.0f - colGap) * 0.5f;
@@ -13044,7 +13222,8 @@ class Renderer {
                 smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 mutedBrush_->SetOpacity(0.58f);
-                target_->DrawTextW(L"FPS", 3, smallTextFormat_.Get(),
+                const wchar_t* fpsLabel = Loc(L"FPS");
+                target_->DrawTextW(fpsLabel, static_cast<UINT32>(wcslen(fpsLabel)), smallTextFormat_.Get(),
                                    D2D1::RectF(textLeft, fpsCard.top + 2.0f * scale,
                                                textRight, fpsCard.top + 16.0f * scale),
                                    mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -13072,10 +13251,10 @@ class Renderer {
             bool enabled;
         };
         const GameCard cards[] = {
-            {L"ЦП", state.system.cpuPercent, 3, frameSettings_.gameOverlayShowCpu},
-            {L"ОП", state.system.memoryPercent, 4, frameSettings_.gameOverlayShowRam},
-            {L"ГП", state.system.gpuPercent, 5, frameSettings_.gameOverlayShowGpu},
-            {L"ДИСК", 100 - state.system.diskFreePercent, 8, frameSettings_.gameOverlayShowDisk},
+            {Loc(L"CPU"), state.system.cpuPercent, 3, frameSettings_.gameOverlayShowCpu},
+            {Loc(L"RAM"), state.system.memoryPercent, 4, frameSettings_.gameOverlayShowRam},
+            {Loc(L"GPU"), state.system.gpuPercent, 5, frameSettings_.gameOverlayShowGpu},
+            {Loc(L"DISK"), 100 - state.system.diskFreePercent, 8, frameSettings_.gameOverlayShowDisk},
         };
         for (const GameCard& card : cards) {
             if (!card.enabled) {
@@ -20122,7 +20301,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
             targetFps = s_cachedRate;
         }
-        targetFps = ClampInt(targetFps, 30, 1000);
+        targetFps = ClampInt(targetFps, 30, 240);
         double targetFrameMs = 1000.0 / static_cast<double>(targetFps);
         const bool springsAnimating =
             std::fabs(widthSpring.value - widthSpring.target) > 0.5f ||
@@ -20143,7 +20322,13 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
         setHighResTimer(lastAnimatingAt >= 0.0 && now - lastAnimatingAt < kHighResTimerHoldSec);
         if (!needsRender) {
-            WaitForSingleObject(g_stopEvent, 16);
+            DWORD idleWaitMs = 1000;
+            if ((frame.expandOnHover || frame.unhideOnHover) && !isHidden) {
+                idleWaitMs = 50;
+            } else if (clockOnScreen && IslandClockNeedsSecondTicks(frame) && !isHidden) {
+                idleWaitMs = 250;
+            }
+            MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, idleWaitMs, QS_ALLINPUT);
             nextFrameTarget = std::chrono::steady_clock::now();
         } else if (springsAnimating && frame.targetFps <= 0 && SUCCEEDED(DwmFlush())) {
             nextFrameTarget = std::chrono::steady_clock::now();
@@ -20154,7 +20339,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (nowTime < nextFrameTarget) {
                 double remainingMs = std::chrono::duration<double, std::milli>(nextFrameTarget - nowTime).count();
                 if (remainingMs >= 1.5) {
-                    WaitForSingleObject(g_stopEvent, static_cast<DWORD>(remainingMs - 0.5));
+                    MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE,
+                                              static_cast<DWORD>(remainingMs - 0.5), QS_ALLINPUT);
                 }
                 if (springsAnimating && targetFrameMs < 10.0) {
                     while (std::chrono::steady_clock::now() < nextFrameTarget &&
