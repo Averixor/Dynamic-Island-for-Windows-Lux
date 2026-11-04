@@ -1,6 +1,14 @@
-{
-  "cSpell.language": "en,uk",
+﻿{
+  "cSpell.language": "en,uk,ru",
   "cSpell.allowCompoundWords": true,
+  "cSpell.dictionaryDefinitions": [
+    {
+      "name": "lux-ui",
+      "path": "${workspaceFolder}/dictionaries/lux-ui.txt",
+      "addWords": true
+    }
+  ],
+  "cSpell.dictionaries": ["lux-ui"],
   "cSpell.words": [
     "Windhawk",
     "Himanshu",
@@ -49,7 +57,15 @@
     "IMM",
     "IUI",
     "PBGRA",
-    "ореолу"
+    "ореолу",
+    "скрол",
+    "оверлеї",
+    "Acrylic",
+    "Wiktionary",
+    "dictionaryapi",
+    "Français",
+    "Italiano",
+    "Türkçe"
   ],
   "cSpell.ignoreRegExpList": [
     "-l[A-Za-z0-9]+",

@@ -10,6 +10,7 @@ add_executable(DynamicIslandLux WIN32
   logging.cpp
   settings_store.cpp
   settings_dialog.cpp
+  menu_theme.cpp
   autostart.cpp
   lux_overlay.cpp
   # Step A: legacy body linked for symbol resolution; full Init wired in Step B.

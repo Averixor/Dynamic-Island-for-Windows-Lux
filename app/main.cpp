@@ -5,6 +5,7 @@
 #include "resource.h"
 #include "app_context.h"
 #include "lux_overlay.h"
+#include "menu_theme.h"
 #include "settings_dialog.h"
 #include "settings_schema.h"
 #include "settings_store.h"
@@ -230,6 +231,7 @@ void UnregisterTrayIcon(AppState& app) {
 }
 
 void ShowTrayMenu(AppState& app, POINT screenPt) {
+  MenuTheme::PreparePopup();
   HMENU menu = CreatePopupMenu();
   AppendMenuW(menu, MF_STRING, IDM_TRAY_SHOW, L"Show island");
   AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, L"Settings...");
@@ -268,6 +270,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
 
   INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
   InitCommonControlsEx(&icc);
+  MenuTheme::EnableSystemMenus();
 
   const bool ephemeral = options.ephemeral || options.smokeTest || options.testJson;
   LuxLogInit(ephemeral);

@@ -368,9 +368,11 @@ bool SettingsStoreInit() {
   const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
   (void)runtimeLoad;
 
+  bool schemaFilled = false;
   for (const SettingDef& def : kSettingSchema) {
     if (g_user.find(def.key) == g_user.end() && def.defaultString) {
       g_user[def.key] = def.defaultString;
+      schemaFilled = true;
     }
   }
   const std::wstring ver = LUX_APP_VERSION_STRING;
@@ -378,8 +380,8 @@ bool SettingsStoreInit() {
   if (versionBump) {
     g_user[L"app.version"] = ver;
   }
-  // First launch / corrupt recovery: persist schema defaults so cold start leaves a real file.
-  if (userLoad != JsonLoadResult::Ok || versionBump) {
+  // First launch / corrupt recovery / schema growth: persist so LoadSettings sees defaults.
+  if (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled) {
     if (!SaveFileMap(UserPath(), g_user) && userLoad == JsonLoadResult::Corrupt) {
       LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
     }

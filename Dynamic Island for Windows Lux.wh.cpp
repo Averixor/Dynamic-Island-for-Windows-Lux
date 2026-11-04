@@ -405,6 +405,8 @@
 #ifdef LUX_STANDALONE
 #include "windhawk_compat.h"
 #include "app_context.h"
+#include "menu_theme.h"
+#include "resource.h"
 #endif
 #include <unknwn.h>
 #include <dwmapi.h>
@@ -1860,6 +1862,65 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"RAM", L"ОП"},
         {L"GPU", L"ГП"},
         {L"DISK", L"ДИСК"},
+        // Context menu
+        {L"Hide island", L"Сховати острів"},
+        {L"Show island", L"Показати острів"},
+        {L"Reset position", L"Скинути позицію"},
+        {L"Close", L"Закрити"},
+        {L"Exit", L"Вийти"},
+        {L"Start 25 min focus", L"Старт 25 хв фокусу"},
+        {L"Start 50 min focus", L"Старт 50 хв фокусу"},
+        {L"Start 5 min break", L"Старт 5 хв перерви"},
+        {L"Pause timer", L"Пауза таймера"},
+        {L"Resume timer", L"Продовжити таймер"},
+        {L"Stop timer", L"Зупинити таймер"},
+        {L"Paste from clipboard", L"Вставити з буфера"},
+        {L"Clear tray", L"Очистити лоток"},
+        {L"Pin expanded", L"Закріпити розгорнутим"},
+        {L"Show game overlay", L"Показати ігровий оверлей"},
+        {L"Hide game overlay", L"Сховати ігровий оверлей"},
+        {L"Shape", L"Форма"},
+        {L"iPhone pill", L"Пігулка iPhone"},
+        {L"Windows 11 flyout", L"Виліт Windows 11"},
+        {L"macOS notch", L"Виріз macOS"},
+        {L"macOS notch (unavailable at bottom)", L"Виріз macOS (недоступно знизу)"},
+        {L"Expand on hover", L"Розгортати наведенням"},
+        {L"Expand on click", L"Розгортати кліком"},
+        {L"Lyrics on collapsed island", L"Текст пісні на згорнутому острові"},
+        {L"Lyrics as first tab", L"Текст пісні першою вкладкою"},
+        {L"Lyrics in media tab", L"Текст пісні у вкладці медіа"},
+        {L"Clear lyrics cache", L"Очистити кеш текстів"},
+        {L"Speakers", L"Динаміки"},
+        {L"ms", L"мс"},
+        {L"Earlier +10 ms", L"Раніше +10 мс"},
+        {L"Earlier +50 ms", L"Раніше +50 мс"},
+        {L"Earlier +250 ms", L"Раніше +250 мс"},
+        {L"Later -10 ms", L"Пізніше −10 мс"},
+        {L"Later -50 ms", L"Пізніше −50 мс"},
+        {L"Later -250 ms", L"Пізніше −250 мс"},
+        {L"Reset this profile", L"Скинути цей профіль"},
+        {L"Lyrics sync", L"Синхронізація тексту"},
+        {L"Transparency", L"Прозорість"},
+        {L"100% (opaque)", L"100% (непрозора)"},
+        {L"Match theme", L"Як у темі"},
+        {L"Theme", L"Тема"},
+        {L"Custom colors", L"Власні кольори"},
+        {L"Adaptive theme", L"Адаптивна тема"},
+        {L"Aura", L"Ореол"},
+        {L"Disabled", L"Вимкнено"},
+        {L"Glow", L"Свічення"},
+        {L"Rays", L"Промені"},
+        {L"Rings", L"Кільця"},
+        {L"Orbit", L"Орбіта"},
+        {L"DWM backdrop", L"Фон DWM"},
+        {L"No blur", L"Без розмиття"},
+        {L"Blur", L"Розмиття"},
+        {L"Acrylic", L"Acrylic"},
+        {L"Settings...", L"Налаштування…"},
+        {L"Open Windhawk settings", L"Відкрити налаштування Windhawk"},
+        {L"songs", L"пісень"},
+        {L"MB", L"МБ"},
+        {L"KB", L"КБ"},
     };
     static const Row kRussianRows[] = {
         {L"%d%% \u2022 %luh %02lum left", L"%d%% \u2022 осталось %luh %02lum"},
@@ -1941,6 +2002,65 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"RAM", L"ОП"},
         {L"GPU", L"ГП"},
         {L"DISK", L"ДИСК"},
+        // Context menu
+        {L"Hide island", L"Скрыть остров"},
+        {L"Show island", L"Показать остров"},
+        {L"Reset position", L"Сбросить позицию"},
+        {L"Close", L"Закрыть"},
+        {L"Exit", L"Выйти"},
+        {L"Start 25 min focus", L"Старт 25 мин фокуса"},
+        {L"Start 50 min focus", L"Старт 50 мин фокуса"},
+        {L"Start 5 min break", L"Старт 5 мин перерыва"},
+        {L"Pause timer", L"Пауза таймера"},
+        {L"Resume timer", L"Продолжить таймер"},
+        {L"Stop timer", L"Остановить таймер"},
+        {L"Paste from clipboard", L"Вставить из буфера"},
+        {L"Clear tray", L"Очистить лоток"},
+        {L"Pin expanded", L"Закрепить развёрнутым"},
+        {L"Show game overlay", L"Показать игровой оверлей"},
+        {L"Hide game overlay", L"Скрыть игровой оверлей"},
+        {L"Shape", L"Форма"},
+        {L"iPhone pill", L"Пилюля iPhone"},
+        {L"Windows 11 flyout", L"Вылет Windows 11"},
+        {L"macOS notch", L"Вырез macOS"},
+        {L"macOS notch (unavailable at bottom)", L"Вырез macOS (недоступно снизу)"},
+        {L"Expand on hover", L"Раскрывать наведением"},
+        {L"Expand on click", L"Раскрывать кликом"},
+        {L"Lyrics on collapsed island", L"Текст песни на свёрнутом острове"},
+        {L"Lyrics as first tab", L"Текст песни первой вкладкой"},
+        {L"Lyrics in media tab", L"Текст песни во вкладке медиа"},
+        {L"Clear lyrics cache", L"Очистить кэш текстов"},
+        {L"Speakers", L"Динамики"},
+        {L"ms", L"мс"},
+        {L"Earlier +10 ms", L"Раньше +10 мс"},
+        {L"Earlier +50 ms", L"Раньше +50 мс"},
+        {L"Earlier +250 ms", L"Раньше +250 мс"},
+        {L"Later -10 ms", L"Позже −10 мс"},
+        {L"Later -50 ms", L"Позже −50 мс"},
+        {L"Later -250 ms", L"Позже −250 мс"},
+        {L"Reset this profile", L"Сбросить этот профиль"},
+        {L"Lyrics sync", L"Синхронизация текста"},
+        {L"Transparency", L"Прозрачность"},
+        {L"100% (opaque)", L"100% (непрозрачная)"},
+        {L"Match theme", L"Как в теме"},
+        {L"Theme", L"Тема"},
+        {L"Custom colors", L"Свои цвета"},
+        {L"Adaptive theme", L"Адаптивная тема"},
+        {L"Aura", L"Ореол"},
+        {L"Disabled", L"Выключено"},
+        {L"Glow", L"Свечение"},
+        {L"Rays", L"Лучи"},
+        {L"Rings", L"Кольца"},
+        {L"Orbit", L"Орбита"},
+        {L"DWM backdrop", L"Фон DWM"},
+        {L"No blur", L"Без размытия"},
+        {L"Blur", L"Размытие"},
+        {L"Acrylic", L"Acrylic"},
+        {L"Settings...", L"Настройки…"},
+        {L"Open Windhawk settings", L"Открыть настройки Windhawk"},
+        {L"songs", L"песен"},
+        {L"MB", L"МБ"},
+        {L"KB", L"КБ"},
     };
     struct ExtraRow {
         const wchar_t* key;
@@ -10442,7 +10562,7 @@ std::vector<MediaSourceMenuItem> AppendMediaSourceItems(HMENU menu) {
         }
     }
     const bool autoMode = GetPreferredMediaSource().empty();
-    AppendMenuW(menu, MF_STRING | (autoMode ? MF_CHECKED : 0), kMediaSourceMenuIdBase, L"Авто");
+    AppendMenuW(menu, MF_STRING | (autoMode ? MF_CHECKED : 0), kMediaSourceMenuIdBase, Loc(L"Auto"));
     if (!items.empty()) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
@@ -10465,6 +10585,9 @@ void ApplyMediaSourceMenuCommand(UINT cmd, const std::vector<MediaSourceMenuItem
     }
 }
 void ShowMediaSourcePopup(HWND hwnd, POINT screenPoint) {
+#ifdef LUX_STANDALONE
+    MenuTheme::PreparePopup();
+#endif
     HMENU menu = CreatePopupMenu();
     const std::vector<MediaSourceMenuItem> items = AppendMediaSourceItems(menu);
     SetForegroundWindow(hwnd);
@@ -10487,23 +10610,29 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         timerRunning = g_state.timer.running;
     }
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, 40, g_manuallyHidden.load() ? L"Показати острів" : L"Сховати острів");
-    AppendMenuW(menu, MF_STRING, 44, L"Скинути позицію");
-    AppendMenuW(menu, MF_STRING, 1, L"Закрити");
+    AppendMenuW(menu, MF_STRING, 40,
+                g_manuallyHidden.load() ? Loc(L"Show island") : Loc(L"Hide island"));
+    AppendMenuW(menu, MF_STRING, 44, Loc(L"Reset position"));
+#ifdef LUX_STANDALONE
+    AppendMenuW(menu, MF_STRING, 1, Loc(L"Exit"));
+#else
+    AppendMenuW(menu, MF_STRING, 1, Loc(L"Close"));
+#endif
     HMENU timerMenu = CreatePopupMenu();
-    AppendMenuW(timerMenu, MF_STRING, 30, L"Старт 25 хв фокусу");
-    AppendMenuW(timerMenu, MF_STRING, 31, L"Старт 50 хв фокусу");
-    AppendMenuW(timerMenu, MF_STRING, 32, L"Старт 5 хв перерви");
+    AppendMenuW(timerMenu, MF_STRING, 30, Loc(L"Start 25 min focus"));
+    AppendMenuW(timerMenu, MF_STRING, 31, Loc(L"Start 50 min focus"));
+    AppendMenuW(timerMenu, MF_STRING, 32, Loc(L"Start 5 min break"));
     if (timerActive) {
-        AppendMenuW(timerMenu, MF_STRING, 33, timerRunning ? L"Пауза таймера" : L"Продовжити таймер");
-        AppendMenuW(timerMenu, MF_STRING, 34, L"Зупинити таймер");
+        AppendMenuW(timerMenu, MF_STRING, 33,
+                    timerRunning ? Loc(L"Pause timer") : Loc(L"Resume timer"));
+        AppendMenuW(timerMenu, MF_STRING, 34, Loc(L"Stop timer"));
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), L"Таймер фокусу");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), Loc(L"Focus Timer"));
     std::vector<MediaSourceMenuItem> mediaSourceItems;
     {
         HMENU sourceMenu = CreatePopupMenu();
         mediaSourceItems = AppendMediaSourceItems(sourceMenu);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sourceMenu), L"Джерело медіа");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sourceMenu), Loc(L"Media source"));
     }
     if (settings.fileTrayModule) {
         size_t trayCount = 0;
@@ -10512,63 +10641,67 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             trayCount = g_state.fileTrayItems.size();
         }
         HMENU trayMenu = CreatePopupMenu();
-        AppendMenuW(trayMenu, MF_STRING, 42, L"Вставити з буфера");
-        const std::wstring clearLabel = trayCount == 0
-                                            ? std::wstring(L"Очистити лоток")
-                                            : L"Очистити лоток (" + std::to_wstring(trayCount) + L")";
+        AppendMenuW(trayMenu, MF_STRING, 42, Loc(L"Paste from clipboard"));
+        std::wstring clearLabel = Loc(L"Clear tray");
+        if (trayCount > 0) {
+            clearLabel += L" (" + std::to_wstring(trayCount) + L")";
+        }
         AppendMenuW(trayMenu, MF_STRING | (trayCount == 0 ? (MF_GRAYED | MF_DISABLED) : 0), 41,
                     clearLabel.c_str());
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), L"Файловий лоток");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), Loc(L"File Tray"));
     }
-    AppendMenuW(menu, MF_STRING, 2, L"Закріпити розгорнутим");
-    AppendMenuW(menu, MF_STRING, 3, g_gameOverlayPinned.load() ? L"Сховати ігровий оверлей" : L"Показати ігровий оверлей");
+    AppendMenuW(menu, MF_STRING, 2, Loc(L"Pin expanded"));
+    AppendMenuW(menu, MF_STRING, 3,
+                g_gameOverlayPinned.load() ? Loc(L"Hide game overlay") : Loc(L"Show game overlay"));
     if (settings.quickLookup) {
         AppendMenuW(menu, MF_STRING, 45, Loc(L"Look up"));
     }
     {
         const int currentShape = settings.notchStyle ? 2 : (settings.w11Style ? 1 : 0);
         HMENU shapeMenu = CreatePopupMenu();
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase, L"Пігулка iPhone");
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 1, L"Виліт Windows 11");
+        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase, Loc(L"iPhone pill"));
+        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 1, Loc(L"Windows 11 flyout"));
         if (IsBottomPosition(settings.position)) {
             AppendMenuW(shapeMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kShapeMenuIdBase + 2,
-                        L"Виріз macOS (недоступно знизу)");
+                        Loc(L"macOS notch (unavailable at bottom)"));
         } else {
-            AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 2, L"Виріз macOS");
+            AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 2, Loc(L"macOS notch"));
         }
         CheckMenuRadioItem(shapeMenu, kShapeMenuIdBase, kShapeMenuIdBase + 2,
                            kShapeMenuIdBase + static_cast<UINT>(currentShape), MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), L"Форма");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), Loc(L"Shape"));
     }
     const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
                                         ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
                                         : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-    AppendMenuW(menu, MF_STRING, 11, activeExpandOnHover ? L"Розгортати кліком" : L"Розгортати наведенням");
+    AppendMenuW(menu, MF_STRING, 11,
+                activeExpandOnHover ? Loc(L"Expand on click") : Loc(L"Expand on hover"));
     AppendMenuW(menu, MF_STRING | (Wh_GetIntValue(L"CollapsedLyrics", 0) ? MF_CHECKED : 0), 13,
-                L"Текст пісні на згорнутому острові");
+                Loc(L"Lyrics on collapsed island"));
     AppendMenuW(menu,
                 MF_STRING | (Wh_GetIntValue(L"LyricsPinnedFirst", 0) ? MF_CHECKED : 0) |
                     (settings.lyrics ? 0 : (MF_GRAYED | MF_DISABLED)),
-                14, L"Текст пісні першою вкладкою");
+                14, Loc(L"Lyrics as first tab"));
     AppendMenuW(menu,
                 MF_STRING | (settings.mediaTabLyrics ? MF_CHECKED : 0),
-                15, L"Текст пісні у вкладці медіа");
+                15, Loc(L"Lyrics in media tab"));
     {
         bool cacheOn = false;
         {
             std::lock_guard lock(g_settingsMutex);
             cacheOn = settings.lyricsCache && settings.lyricsCacheMaxMB > 0;
         }
-        std::wstring cacheLabel = L"Очистити кеш текстів";
+        std::wstring cacheLabel = Loc(L"Clear lyrics cache");
         if (g_lyricsCacheCountsValid.load(std::memory_order_relaxed)) {
             const int songs = g_lyricsCacheFileCount.load(std::memory_order_relaxed);
             const uint64_t bytes = g_lyricsCacheBytes.load(std::memory_order_relaxed);
-            wchar_t detail[64] = {};
+            wchar_t detail[96] = {};
             if (bytes >= 1048576ull) {
-                swprintf_s(detail, L" (%d пісень, %.1f МБ)", songs, static_cast<double>(bytes) / 1048576.0);
+                swprintf_s(detail, L" (%d %s, %.1f %s)", songs, Loc(L"songs"),
+                           static_cast<double>(bytes) / 1048576.0, Loc(L"MB"));
             } else {
-                swprintf_s(detail, L" (%d пісень, %llu КБ)", songs,
-                           static_cast<unsigned long long>((bytes + 1023ull) / 1024ull));
+                swprintf_s(detail, L" (%d %s, %llu %s)", songs, Loc(L"songs"),
+                           static_cast<unsigned long long>((bytes + 1023ull) / 1024ull), Loc(L"KB"));
             }
             cacheLabel += detail;
         }
@@ -10578,32 +10711,33 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             const int effective = bt ? g_lyricsEffectiveOffsetBtMs.load(std::memory_order_relaxed)
                                      : g_lyricsEffectiveOffsetMs.load(std::memory_order_relaxed);
             wchar_t header[96] = {};
-            swprintf_s(header, L"%s: %+d мс", bt ? L"Bluetooth" : L"Динаміки", effective);
+            swprintf_s(header, L"%s: %+d %s", bt ? Loc(L"Bluetooth") : Loc(L"Speakers"), effective,
+                       Loc(L"ms"));
             HMENU lyricsSyncMenu = CreatePopupMenu();
             AppendMenuW(lyricsSyncMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kLyricsSyncMenuIdBase, header);
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 1, L"Раніше +10 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 2, L"Раніше +50 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 3, L"Раніше +250 мс");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 1, Loc(L"Earlier +10 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 2, Loc(L"Earlier +50 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 3, Loc(L"Earlier +250 ms"));
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 4, L"Пізніше −10 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 5, L"Пізніше −50 мс");
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 6, L"Пізніше −250 мс");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 4, Loc(L"Later -10 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 5, Loc(L"Later -50 ms"));
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 6, Loc(L"Later -250 ms"));
             AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 7, L"Скинути цей профіль");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(lyricsSyncMenu), L"Синхронізація тексту");
+            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 7, Loc(L"Reset this profile"));
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(lyricsSyncMenu), Loc(L"Lyrics sync"));
         }
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     const int activeOpacity = g_pillOpacityOverride.load();
     HMENU opacityMenu = CreatePopupMenu();
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 100 ? MF_CHECKED : 0), 4, L"100% (непрозора)");
+    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 100 ? MF_CHECKED : 0), 4, Loc(L"100% (opaque)"));
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 85 ? MF_CHECKED : 0), 5, L"85%");
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 70 ? MF_CHECKED : 0), 6, L"70%");
     AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 55 ? MF_CHECKED : 0), 7, L"55%");
     AppendMenuW(opacityMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity < 0 ? MF_CHECKED : 0), 8, L"Як у темі");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), L"Прозорість");
+    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity < 0 ? MF_CHECKED : 0), 8, Loc(L"Match theme"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), Loc(L"Transparency"));
     const int activeTheme = Wh_GetIntValue(kThemeValueName, static_cast<int>(settings.themePreset));
     HMENU themeMenu = CreatePopupMenu();
     for (int i = 0; i < kCustomThemeIndex; ++i) {
@@ -10612,33 +10746,40 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     }
     AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(themeMenu, MF_STRING | (activeTheme >= kCustomThemeIndex ? MF_CHECKED : 0),
-                kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), L"Власні кольори");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Тема");
+                kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), Loc(L"Custom colors"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), Loc(L"Theme"));
     AppendMenuW(menu, MF_STRING | (settings.adaptiveTheme ? MF_CHECKED : 0), 16,
-                L"Адаптивна тема");
+                Loc(L"Adaptive theme"));
     {
         HMENU auraMenu = CreatePopupMenu();
         const UINT auraCmd = kAuraMenuIdBase + static_cast<UINT>(settings.auraStyle);
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, L"Вимкнено");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, L"Свічення");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, L"Промені");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, L"Кільця");
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, L"Орбіта");
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, Loc(L"Disabled"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, Loc(L"Glow"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, Loc(L"Rays"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, Loc(L"Rings"));
+        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, Loc(L"Orbit"));
         CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 5, auraCmd, MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), L"Ореол");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), Loc(L"Aura"));
     }
     {
         HMENU backdropMenu = CreatePopupMenu();
         const UINT backdropCmd = kBackdropMenuIdBase + static_cast<UINT>(settings.backdropMaterial);
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase, L"Без розмиття");
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 1, L"Розмиття");
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 2, L"Acrylic");
+        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase, Loc(L"No blur"));
+        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 1, Loc(L"Blur"));
+        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 2, Loc(L"Acrylic"));
         CheckMenuRadioItem(backdropMenu, kBackdropMenuIdBase, kBackdropMenuIdBase + 2, backdropCmd,
                            MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backdropMenu), L"Фон DWM");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backdropMenu), Loc(L"DWM backdrop"));
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 9, L"Відкрити налаштування Windhawk");
+#ifdef LUX_STANDALONE
+    AppendMenuW(menu, MF_STRING, 9, Loc(L"Settings..."));
+#else
+    AppendMenuW(menu, MF_STRING, 9, Loc(L"Open Windhawk settings"));
+#endif
+#ifdef LUX_STANDALONE
+    MenuTheme::PreparePopup();
+#endif
     SetForegroundWindow(hwnd);
     DwmBackdrop::EnsureBehind(hwnd);
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -10669,10 +10810,22 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     }
     switch (cmd) {
     case 1:
+#ifdef LUX_STANDALONE
+        // Standalone: Close = exit app (same as tray Exit). Windhawk keeps collapse-only.
+        {
+            HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
+            if (host) {
+                PostMessageW(host, WM_CLOSE, 0, 0);
+            } else if (g_hwnd) {
+                PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+            }
+        }
+#else
         DismissTransientState();
         g_clickExpanded = false;
         g_layoutDirty = true;
         TriggerNudge();
+#endif
         break;
     case 2: {
         const bool nextVal = !g_pinnedExpanded.load();
@@ -10712,6 +10865,15 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         LoadSettings();
         break;
     case 9: {
+#ifdef LUX_STANDALONE
+        // Host (message-only) owns the settings dialog — do not ShellExecute windhawk.exe.
+        HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
+        if (host) {
+            PostMessageW(host, WM_APP_OPEN_SETTINGS, 0, 0);
+        } else {
+            Wh_Log(L"Standalone settings: DynamicIslandLux.Host not found");
+        }
+#else
         wchar_t windhawkPath[MAX_PATH] = {};
         const DWORD pathLen =
             GetModuleFileNameW(nullptr, windhawkPath, ARRAYSIZE(windhawkPath));
@@ -10737,6 +10899,7 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         if (reinterpret_cast<INT_PTR>(result) <= 32) {
             Wh_Log(L"Failed to open Windhawk settings (%s).", windhawkPath);
         }
+#endif
         break;
     }
     case kShapeMenuIdBase:
