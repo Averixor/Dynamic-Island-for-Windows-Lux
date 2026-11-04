@@ -2,15 +2,34 @@
 setlocal EnableExtensions
 cd /d "%~dp0\.."
 
+set "CMAKE="
 where cmake >nul 2>&1
-if errorlevel 1 (
-  echo CMake not found in PATH. Install CMake and Visual Studio 2022 C++ tools.
-  exit /b 1
+if not errorlevel 1 (
+  for /f "delims=" %%I in ('where cmake') do (
+    if not defined CMAKE set "CMAKE=%%I"
+  )
 )
 
-cmake -S app -B build -G "Visual Studio 17 2022" -A x64
+if not defined CMAKE (
+  if exist "%ProgramFiles%\CMake\bin\cmake.exe" set "CMAKE=%ProgramFiles%\CMake\bin\cmake.exe"
+)
+if not defined CMAKE (
+  set "PF86=%ProgramFiles(x86)%"
+  if exist "%PF86%\CMake\bin\cmake.exe" set "CMAKE=%PF86%\CMake\bin\cmake.exe"
+)
+if not defined CMAKE (
+  if exist "%LocalAppData%\Programs\CMake\bin\cmake.exe" set "CMAKE=%LocalAppData%\Programs\CMake\bin\cmake.exe"
+)
+if not defined CMAKE (
+  echo CMake not found. Install CMake and/or add it to PATH.
+  echo Tried: PATH, ProgramFiles\CMake\bin, ProgramFiles^(x86^)\CMake\bin, LocalAppData\Programs\CMake\bin
+  exit /b 1
+)
+echo Using CMake: %CMAKE%
+
+"%CMAKE%" -S app -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 exit /b 1
-cmake --build build --config Release
+"%CMAKE%" --build build --config Release
 if errorlevel 1 exit /b 1
 
 set EXE=build\Release\DynamicIslandLux.exe
