@@ -12,7 +12,16 @@ cmake -S app -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 exit /b 1
 cmake --build build --config Release
 if errorlevel 1 exit /b 1
+
+set EXE=build\Release\DynamicIslandLux.exe
 echo.
-echo Built: build\Release\DynamicIslandLux.exe
-echo Smoke: build\Release\DynamicIslandLux.exe --smoke-test
-endlocal
+echo Built: %EXE%
+echo === smoke --no-workers ===
+"%EXE%" --smoke-test --no-workers
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo === smoke --backdrop=blur ===
+"%EXE%" --smoke-test --backdrop=blur
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo === smoke --backdrop=acrylic ===
+"%EXE%" --smoke-test --backdrop=acrylic
+exit /b %ERRORLEVEL%

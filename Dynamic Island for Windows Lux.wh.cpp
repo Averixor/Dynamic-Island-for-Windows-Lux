@@ -389,6 +389,9 @@
 #define _UNICODE
 #endif
 #include <windows.h>
+#ifndef WM_WTSSESSION_CHANGE
+#define WM_WTSSESSION_CHANGE 0x02B1
+#endif
 #ifdef LUX_STANDALONE
 #include "windhawk_compat.h"
 #include "app_context.h"
@@ -1393,6 +1396,7 @@ std::atomic<LONG> g_dockCacheTop{0};
 std::atomic<LONG> g_dockCacheRight{0};
 std::atomic<LONG> g_dockCacheBottom{0};
 std::atomic<bool> g_dockCacheValid{false};
+std::atomic<uint64_t> g_fgCacheEpoch{0};  // bump to invalidate foreground title cache
 constexpr GUID kSubTypeIeeeFloat = {
     0x00000003,
     0x0000,
@@ -3687,6 +3691,11 @@ namespace DwmBackdrop {
     }
     void InvalidateSync() {
         g_lastSync = {};
+        // Force SetWindowCompositionAttribute re-apply after DPI/size (Win11 can drop accent).
+        for (Slot& s : g_slots) {
+            s.accentState = -1;
+            s.accentColor = 0;
+        }
     }
     void PlaceSlot(Slot& s, HWND prev, int x, int y, int w, int h, int radius, int lift,
                    bool wantTopMost) {
@@ -8262,17 +8271,20 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
             static_cast<int>(totalFreeBytes.QuadPart * 100 / totalBytes.QuadPart), 0, 100);
     }
     // Game-overlay / idle title: polled on the metrics path (no dedicated thread).
-    // Cache ~250 ms — avoid OpenProcess/GetWindowThreadProcessId every render frame.
+    // Cache ~250 ms — avoid OpenProcess every frame. Invalidate via g_fgCacheEpoch (session/DPI).
     {
         static ULONGLONG s_fgCachedAt = 0;
         static HWND s_fgHwnd = nullptr;
         static std::wstring s_fgTitle;
+        static uint64_t s_fgEpochSeen = 0;
         const ULONGLONG nowTick = GetTickCount64();
-        if (nowTick - s_fgCachedAt >= 250 || !s_fgHwnd) {
+        const uint64_t epoch = g_fgCacheEpoch.load(std::memory_order_relaxed);
+        if (epoch != s_fgEpochSeen || nowTick - s_fgCachedAt >= 250) {
+            s_fgEpochSeen = epoch;
             s_fgCachedAt = nowTick;
             s_fgHwnd = GetForegroundWindow();
             s_fgTitle.clear();
-            if (s_fgHwnd && s_fgHwnd != g_hwnd) {
+            if (s_fgHwnd && s_fgHwnd != g_hwnd && IsWindow(s_fgHwnd)) {
                 wchar_t title[96] = {};
                 GetWindowTextW(s_fgHwnd, title, ARRAYSIZE(title));
                 if (!IsIgnorableForegroundWindow(s_fgHwnd, title)) {
@@ -20287,12 +20299,27 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     static std::wstring s_trayPressPath;
     switch (msg) {
     case WM_CREATE:
+        // Order: CreateWindow → accept files / OLE drop → later ShowWindow (RenderThreadProc).
+        DragAcceptFiles(hwnd, TRUE);
         AddClipboardFormatListener(hwnd);
         if (g_shellHookMessage == 0)
             g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
         if (g_taskbarCreatedMessage == 0)
             g_taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
         RegisterShellHookWindow(hwnd);
+        {
+            using WTSRegisterSessionNotification_t = BOOL(WINAPI*)(HWND, DWORD);
+            HMODULE wts = GetModuleHandleW(L"wtsapi32.dll");
+            if (!wts) {
+                wts = LoadLibraryW(L"wtsapi32.dll");
+            }
+            const auto pWtsReg = wts ? reinterpret_cast<WTSRegisterSessionNotification_t>(
+                                           GetProcAddress(wts, "WTSRegisterSessionNotification"))
+                                     : nullptr;
+            if (pWtsReg) {
+                pWtsReg(hwnd, 1 /* NOTIFY_FOR_THIS_SESSION */);
+            }
+        }
         {
             g_oleInitialized = SUCCEEDED(OleInitialize(nullptr));
             ComPtr<IDropTarget> dropTarget;
@@ -20334,8 +20361,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
     case WM_DESTROY:
-        // RegisterHotKey is owned by this thread (render); unregister BEFORE the HWND dies
-        // so the next process start does not see a stale hotkey occupancy race.
+        // Same thread as RegisterHotKey (render). Unregister BEFORE HWND dies.
         if (g_lookupHotkeyRegistered) {
             UnregisterHotKey(hwnd, ID_LOOKUP_HOTKEY);
             g_lookupHotkeyRegistered = false;
@@ -20344,6 +20370,15 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             UnregisterHotKey(hwnd, ID_HIDE_SHOW_HOTKEY);
             g_hotkeyRegistered = false;
         }
+        {
+            using WTSUnRegisterSessionNotification_t = BOOL(WINAPI*)(HWND);
+            static const auto pWtsUn = reinterpret_cast<WTSUnRegisterSessionNotification_t>(
+                GetProcAddress(GetModuleHandleW(L"wtsapi32.dll"), "WTSUnRegisterSessionNotification"));
+            if (pWtsUn) {
+                pWtsUn(hwnd);
+            }
+        }
+        DragAcceptFiles(hwnd, FALSE);
         RevokeDragDrop(hwnd);
         if (g_oleInitialized) {
             OleUninitialize();
@@ -20351,6 +20386,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         RemoveClipboardFormatListener(hwnd);
         DeregisterShellHookWindow(hwnd);
+        return 0;
+    case WM_WTSSESSION_CHANGE:
+        g_fgCacheEpoch.fetch_add(1, std::memory_order_relaxed);
         return 0;
     case WM_APP_APPLY_HOTKEY:
         ApplyHideShowHotkey();
@@ -21003,7 +21041,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_DISPLAYCHANGE: {
         InvalidateMonitorCache();
         g_dockCacheValid.store(false, std::memory_order_release);
-        DwmBackdrop::InvalidateSync();  // force backdrop reposition with island next frame
+        g_fgCacheEpoch.fetch_add(1, std::memory_order_relaxed);
+        DwmBackdrop::InvalidateSync();  // re-ApplyAccent + reposition next Sync
         DwmBackdrop::EnsureBehind(hwnd);
         g_layoutDirty = true;
         PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
@@ -21124,9 +21163,19 @@ DWORD WINAPI RenderThreadProc(void*) {
     }
     EnableBlurBehind(hwnd);
     ApplyBackdropMaterial(hwnd);
+    // Show island FIRST, then stack backdrop under it (never reverse — first-frame z-order).
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    DwmBackdrop::EnsureBehind(hwnd);
+    // Hotkeys: RegisterHotKey on THIS thread; PeekMessage below dispatches WM_HOTKEY → OverlayWndProc.
     ApplyHideShowHotkey();
     Settings frame = GetSettingsCopy();
+    {
+        const wchar_t* name = frame.backdropMaterial == BackdropMaterial::Acrylic ? L"acrylic"
+                             : frame.backdropMaterial == BackdropMaterial::Blur     ? L"blur"
+                                                                                    : L"none";
+        Wh_Log(L"backdrop: requested=%s actual=%s (DwmBackdrop available=%d)", name, name,
+               DwmBackdrop::Available() ? 1 : 0);
+    }
     // Fresh Lux start: never boot into a stuck hidden state from a leftover flag.
     g_manuallyHidden = false;
     Wh_SetIntValue(L"ManuallyHidden", 0);
@@ -21134,8 +21183,8 @@ DWORD WINAPI RenderThreadProc(void*) {
     if (frame.alwaysOnTop) {
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        DwmBackdrop::EnsureBehind(hwnd);
     }
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     Renderer renderer;
     if (!renderer.Initialize(hwnd)) {
         DestroyWindow(hwnd);
@@ -21184,6 +21233,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         frame = GetSettingsCopy();
         GetIslandDockRect(frame);
+        // Thread message pump: delivers WM_HOTKEY (RegisterHotKey on this thread), input, DPI, etc.
         MSG message = {};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
             if (message.message == WM_APP_NEW_EVENT) {
@@ -21194,7 +21244,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 continue;
             }
             TranslateMessage(&message);
-            DispatchMessageW(&message);
+            DispatchMessageW(&message);  // WM_HOTKEY → OverlayWndProc on this thread
         }
         BindVolumeEndpoint();
         bool justUnhidden = false;

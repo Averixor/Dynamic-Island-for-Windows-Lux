@@ -267,18 +267,32 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
   InitCommonControlsEx(&icc);
 
+  const bool ephemeral = options.ephemeral || options.smokeTest || options.testJson;
+  LuxLogInit(ephemeral);
+
   if (!AcquireSingleInstance(g_app)) {
     const CopyDataCommand cmd =
         options.openSettings ? CopyDataCommand::OpenSettings : CopyDataCommand::ShowIsland;
-    NotifyRunningInstance(cmd);
+    // If the peer exited mid-wait (e.g. smoke), Notify fails — retry mutex and become primary.
+    if (NotifyRunningInstance(cmd)) {
+      if (g_app.singleInstanceMutex) {
+        CloseHandle(g_app.singleInstanceMutex);
+        g_app.singleInstanceMutex = nullptr;
+      }
+      LuxLogShutdown();
+      return static_cast<int>(LuxExitCode::Ok);
+    }
     if (g_app.singleInstanceMutex) {
       CloseHandle(g_app.singleInstanceMutex);
+      g_app.singleInstanceMutex = nullptr;
     }
-    return 0;
+    LUX_LOGW(L"Peer gone during --settings handoff; retrying as primary instance");
+    if (!AcquireSingleInstance(g_app)) {
+      LuxLogShutdown();
+      return static_cast<int>(LuxExitCode::InitFailure);
+    }
   }
 
-  const bool ephemeral = options.ephemeral || options.smokeTest || options.testJson;
-  LuxLogInit(ephemeral);
   SettingsStoreInit();
   LUX_LOGI(L"Dynamic Island Lux %s starting", LUX_APP_VERSION_STRING);
 
@@ -355,10 +369,14 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     // Optional: start workers after frame proof, then require clean Uninit.
     // Criterion stays scaffold frame only — never waits on media/weather/network.
     if (frameOk && LuxShouldStartWorkers()) {
-      // Default smoke forces acrylic; override with --backdrop=blur|none|acrylic.
-      const wchar_t* backdrop = options.smokeBackdrop[0] ? options.smokeBackdrop : L"acrylic";
-      SettingsSetString(L"Themes.BackdropMaterial", backdrop);
-      LUX_LOGI(L"smoke-test: starting workers after frame proof (backdrop=%s)", backdrop);
+      // Without --backdrop=, keep Themes.BackdropMaterial from schema/store (default: none).
+      // CI must pass --backdrop=blur and --backdrop=acrylic explicitly to cover both paths.
+      if (options.smokeBackdrop[0]) {
+        SettingsSetString(L"Themes.BackdropMaterial", options.smokeBackdrop);
+      }
+      const std::wstring requested =
+          SettingsGetString(L"Themes.BackdropMaterial", L"none");
+      LUX_LOGI(L"smoke-test: starting workers (backdrop requested=%s)", requested.c_str());
       if (!LuxOverlay_StartWorkers(g_app)) {
         LUX_LOGE(L"smoke-test: WhTool_ModInit failed");
         initOk = false;

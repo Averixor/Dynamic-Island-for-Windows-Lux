@@ -36,9 +36,9 @@ build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 | 4 | `--test-json` failed |
 
 `--smoke-test` — ephemeral. Кадр зі scaffold; **не чекає** media/мережу.
-`--no-workers` — без CreateThread / SetWindowsHookEx / hotkeys.
-`--backdrop=` — `acrylic` (дефолт для smoke+workers), `blur`, `none`. Окремо проганяйте blur, бо схема за замовчуванням `none`.
-`--settings` на другому екземплярі: чекає Ready ≤ ~1.5 s + FindWindow poll, `SendMessageTimeout` 2 s — не зависає.
+`--no-workers` — без CreateThread / SetWindowsHookEx / hotkeys (exit `2` неможливий — Uninit не чекає потоків).
+`--backdrop=` — якщо **не** задано, лишається `Themes.BackdropMaterial` зі схеми (`none`). CI має ганяти `--backdrop=blur` і `--backdrop=acrylic` окремо; у лозі `backdrop: requested=… actual=…`.
+`--settings` на другому екземплярі: Ready ≤1.5 s + `SendMessageTimeout` 2 s; якщо peer уже помер — retry mutex як primary.
 
 Порядок старту: mutex → host HWND → `LuxOverlay_Init` → Ready → workers → кадр.
 
@@ -46,8 +46,21 @@ build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 
 - **A/B:** scaffold + `WhTool_ModInit` lifecycle.
 - **C:** lookup / DWM / file tray / game overlay / мови.
-- **D (зараз):** custom settings dialog (не PROPSHEET) + HKCU Run/StartupApproved + IPC timeout.
-- **E:** DPI smoke; `/W4` для legacy.
+- **D:** custom settings dialog (не PROPSHEET) + HKCU Run/StartupApproved + IPC timeout.
+- **E (зараз):** фінальний Release smoke + ручний чекліст.
+- **F:** DPI/`W4` legacy cleanup.
+
+### Фінальний smoke (Release x64)
+
+```bat
+build\Release\DynamicIslandLux.exe --smoke-test --no-workers
+build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
+build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
+```
+
+Ручний чекліст: пігулка, Quick Lookup hotkey, backdrop blur/acrylic/none, file tray drop на pill, game overlay idle, зміна мови без рестарту, settings Apply=OK без рестарту, autostart toggle + Task Manager disable, лог без зайвих Error у штатному прогоні.
+
+Hotkey invariant: `g_hwnd` + `RegisterHotKey` + `PeekMessage` + `UnregisterHotKey` — усі на **render-thread** (не main). Modal settings на main не блокує render.
 
 ### D — Settings UI + autostart
 
