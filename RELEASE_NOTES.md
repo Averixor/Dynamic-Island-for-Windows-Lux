@@ -2,8 +2,9 @@
 
 First **standalone** release (no Windhawk required).
 
-- **Tag:** `v1.0.0` (annotate on the commit that passed `app\build.bat`, not an earlier prep commit)
-- **Date:** fill on release day (UTC)
+- **Tag:** `v1.0.0` — annotate on the commit that passed `scripts\release.bat` / `app\build.bat` (not an earlier prep commit)
+- **Commit:** _(paste `git rev-parse v1.0.0` after tagging)_
+- **Date:** _(UTC date on release day)_
 
 ## Origin
 

@@ -2,6 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0\.."
 
+REM Must run AFTER a successful app\build.bat so SHA256 matches the smoked exe.
 set EXE=build\Release\DynamicIslandLux.exe
 if not exist "%EXE%" (
   echo Build Release first: app\build.bat
@@ -44,4 +45,5 @@ if errorlevel 1 (
 
 echo.
 echo OK — attach %OUT%\* to the GitHub Release for tag v1.0.0
-endlocal
+echo Next: git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
+exit /b 0

@@ -78,18 +78,20 @@ Release: Info-лог за замовчуванням; Debug лише з `--log-l
 
 Див. попередній чекліст: пігулка, media, weather, lookup, backdrop+DPI, file tray, game overlay, мови, settings OK/Cancel, autostart, `--settings` IPC, чистий exit, лог без зайвих Error.
 
-### Тег
-
-Після зеленого `app\build.bat` + cold-start (включно з corrupt JSON):
+### Тег (жорсткий порядок)
 
 ```bat
-app\build.bat
-scripts\make-release-assets.bat
-git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
+scripts\release.bat
 ```
 
-Тег лише на коміт, який **реально** пройшов build (якщо CMake/.rc змінились під час збірки — новий коміт, потім тег).  
-Assets: `dist\v1.0.0\` (`SHA256SUMS.txt` у форматі `sha256sum -c`).
+Еквівалент вручну — **лише в цьому порядку** (інакше SHA256SUMS застаріє):
+
+1. `app\build.bat` — Release + smoke (exit ≠ 0 → стоп)
+2. Cold-start чекліст вище (corrupt JSON обовʼязково)
+3. `scripts\make-release-assets.bat` — копіює **той самий** `.exe`, SHA256, VERSIONINFO≠`@PROJECT_VERSION@` (exit ≠ 0 → стоп)
+4. `git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"` на **поточний** `HEAD` після зеленого build
+
+Не тегати `5cdfcb1`/`0796927` «наосліп». Assets: `dist\v1.0.0\`.
 
 ## Архітектурні інваріанти
 

@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 cd /d "%~dp0\.."
 
 where cmake >nul 2>&1
@@ -14,6 +14,10 @@ cmake --build build --config Release
 if errorlevel 1 exit /b 1
 
 set EXE=build\Release\DynamicIslandLux.exe
+if not exist "%EXE%" (
+  echo ERROR: %EXE% missing after build
+  exit /b 1
+)
 echo.
 echo Built: %EXE%
 echo === smoke --no-workers ===
@@ -30,4 +34,7 @@ echo === smoke --backdrop=acrylic ===
 if errorlevel 1 exit /b %ERRORLEVEL%
 echo === smoke --test-json ===
 "%EXE%" --test-json
-exit /b %ERRORLEVEL%
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo.
+echo build.bat OK — next: scripts\make-release-assets.bat  (or scripts\release.bat)
+exit /b 0
