@@ -28,7 +28,7 @@ The original single-file mod body remains at the repo root as
 ## What changed vs Windhawk
 
 | Windhawk | Standalone |
-|----------|------------|
+| --- | --- |
 | Injected / tool-mod process | Own Win32 exe + tray |
 | Windhawk YAML settings | Flat `settings.json` + schema-driven dialog |
 | Windhawk storage API | `%AppData%\DynamicIslandLux\` |

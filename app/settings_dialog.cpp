@@ -33,13 +33,17 @@ constexpr int kTopPad = 12;
 constexpr int kFooterH = 52;
 constexpr int kScrollTop = kTopPad + kSearchH + 12;
 constexpr int kContentW = 540;
+constexpr int kRowH = 30;
+constexpr int kGroupH = 24;
+constexpr int kControlH = 24;
+constexpr int kLabelH = 18;
 
-// DWMWA_USE_IMMERSIVE_DARK_MODE (20) — Win10 1809+ / Win11.
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
 const wchar_t kScrollClass[] = L"DynamicIslandLux.SettingsScroll";
+const wchar_t kContentClass[] = L"DynamicIslandLux.SettingsContent";
 
 struct RowRef {
   size_t schemaIndex = 0;
@@ -52,6 +56,7 @@ struct RowRef {
 struct DialogState {
   HWND search = nullptr;
   HWND scroll = nullptr;
+  HWND content = nullptr;
   HWND autostart = nullptr;
   HWND okBtn = nullptr;
   HWND cancelBtn = nullptr;
@@ -120,12 +125,18 @@ void ThemeControl(HWND hwnd, bool dark) {
   if (!hwnd) {
     return;
   }
+  // Explorer dark theme on STATIC fights WM_CTLCOLOR and leaves paint tears.
+  wchar_t className[64] = {};
+  GetClassNameW(hwnd, className, ARRAYSIZE(className));
+  if (_wcsicmp(className, L"STATIC") == 0) {
+    SetWindowTheme(hwnd, L"", L"");
+    return;
+  }
   SetWindowTheme(hwnd, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
 }
 
 void ThemeAllControls(DialogState& st) {
   ThemeControl(st.search, st.dark);
-  ThemeControl(st.scroll, st.dark);
   ThemeControl(st.autostart, st.dark);
   ThemeControl(st.okBtn, st.dark);
   ThemeControl(st.cancelBtn, st.dark);
@@ -134,13 +145,11 @@ void ThemeAllControls(DialogState& st) {
     ThemeControl(row.label, st.dark);
     ThemeControl(row.control, st.dark);
   }
-  if (st.scroll) {
-    InvalidateRect(st.scroll, nullptr, TRUE);
-  }
 }
 
 HBRUSH HandleCtlColor(DialogState& st, HDC hdc, int ctlType) {
   SetTextColor(hdc, st.text);
+  SetBkMode(hdc, OPAQUE);
   if (ctlType == CTLCOLOR_EDIT || ctlType == CTLCOLOR_LISTBOX) {
     SetBkColor(hdc, st.editBg);
     return st.editBrush ? st.editBrush : st.bgBrush;
@@ -192,47 +201,92 @@ void UpdateScrollBar(DialogState& st) {
   SetScrollInfo(st.scroll, SB_VERT, &si, TRUE);
 }
 
-void ApplyScrollOffset(DialogState& st) {
-  if (!st.scroll) {
+void PlaceContent(DialogState& st) {
+  if (!st.content || !st.scroll) {
     return;
   }
-  int contentY = 8;
+  RECT rc = {};
+  GetClientRect(st.scroll, &rc);
+  const int viewW = (std::max)(1, static_cast<int>(rc.right - rc.left));
+  const int height = (std::max)(st.contentHeight, static_cast<int>(rc.bottom - rc.top));
+  SetWindowPos(st.content, nullptr, 0, -st.scrollY, viewW, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void LayoutContentChildren(DialogState& st) {
+  if (!st.content) {
+    return;
+  }
+
+  int y = 8;
   SettingGroup lastGroup = SettingGroup::Runtime;
   bool first = true;
-
-  for (RowRef& row : st.rows) {
-    const SettingDef& def = kSettingSchema[row.schemaIndex];
-    const bool match = RowMatchesFilter(row, st.filter);
-    if (row.groupHeader) {
-      ShowWindow(row.groupHeader, SW_HIDE);
-    }
-    ShowWindow(row.label, match ? SW_SHOW : SW_HIDE);
-    ShowWindow(row.control, match ? SW_SHOW : SW_HIDE);
-    if (!match) {
+  int deferCount = 2;  // autostart may move; count visible rows below
+  for (const RowRef& row : st.rows) {
+    if (!RowMatchesFilter(row, st.filter)) {
       continue;
     }
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
     if (first || def.group != lastGroup) {
       if (row.groupHeader) {
-        SetWindowPos(row.groupHeader, nullptr, 8, contentY - st.scrollY, kContentW, 20,
-                     SWP_NOZORDER | SWP_SHOWWINDOW);
-        contentY += 24;
+        ++deferCount;
       }
       lastGroup = def.group;
       first = false;
     }
-    SetWindowPos(row.label, nullptr, 16, contentY - st.scrollY + 3, 250, 18, SWP_NOZORDER);
-    SetWindowPos(row.control, nullptr, 280, contentY - st.scrollY, 240, 24, SWP_NOZORDER);
-    contentY += 30;
+    deferCount += 2;
+  }
+
+  HDWP hdwp = BeginDeferWindowPos((std::max)(deferCount, 1));
+  y = 8;
+  lastGroup = SettingGroup::Runtime;
+  first = true;
+
+  for (RowRef& row : st.rows) {
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
+    const bool match = RowMatchesFilter(row, st.filter);
+    if (!match) {
+      if (row.groupHeader) {
+        ShowWindow(row.groupHeader, SW_HIDE);
+      }
+      ShowWindow(row.label, SW_HIDE);
+      ShowWindow(row.control, SW_HIDE);
+      continue;
+    }
+
+    if (first || def.group != lastGroup) {
+      if (row.groupHeader) {
+        hdwp = DeferWindowPos(hdwp, row.groupHeader, nullptr, 8, y, kContentW, 20,
+                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        y += kGroupH;
+      }
+      lastGroup = def.group;
+      first = false;
+    } else if (row.groupHeader) {
+      ShowWindow(row.groupHeader, SW_HIDE);
+    }
+
+    hdwp = DeferWindowPos(hdwp, row.label, nullptr, 16, y + 3, 250, kLabelH,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    hdwp = DeferWindowPos(hdwp, row.control, nullptr, 280, y, 240, kControlH,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    y += kRowH;
   }
 
   if (st.autostart) {
-    SetWindowPos(st.autostart, nullptr, 16, contentY - st.scrollY + 10, 420, 22,
-                 SWP_NOZORDER | SWP_SHOWWINDOW);
-    contentY += 44;
+    hdwp = DeferWindowPos(hdwp, st.autostart, nullptr, 16, y + 10, 420, 22,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    y += 44;
   }
 
-  st.contentHeight = contentY + 12;
+  if (hdwp) {
+    EndDeferWindowPos(hdwp);
+  }
+
+  st.contentHeight = y + 12;
   UpdateScrollBar(st);
+  PlaceContent(st);
+  RedrawWindow(st.scroll, nullptr, nullptr,
+               RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
 void LayoutRows(HWND hwnd, DialogState& st) {
@@ -260,20 +314,21 @@ void LayoutRows(HWND hwnd, DialogState& st) {
   }
 
   st.scrollY = 0;
-  ApplyScrollOffset(st);
+  LayoutContentChildren(st);
 }
 
-void ScrollBy(DialogState& st, int delta) {
+void ScrollTo(DialogState& st, int pos) {
   RECT rc = {};
   GetClientRect(st.scroll, &rc);
   const int page = (std::max)(1, static_cast<int>(rc.bottom - rc.top));
   const int maxScroll = (std::max)(0, st.contentHeight - page);
-  const int next = (std::clamp)(st.scrollY + delta, 0, maxScroll);
+  const int next = (std::clamp)(pos, 0, maxScroll);
   if (next == st.scrollY) {
     return;
   }
   st.scrollY = next;
-  ApplyScrollOffset(st);
+  UpdateScrollBar(st);
+  PlaceContent(st);
 }
 
 void RefreshSystemTheme(HWND hwnd, DialogState& st) {
@@ -281,9 +336,50 @@ void RefreshSystemTheme(HWND hwnd, DialogState& st) {
   ApplyDarkTitleBar(hwnd, st.dark);
   ThemeAllControls(st);
   InvalidateRect(hwnd, nullptr, TRUE);
+  if (st.content) {
+    InvalidateRect(st.content, nullptr, TRUE);
+  }
   if (st.scroll) {
     InvalidateRect(st.scroll, nullptr, TRUE);
   }
+}
+
+LRESULT PaintSolidBackground(HWND hwnd, WPARAM wParam, DialogState* st) {
+  if (!st || !st->bgBrush) {
+    return DefWindowProcW(hwnd, WM_ERASEBKGND, wParam, 0);
+  }
+  RECT rc = {};
+  GetClientRect(hwnd, &rc);
+  FillRect(reinterpret_cast<HDC>(wParam), &rc, st->bgBrush);
+  return 1;
+}
+
+LRESULT CALLBACK ContentProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+  HWND scroll = GetParent(hwnd);
+  HWND parent = scroll ? GetParent(scroll) : nullptr;
+  DialogState* st = parent ? State(parent) : nullptr;
+  switch (msg) {
+  case WM_CTLCOLORSTATIC:
+  case WM_CTLCOLOREDIT:
+  case WM_CTLCOLORBTN:
+  case WM_CTLCOLORLISTBOX:
+    if (st) {
+      const int type = (msg == WM_CTLCOLOREDIT)      ? CTLCOLOR_EDIT
+                       : (msg == WM_CTLCOLORLISTBOX) ? CTLCOLOR_LISTBOX
+                       : (msg == WM_CTLCOLORBTN)     ? CTLCOLOR_BTN
+                                                     : CTLCOLOR_STATIC;
+      return reinterpret_cast<LRESULT>(HandleCtlColor(*st, reinterpret_cast<HDC>(wParam), type));
+    }
+    break;
+  case WM_ERASEBKGND:
+    return PaintSolidBackground(hwnd, wParam, st);
+  case WM_MOUSEWHEEL:
+    if (scroll) {
+      return SendMessageW(scroll, msg, wParam, lParam);
+    }
+    break;
+  }
+  return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -301,10 +397,10 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     int pos = si.nPos;
     switch (LOWORD(wParam)) {
     case SB_LINEUP:
-      pos -= 30;
+      pos -= kRowH;
       break;
     case SB_LINEDOWN:
-      pos += 30;
+      pos += kRowH;
       break;
     case SB_PAGEUP:
       pos -= static_cast<int>(si.nPage);
@@ -319,7 +415,7 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     default:
       break;
     }
-    ScrollBy(*st, pos - st->scrollY);
+    ScrollTo(*st, pos);
     return 0;
   }
   case WM_MOUSEWHEEL: {
@@ -327,67 +423,83 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       break;
     }
     const int delta = -GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 48;
-    ScrollBy(*st, delta);
+    ScrollTo(*st, st->scrollY + delta);
     return 0;
   }
+  case WM_SIZE:
+    if (st) {
+      UpdateScrollBar(*st);
+      PlaceContent(*st);
+    }
+    return 0;
+  case WM_ERASEBKGND:
+    return PaintSolidBackground(hwnd, wParam, st);
   case WM_CTLCOLORSTATIC:
   case WM_CTLCOLOREDIT:
   case WM_CTLCOLORBTN:
   case WM_CTLCOLORLISTBOX:
     if (st) {
-      const int type = (msg == WM_CTLCOLOREDIT)       ? CTLCOLOR_EDIT
-                       : (msg == WM_CTLCOLORLISTBOX)  ? CTLCOLOR_LISTBOX
-                       : (msg == WM_CTLCOLORBTN)      ? CTLCOLOR_BTN
-                                                      : CTLCOLOR_STATIC;
+      const int type = (msg == WM_CTLCOLOREDIT)      ? CTLCOLOR_EDIT
+                       : (msg == WM_CTLCOLORLISTBOX) ? CTLCOLOR_LISTBOX
+                       : (msg == WM_CTLCOLORBTN)     ? CTLCOLOR_BTN
+                                                     : CTLCOLOR_STATIC;
       return reinterpret_cast<LRESULT>(HandleCtlColor(*st, reinterpret_cast<HDC>(wParam), type));
     }
     break;
-  case WM_ERASEBKGND: {
-    if (st && st->bgBrush) {
-      RECT rc = {};
-      GetClientRect(hwnd, &rc);
-      FillRect(reinterpret_cast<HDC>(wParam), &rc, st->bgBrush);
-      return 1;
-    }
-    break;
-  }
   }
   return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-void EnsureScrollClass() {
+void EnsureWindowClasses() {
   static bool registered = false;
   if (registered) {
     return;
   }
-  WNDCLASSEXW wc = {};
-  wc.cbSize = sizeof(wc);
-  wc.lpfnWndProc = ScrollProc;
-  wc.hInstance = GetModuleHandleW(nullptr);
-  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-  wc.hbrBackground = nullptr;
-  wc.lpszClassName = kScrollClass;
-  RegisterClassExW(&wc);
+  WNDCLASSEXW scrollWc = {};
+  scrollWc.cbSize = sizeof(scrollWc);
+  scrollWc.lpfnWndProc = ScrollProc;
+  scrollWc.hInstance = GetModuleHandleW(nullptr);
+  scrollWc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  scrollWc.hbrBackground = nullptr;
+  scrollWc.lpszClassName = kScrollClass;
+  scrollWc.style = CS_DBLCLKS;
+  RegisterClassExW(&scrollWc);
+
+  WNDCLASSEXW contentWc = {};
+  contentWc.cbSize = sizeof(contentWc);
+  contentWc.lpfnWndProc = ContentProc;
+  contentWc.hInstance = GetModuleHandleW(nullptr);
+  contentWc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  contentWc.hbrBackground = nullptr;
+  contentWc.lpszClassName = kContentClass;
+  contentWc.style = CS_DBLCLKS;
+  RegisterClassExW(&contentWc);
   registered = true;
 }
 
 void BuildControls(HWND hwnd, DialogState& st) {
   st.lang = SettingsUiLoc::ResolveLang();
-  EnsureScrollClass();
+  EnsureWindowClasses();
   LoadThemeColors(st);
   ApplyDarkTitleBar(hwnd, st.dark);
 
   st.search = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                              WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 16, kTopPad, 520, kSearchH, hwnd,
-                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)),
+                              WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | ES_AUTOHSCROLL, 16, kTopPad,
+                              520, kSearchH, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)),
                               GetModuleHandleW(nullptr), nullptr);
   SendMessageW(st.search, EM_SETCUEBANNER, TRUE,
                reinterpret_cast<LPARAM>(SettingsUiLoc::FilterCue(st.lang)));
 
-  st.scroll = CreateWindowExW(WS_EX_CLIENTEDGE, kScrollClass, L"",
-                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN, 8, kScrollTop,
-                              kDlgClientW - 16, 400, hwnd, nullptr, GetModuleHandleW(nullptr),
-                              nullptr);
+  st.scroll =
+      CreateWindowExW(WS_EX_CLIENTEDGE, kScrollClass, L"",
+                      WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 8,
+                      kScrollTop, kDlgClientW - 16, 400, hwnd, nullptr, GetModuleHandleW(nullptr),
+                      nullptr);
+
+  st.content = CreateWindowExW(0, kContentClass, L"",
+                               WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0,
+                               kDlgClientW - 16, 400, st.scroll, nullptr, GetModuleHandleW(nullptr),
+                               nullptr);
 
   SettingGroup prev = SettingGroup::Runtime;
   for (size_t i = 0; i < kSettingSchemaCount; ++i) {
@@ -401,24 +513,32 @@ void BuildControls(HWND hwnd, DialogState& st) {
     if (def.group != prev) {
       row.groupHeader = CreateWindowExW(
           0, L"STATIC", SettingsUiLoc::GroupTitle(st.lang, def.group),
-          WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 0, 0, st.scroll, nullptr, GetModuleHandleW(nullptr),
-          nullptr);
+          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT, 0, 0, 0, 0, st.content, nullptr,
+          GetModuleHandleW(nullptr), nullptr);
+      HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+      if (!font) {
+        font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+      }
+      SendMessageW(row.groupHeader, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
       prev = def.group;
     }
-    row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(), WS_CHILD | WS_VISIBLE, 0, 0, 0,
-                                0, st.scroll, nullptr, GetModuleHandleW(nullptr), nullptr);
+    row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOPREFIX, 0, 0,
+                                0, 0, st.content, nullptr, GetModuleHandleW(nullptr), nullptr);
     const int id = kControlIdBase + static_cast<int>(i);
     if (def.type == SettingType::Bool) {
       const bool on = SettingsGetBool(def.key, def.defaultString && def.defaultString[0] == L'1');
-      row.control = CreateWindowExW(0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0,
-                                    0, 0, st.scroll, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+      row.control = CreateWindowExW(0, L"BUTTON", L"",
+                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX, 0, 0, 0,
+                                    0, st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                     GetModuleHandleW(nullptr), nullptr);
       SendMessageW(row.control, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
     } else if (def.type == SettingType::Enum && def.enums && def.enumCount > 0) {
-      row.control = CreateWindowExW(0, L"COMBOBOX", L"",
-                                    WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0, 0, 0,
-                                    st.scroll, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                    GetModuleHandleW(nullptr), nullptr);
+      row.control =
+          CreateWindowExW(0, L"COMBOBOX", L"",
+                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | CBS_DROPDOWNLIST | WS_VSCROLL, 0,
+                          0, 0, 0, st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                          GetModuleHandleW(nullptr), nullptr);
       const std::wstring cur = SettingsGetString(def.key, def.defaultString);
       int select = 0;
       for (size_t e = 0; e < def.enumCount; ++e) {
@@ -431,29 +551,30 @@ void BuildControls(HWND hwnd, DialogState& st) {
       SendMessageW(row.control, CB_SETCURSEL, static_cast<WPARAM>(select), 0);
     } else {
       const std::wstring value = SettingsGetString(def.key, def.defaultString);
-      const DWORD editStyle = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL |
+      const DWORD editStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | ES_AUTOHSCROLL |
                               (wcscmp(def.key, L"app.version") == 0 ? ES_READONLY : 0);
       row.control = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", value.c_str(), editStyle, 0, 0, 0, 0,
-                                    st.scroll, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                    st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                     GetModuleHandleW(nullptr), nullptr);
     }
     st.rows.push_back(std::move(row));
   }
 
-  st.autostart =
-      CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Autostart(st.lang),
-                      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, st.scroll,
-                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutostart)),
-                      GetModuleHandleW(nullptr), nullptr);
+  st.autostart = CreateWindowExW(
+      0, L"BUTTON", SettingsUiLoc::Autostart(st.lang),
+      WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX, 0, 0, 0, 0, st.content,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutostart)), GetModuleHandleW(nullptr),
+      nullptr);
   SendMessageW(st.autostart, BM_SETCHECK, AutostartIsEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
 
   st.okBtn =
-      CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Ok(st.lang), WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                      0, 0, 90, 28, hwnd, reinterpret_cast<HMENU>(IDOK), GetModuleHandleW(nullptr),
-                      nullptr);
+      CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Ok(st.lang),
+                      WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_DEFPUSHBUTTON, 0, 0, 90, 28, hwnd,
+                      reinterpret_cast<HMENU>(IDOK), GetModuleHandleW(nullptr), nullptr);
   st.cancelBtn =
-      CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Cancel(st.lang), WS_CHILD | WS_VISIBLE, 0, 0, 90, 28,
-                      hwnd, reinterpret_cast<HMENU>(IDCANCEL), GetModuleHandleW(nullptr), nullptr);
+      CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Cancel(st.lang),
+                      WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 90, 28, hwnd,
+                      reinterpret_cast<HMENU>(IDCANCEL), GetModuleHandleW(nullptr), nullptr);
 
   ThemeAllControls(st);
   LayoutRows(hwnd, st);
@@ -501,12 +622,17 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
   case WM_CTLCOLORBTN:
   case WM_CTLCOLORLISTBOX:
     if (DialogState* st = State(hwnd)) {
-      const int type = (msg == WM_CTLCOLOREDIT)       ? CTLCOLOR_EDIT
-                       : (msg == WM_CTLCOLORLISTBOX)  ? CTLCOLOR_LISTBOX
-                       : (msg == WM_CTLCOLORBTN)      ? CTLCOLOR_BTN
-                       : (msg == WM_CTLCOLORDLG)      ? CTLCOLOR_DLG
-                                                      : CTLCOLOR_STATIC;
+      const int type = (msg == WM_CTLCOLOREDIT)      ? CTLCOLOR_EDIT
+                       : (msg == WM_CTLCOLORLISTBOX) ? CTLCOLOR_LISTBOX
+                       : (msg == WM_CTLCOLORBTN)     ? CTLCOLOR_BTN
+                       : (msg == WM_CTLCOLORDLG)     ? CTLCOLOR_DLG
+                                                     : CTLCOLOR_STATIC;
       return reinterpret_cast<INT_PTR>(HandleCtlColor(*st, reinterpret_cast<HDC>(wParam), type));
+    }
+    break;
+  case WM_ERASEBKGND:
+    if (DialogState* st = State(hwnd)) {
+      return PaintSolidBackground(hwnd, wParam, st);
     }
     break;
   case WM_SETTINGCHANGE:
@@ -534,7 +660,7 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       if (DialogState* st = State(hwnd)) {
         GetWindowTextW(st->search, st->filter, ARRAYSIZE(st->filter));
         st->scrollY = 0;
-        ApplyScrollOffset(*st);
+        LayoutContentChildren(*st);
       }
     }
     return TRUE;
@@ -577,7 +703,8 @@ void OpenSettingsDialog(HWND owner) {
     wchar_t title[1];
   } tpl = {};
 #pragma pack(pop)
-  tpl.dlg.style = DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+  tpl.dlg.style =
+      DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
   tpl.dlg.cdit = 0;
   tpl.dlg.cx = 300;
   tpl.dlg.cy = 300;
