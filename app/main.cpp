@@ -291,6 +291,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
       LuxLogShutdown();
       return static_cast<int>(LuxExitCode::InitFailure);
     }
+    // Keep options.openSettings — after host HWND is up we still Post WM_APP_OPEN_SETTINGS.
+    if (options.openSettings) {
+      LUX_LOGI(L"--settings: became primary after peer exit; will open dialog");
+    }
   }
 
   SettingsStoreInit();
@@ -371,12 +375,14 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (frameOk && LuxShouldStartWorkers()) {
       // Without --backdrop=, keep Themes.BackdropMaterial from schema/store (default: none).
       // CI must pass --backdrop=blur and --backdrop=acrylic explicitly to cover both paths.
-      if (options.smokeBackdrop[0]) {
+      const bool fromFlag = options.smokeBackdrop[0] != L'\0';
+      if (fromFlag) {
         SettingsSetString(L"Themes.BackdropMaterial", options.smokeBackdrop);
       }
       const std::wstring requested =
           SettingsGetString(L"Themes.BackdropMaterial", L"none");
-      LUX_LOGI(L"smoke-test: starting workers (backdrop requested=%s)", requested.c_str());
+      LUX_LOGI(L"backdrop: source=%s value=%s", fromFlag ? L"flag" : L"schema",
+               requested.c_str());
       if (!LuxOverlay_StartWorkers(g_app)) {
         LUX_LOGE(L"smoke-test: WhTool_ModInit failed");
         initOk = false;

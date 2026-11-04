@@ -7,6 +7,12 @@
 Потрібні Visual Studio 2022 (C++ Desktop) і CMake ≥ 3.20.
 
 ```bat
+app\build.bat
+```
+
+або:
+
+```bat
 cmake -S app -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
@@ -22,6 +28,7 @@ build\Release\DynamicIslandLux.exe --test-json
 build\Release\DynamicIslandLux.exe --smoke-test --no-workers
 build\Release\DynamicIslandLux.exe --smoke-test
 build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
+build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
 build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 ```
 
@@ -36,44 +43,55 @@ build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 | 4 | `--test-json` failed |
 
 `--smoke-test` — ephemeral. Кадр зі scaffold; **не чекає** media/мережу.
-`--no-workers` — без CreateThread / SetWindowsHookEx / hotkeys (exit `2` неможливий — Uninit не чекає потоків).
-`--backdrop=` — якщо **не** задано, лишається `Themes.BackdropMaterial` зі схеми (`none`). CI має ганяти `--backdrop=blur` і `--backdrop=acrylic` окремо; у лозі `backdrop: requested=… actual=…`.
-`--settings` на другому екземплярі: Ready ≤1.5 s + `SendMessageTimeout` 2 s; якщо peer уже помер — retry mutex як primary.
+`--no-workers` — без CreateThread / SetWindowsHookEx / hotkeys (exit `2` неможливий).
+`--backdrop=` — якщо **не** задано → схема `Themes.BackdropMaterial` (`none`). Лог: `backdrop: source=schema|flag value=…`.
+`--settings` — другий екземпляр чекає Ready; якщо peer помер → retry mutex як primary **і відкриває діалог**.
 
 Порядок старту: mutex → host HWND → `LuxOverlay_Init` → Ready → workers → кадр.
 
-## Порт `.wh.cpp` (кроки)
+## Acceptance перед тегом v1.0
 
-- **A/B:** scaffold + `WhTool_ModInit` lifecycle.
-- **C:** lookup / DWM / file tray / game overlay / мови.
-- **D:** custom settings dialog (не PROPSHEET) + HKCU Run/StartupApproved + IPC timeout.
-- **E (зараз):** фінальний Release smoke + ручний чекліст.
-- **F:** DPI/`W4` legacy cleanup.
+### Автоматичні (CI / `app\build.bat`)
 
-### Фінальний smoke (Release x64)
+- [ ] `--smoke-test --no-workers` → exit 0, лог без Error
+- [ ] `--smoke-test` (без `--backdrop`) → exit 0, лог `backdrop: source=schema value=none`
+- [ ] `--smoke-test --backdrop=blur` → exit 0, лог `source=flag value=blur`
+- [ ] `--smoke-test --backdrop=acrylic` → exit 0, лог `source=flag value=acrylic`
+- [ ] `--smoke-test --smoke-timeout-ms=3000` → exit 0 (не 2)
+- [ ] `--test-json` → exit 0
+- [ ] Дві послідовні `--smoke-test` → друга не падає на mutex
 
-```bat
-build\Release\DynamicIslandLux.exe --smoke-test --no-workers
-build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
-build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
-```
+### Ручні (~10 хв)
 
-Ручний чекліст: пігулка, Quick Lookup hotkey, backdrop blur/acrylic/none, file tray drop на pill, game overlay idle, зміна мови без рестарту, settings Apply=OK без рестарту, autostart toggle + Task Manager disable, лог без зайвих Error у штатному прогоні.
+- [ ] Запуск без аргументів: пігулка, трей, Idle → media
+- [ ] Медіа play/pause/next → пігулка оновлюється
+- [ ] Погода: оновлення або Warn мережі, не crash
+- [ ] Quick Lookup hotkey; після 10 хв ще працює
+- [ ] Backdrop у діалозі без рестарту; DPI 100→150→100 без чорного backdrop
+- [ ] File tray: drop на pill; поза pill ігнор; explorer restart → tray іконка + persist
+- [ ] Game overlay idle без гри; alt-tab; закриття гри → idle
+- [ ] Мова в діалозі → перерендер без рестарту
+- [ ] Settings OK застосовує; Cancel без змін; без Apply-кнопки
+- [ ] Autostart on → HKCU Run quoted; Task Manager Disable → діалог «вимкнено»; off → ключ видалено
+- [ ] `--settings` при запущеному → діалог у першому; другий виходить
+- [ ] `--settings` після краху peer → новий primary + діалог
+- [ ] Вихід з трею ≤1 s; лог `worker … stopped`
+- [ ] Лог 10 хв: без Error; Warn лише очікувані
 
-Hotkey invariant: `g_hwnd` + `RegisterHotKey` + `PeekMessage` + `UnregisterHotKey` — усі на **render-thread** (не main). Modal settings на main не блокує render.
+### Регресії
 
-### D — Settings UI + autostart
+- [ ] Візуально ≈ Windhawk-версія (розмір/позиція/анімації)
 
-- **Архітектура:** custom schema-driven dialog + filter (див. `settings_dialog.h`). Не property sheet.
-- **Autostart:** `HKCU\...\Run` з **quoted** шляхом; синхронно `HKCU\...\StartupApproved\Run` (0x02/0x03).
-- **Hotkeys:** `RegisterHotKey` на **render-thread** (не main); `UnregisterHotKey` у `WM_DESTROY` / перед `DestroyWindow`.
-- **LL hooks:** owner = Keyboard/MouseThreadProc до Uninit; `Unhook` на тому ж потоці.
-- **WM_NCHITTEST:** pill → `HTCLIENT` (drop/click); поза pill → `HTTRANSPARENT`.
-- **Loc:** table lookup за `g_uiLanguage` щоразу — немає static LoadString-кешу.
+## Архітектурні інваріанти
+
+- Hotkey: `RegisterHotKey` + `PeekMessage` + `UnregisterHotKey` на **render-thread**
+- Backdrop: island layered; DwmBackdrop non-layered + WCA; Show island → EnsureBehind; accent після SetWindowPos
+- Settings OK → `SettingsStoreReload` (main) + `PostMessage(WM_APP_RELOAD_SETTINGS)` (render)
+- Modal dialog на main не блокує render-thread
 
 ## Дані
 
-- `%AppData%\DynamicIslandLux\settings.json` — користувацькі налаштування
-- `%AppData%\DynamicIslandLux\runtime.json` — ефемерні overrides
-- `%AppData%\DynamicIslandLux\modstorage` — file tray / lyrics cache
-- `%LocalAppData%\DynamicIslandLux\logs\lux.log` — лог з ротацією
+- `%AppData%\DynamicIslandLux\settings.json`
+- `%AppData%\DynamicIslandLux\runtime.json`
+- `%AppData%\DynamicIslandLux\modstorage`
+- `%LocalAppData%\DynamicIslandLux\logs\lux.log`

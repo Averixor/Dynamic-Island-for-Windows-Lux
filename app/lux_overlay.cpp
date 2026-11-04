@@ -176,16 +176,18 @@ bool LuxOverlay_PumpFrame(AppState& app) {
 }
 
 void LuxOverlay_OnSettingsChanged() {
-  // Dialog already wrote settings.json; reload store, then legacy LoadSettings via WhTool.
+  // Store reload on main (fast). WhTool_ModSettingsChanged posts LoadSettings to the
+  // render thread when the island HWND exists — OK click must not stall the island.
   SettingsStoreReload();
-  WhTool_ModSettingsChanged();  // calls LoadSettings() inside .wh.cpp
-  LUX_LOGI(L"LuxOverlay_OnSettingsChanged applied");
+  WhTool_ModSettingsChanged();
+  LUX_LOGI(L"LuxOverlay_OnSettingsChanged queued/applied");
 }
 
 bool LuxOverlay_StartWorkers(AppState& app) {
   (void)app;
   if (!LuxShouldStartWorkers()) {
-    LUX_LOGI(L"LuxOverlay_StartWorkers skipped (smoke/no-workers) — no CreateThread/hooks");
+    // After Step D: autostart/dialog are sync on main — no extra threads here either.
+    LUX_LOGI(L"LuxOverlay_StartWorkers skipped (--no-workers) — no CreateThread/hooks/hotkeys");
     return true;
   }
   if (g_workersStarted) {

@@ -477,6 +477,7 @@ constexpr UINT WM_APP_NEW_EVENT = WM_APP + 0x443;
 constexpr UINT WM_APP_MOUSE_WAKE = WM_APP + 0x446;
 constexpr UINT WM_APP_APPLY_HOTKEY = WM_APP + 0x447;
 constexpr UINT WM_APP_APPLY_BACKDROP = WM_APP + 0x448;
+constexpr UINT WM_APP_RELOAD_SETTINGS = WM_APP + 0x449;
 constexpr int ID_HIDE_SHOW_HOTKEY = 1;
 constexpr int ID_LOOKUP_HOTKEY = 2;
 constexpr float kRenderPadX = 40.0f;
@@ -3587,7 +3588,17 @@ namespace DwmBackdrop {
         policy.accentFlags = 0x10;
         policy.gradientColor = color;
         CompositionAttribData data = {kWcaAccentPolicy, &policy, sizeof(policy)};
-        g_setWca(s.hwnd, &data);
+        if (!g_setWca(s.hwnd, &data)) {
+            // Older Win10 builds may lack acrylic — Warn once per slot transition, not Error.
+            static ULONGLONG s_lastFailLog = 0;
+            const ULONGLONG now = GetTickCount64();
+            if (now - s_lastFailLog > 5000) {
+                s_lastFailLog = now;
+                Wh_Log(L"SetWindowCompositionAttribute failed (error %lu) — backdrop may be plain.",
+                       GetLastError());
+            }
+            return;
+        }
         s.accentState = state;
         s.accentColor = color;
     }
@@ -3698,7 +3709,7 @@ namespace DwmBackdrop {
         }
     }
     void PlaceSlot(Slot& s, HWND prev, int x, int y, int w, int h, int radius, int lift,
-                   bool wantTopMost) {
+                   bool wantTopMost, int accentState, DWORD accentColor) {
         EnsureTopMost(s, wantTopMost);
         UpdateRegion(s, w, h, radius, lift);
         const bool moved = x != s.x || y != s.y || w != s.w || h != s.h;
@@ -3710,7 +3721,10 @@ namespace DwmBackdrop {
             if (!s.visible)
                 flags |= SWP_SHOWWINDOW;
             SetWindowPos(s.hwnd, prev, x, y, w, h, flags);
+            // Some Win11 builds drop WCA accent after SetWindowPos — force re-apply.
+            s.accentState = -1;
         }
+        ApplyAccent(s, accentState, accentColor);
         s.x = x;
         s.y = y;
         s.w = w;
@@ -3802,9 +3816,8 @@ namespace DwmBackdrop {
                 if (!s.hwnd)
                     continue;
             }
-            ApplyAccent(s, state, color);
             PlaceSlot(s, prev, geom[i].x, geom[i].y, geom[i].w, geom[i].h, geom[i].radius,
-                      geom[i].lift, wantTopMost);
+                      geom[i].lift, wantTopMost, state, color);
             prev = s.hwnd;
         }
         for (int i = count; i < kMaxPills; ++i)
@@ -8282,6 +8295,7 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
         if (epoch != s_fgEpochSeen || nowTick - s_fgCachedAt >= 250) {
             s_fgEpochSeen = epoch;
             s_fgCachedAt = nowTick;
+            const bool hadTitle = !s_fgTitle.empty();
             s_fgHwnd = GetForegroundWindow();
             s_fgTitle.clear();
             if (s_fgHwnd && s_fgHwnd != g_hwnd && IsWindow(s_fgHwnd)) {
@@ -8294,6 +8308,10 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
                         s_fgTitle += L"...";
                     }
                 }
+            }
+            // One-shot transition log only (not every 250 ms OpenProcess miss).
+            if (hadTitle && s_fgTitle.empty()) {
+                Wh_Log(L"foreground: cleared (window gone or ignorable)");
             }
         }
         next.foregroundTitle = s_fgTitle;
@@ -20396,6 +20414,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_APP_APPLY_BACKDROP:
         ApplyBackdropMaterial(hwnd);
         return 0;
+    case WM_APP_RELOAD_SETTINGS:
+        // Posted from main-thread settings OK — LoadSettings runs on render thread.
+        LoadSettings();
+        return 0;
     case WM_APP_MOUSE_WAKE:
         return 0;
     case WM_APP_CAPSLOCK: {
@@ -21036,6 +21058,21 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ClientToScreen(hwnd, &pt);
         ShowContextMenu(hwnd, pt);
         return 0;
+    }
+    case WM_WINDOWPOSCHANGED: {
+        // Some Win11 builds drop WCA accent after SetWindowPos — re-apply when size changes.
+        const auto* wp = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (wp && !(wp->flags & SWP_NOSIZE)) {
+            static int s_lastCx = -1;
+            static int s_lastCy = -1;
+            if (wp->cx != s_lastCx || wp->cy != s_lastCy) {
+                s_lastCx = wp->cx;
+                s_lastCy = wp->cy;
+                DwmBackdrop::InvalidateSync();
+                DwmBackdrop::EnsureBehind(hwnd);
+            }
+        }
+        break;
     }
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE: {
@@ -22138,7 +22175,16 @@ BOOL WhTool_ModInit() {
     return TRUE;
 }
 void WhTool_ModSettingsChanged() {
-    // Caller (LuxOverlay_OnSettingsChanged) reloads SettingsStore first.
+    // Caller (LuxOverlay_OnSettingsChanged) reloads SettingsStore on main first.
+    // Hop to render-thread so modal settings OK does not stall the island.
+    if (g_hwnd && IsWindow(g_hwnd)) {
+        if (!PostMessageW(g_hwnd, WM_APP_RELOAD_SETTINGS, 0, 0)) {
+            Wh_Log(L"WhTool_ModSettingsChanged: PostMessage failed (%lu); loading inline.",
+                   GetLastError());
+            LoadSettings();
+        }
+        return;
+    }
     LoadSettings();
 }
 void WhTool_ModUninit() {

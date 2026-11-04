@@ -19,9 +19,15 @@ echo Built: %EXE%
 echo === smoke --no-workers ===
 "%EXE%" --smoke-test --no-workers
 if errorlevel 1 exit /b %ERRORLEVEL%
+echo === smoke schema backdrop (no --backdrop) ===
+"%EXE%" --smoke-test
+if errorlevel 1 exit /b %ERRORLEVEL%
 echo === smoke --backdrop=blur ===
 "%EXE%" --smoke-test --backdrop=blur
 if errorlevel 1 exit /b %ERRORLEVEL%
 echo === smoke --backdrop=acrylic ===
 "%EXE%" --smoke-test --backdrop=acrylic
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo === smoke --test-json ===
+"%EXE%" --test-json
 exit /b %ERRORLEVEL%
