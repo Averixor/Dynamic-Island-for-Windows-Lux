@@ -2,22 +2,27 @@
 
 First **standalone** release (no Windhawk required).
 
+- **Tag:** `v1.0.0` (annotate on the commit that passed `app\build.bat`, not an earlier prep commit)
+- **Date:** fill on release day (UTC)
+
 ## Origin
 
 Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Himanshu (Averixor)**, MIT license.
-The original single-file mod body is kept at the repo root as  
-`Dynamic Island for Windows Lux.wh.cpp` (archive / link unit — do not delete).
+
+The original single-file mod body remains at the repo root as  
+`Dynamic Island for Windows Lux.wh.cpp` — intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
 
 ## What’s included
 
 - Dynamic island overlay (media, volume, brightness, clipboard, battery, weather, calendar, system monitor, Bluetooth, DND, focus timer, lyrics)
 - Quick Lookup (dictionary / Wikipedia)
-- DWM blur / acrylic backdrop (separate non-layered windows)
-- File tray (OLE drop + atomic persist)
+- DWM blur / acrylic backdrop (separate non-layered windows via WCA)
+- File tray (OLE drop + atomic persist; corrupt JSON → `.bad` + defaults)
 - Game overlay metrics (idle without a game is fine)
 - Multi-language UI via `General.Language`
 - Tray icon, custom settings dialog, HKCU autostart
 - Flat JSON settings + separate `runtime.json`, rotating logs
+- `--smoke-test` / `--test-json` / `--log-level=` / exit codes 0–4
 
 ## What changed vs Windhawk
 
@@ -43,10 +48,11 @@ See `app/README.md` → **Known limitations**.
 - `LICENSE`
 - `INSTALL.txt`
 - `RELEASE_NOTES.md`
-- `SHA256SUMS.txt` (hash of the `.exe`)
+- `SHA256SUMS.txt` (`sha256sum -c` compatible)
 
 ```bat
-certutil -hashfile build\Release\DynamicIslandLux.exe SHA256 > SHA256SUMS.txt
+app\build.bat
+scripts\make-release-assets.bat
 ```
 
 Verify Properties → Details on the exe shows **File version 1.0.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

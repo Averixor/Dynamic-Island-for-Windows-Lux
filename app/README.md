@@ -80,13 +80,16 @@ Release: Info-лог за замовчуванням; Debug лише з `--log-l
 
 ### Тег
 
-Після зеленого чекліста:
+Після зеленого `app\build.bat` + cold-start (включно з corrupt JSON):
 
 ```bat
+app\build.bat
+scripts\make-release-assets.bat
 git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
 ```
 
-Release assets: `DynamicIslandLux.exe` + `LICENSE` + `INSTALL.txt` (див. `/RELEASE_NOTES.md`).
+Тег лише на коміт, який **реально** пройшов build (якщо CMake/.rc змінились під час збірки — новий коміт, потім тег).  
+Assets: `dist\v1.0.0\` (`SHA256SUMS.txt` у форматі `sha256sum -c`).
 
 ## Архітектурні інваріанти
 
