@@ -259,7 +259,13 @@ bool AtomicWriteFile(const std::wstring& path, const std::string& body) {
     HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-      LUX_LOGE(L"AtomicWrite: CreateFile failed for %s (%lu)", tmp.c_str(), GetLastError());
+      const DWORD err = GetLastError();
+      if (err == ERROR_ACCESS_DENIED || err == ERROR_WRITE_PROTECT) {
+        LUX_LOGW(L"AtomicWrite: cannot write %s (access denied %lu) — in-memory only", path.c_str(),
+                 err);
+      } else {
+        LUX_LOGE(L"AtomicWrite: CreateFile failed for %s (%lu)", tmp.c_str(), err);
+      }
       return false;
     }
     DWORD written = 0;
@@ -273,27 +279,53 @@ bool AtomicWriteFile(const std::wstring& path, const std::string& body) {
     }
   }
   if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-    LUX_LOGE(L"AtomicWrite: MoveFileEx failed for %s (%lu)", path.c_str(), GetLastError());
+    const DWORD err = GetLastError();
     DeleteFileW(tmp.c_str());
+    if (err == ERROR_ACCESS_DENIED || err == ERROR_WRITE_PROTECT || err == ERROR_SHARING_VIOLATION) {
+      LUX_LOGW(L"AtomicWrite: MoveFileEx denied for %s (%lu) — keep in-memory settings", path.c_str(),
+               err);
+    } else {
+      LUX_LOGE(L"AtomicWrite: MoveFileEx failed for %s (%lu)", path.c_str(), err);
+    }
     return false;
   }
   return true;
 }
 
-bool LoadFileMap(const std::wstring& path, std::map<std::wstring, std::wstring>* out) {
+enum class JsonLoadResult {
+  Missing,
+  Ok,
+  Corrupt,
+};
+
+JsonLoadResult LoadFileMap(const std::wstring& path, std::map<std::wstring, std::wstring>* out) {
   out->clear();
+  const DWORD attrs = GetFileAttributesW(path.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    return JsonLoadResult::Missing;
+  }
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    return false;
+    LUX_LOGW(L"Settings JSON open failed: %s — using defaults", path.c_str());
+    return JsonLoadResult::Corrupt;
   }
   std::ostringstream ss;
   ss << in.rdbuf();
+  in.close();
   if (!ParseFlatJsonObject(ss.str(), out)) {
-    LUX_LOGW(L"Settings JSON unreadable: %s — using defaults", path.c_str());
     out->clear();
-    return false;
+    const std::wstring bad = path + L".bad";
+    DeleteFileW(bad.c_str());
+    if (MoveFileExW(path.c_str(), bad.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+      LUX_LOGW(L"Settings JSON corrupt: %s — moved to %s, restoring defaults", path.c_str(),
+               bad.c_str());
+    } else {
+      LUX_LOGW(L"Settings JSON corrupt: %s — using defaults (could not rename to .bad, %lu)",
+               path.c_str(), GetLastError());
+    }
+    return JsonLoadResult::Corrupt;
   }
-  return true;
+  return JsonLoadResult::Ok;
 }
 
 bool SaveFileMap(const std::wstring& path, const std::map<std::wstring, std::wstring>& map) {
@@ -332,8 +364,9 @@ bool SettingsStoreInit() {
   std::lock_guard lock(g_mutex);
   g_user.clear();
   g_runtime.clear();
-  LoadFileMap(UserPath(), &g_user);
-  LoadFileMap(RuntimePath(), &g_runtime);
+  const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
+  const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
+  (void)runtimeLoad;
 
   for (const SettingDef& def : kSettingSchema) {
     if (g_user.find(def.key) == g_user.end() && def.defaultString) {
@@ -341,9 +374,15 @@ bool SettingsStoreInit() {
     }
   }
   const std::wstring ver = LUX_APP_VERSION_STRING;
-  if (g_user[L"app.version"] != ver) {
+  const bool versionBump = g_user[L"app.version"] != ver;
+  if (versionBump) {
     g_user[L"app.version"] = ver;
-    SaveFileMap(UserPath(), g_user);
+  }
+  // First launch / corrupt recovery: persist schema defaults so cold start leaves a real file.
+  if (userLoad != JsonLoadResult::Ok || versionBump) {
+    if (!SaveFileMap(UserPath(), g_user) && userLoad == JsonLoadResult::Corrupt) {
+      LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
+    }
   }
   return true;
 }
@@ -357,7 +396,14 @@ void SettingsStoreShutdown() {
 
 void SettingsStoreReload() {
   std::lock_guard lock(g_mutex);
-  LoadFileMap(UserPath(), &g_user);
+  if (LoadFileMap(UserPath(), &g_user) == JsonLoadResult::Corrupt) {
+    for (const SettingDef& def : kSettingSchema) {
+      if (g_user.find(def.key) == g_user.end() && def.defaultString) {
+        g_user[def.key] = def.defaultString;
+      }
+    }
+    SaveFileMap(UserPath(), g_user);
+  }
   LoadFileMap(RuntimePath(), &g_runtime);
 }
 

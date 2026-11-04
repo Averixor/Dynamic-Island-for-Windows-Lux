@@ -69,6 +69,7 @@ const wchar_t* LevelName(LuxLogLevel level) {
 void LuxLogInit(bool ephemeral) {
   std::lock_guard lock(g_logMutex);
   g_ephemeral = ephemeral;
+  // Release default = Info (no Debug spam). Override with --log-level=debug.
 #ifdef _DEBUG
   g_minLevel = LuxLogLevel::Debug;
 #else
@@ -93,6 +94,15 @@ void LuxLogShutdown() {
     fclose(g_logFile);
     g_logFile = nullptr;
   }
+}
+
+void LuxLogSetMinLevel(LuxLogLevel level) {
+  std::lock_guard lock(g_logMutex);
+  g_minLevel = level;
+}
+
+LuxLogLevel LuxLogGetMinLevel() {
+  return g_minLevel;
 }
 
 void LuxLog(LuxLogLevel level, const wchar_t* fmt, ...) {

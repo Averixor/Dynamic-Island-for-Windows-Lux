@@ -62,10 +62,17 @@ build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
 - [ ] `--test-json` → exit 0
 - [ ] Дві послідовні `--smoke-test` → друга не падає на mutex
 
-### Холодний старт (CI не покриває)
+### Холодний старт (CI не покриває — обовʼязково перед тегом)
 
-- [ ] Змінити 2–3 налаштування → вихід → повторний запуск: JSON валідний, без `*.tmp`
-- [ ] Видалити `%AppData%\DynamicIslandLux\` → запуск → дефолти зі схеми, без крашу
+1. **Чистий старт:** видалити `%AppData%\DynamicIslandLux\` → запуск без аргументів → пігулка; `settings.json` + `runtime.json` валідні; без `.tmp`; лог без Error.
+2. **Зміна + рестарт:** змінити Backdrop / QuickLookup / Language → OK → exit з трею ≤1 s (`worker … stopped`) → знову запуск → зміни на місці; `LastWriteTime` не стрибає без змін.
+3. **Cancel:** діалог → змінити → Cancel → `settings.json` незмінний, острів без reload.
+4. **Пошкоджений JSON:** обрізати `settings.json` → запуск → Warn, файл → `settings.json.bad`, новий валідний з дефолтами, без крашу.
+5. **Read-only (опційно):** `attrib +R settings.json` → OK у діалозі → Warn, зміни в памʼяті, без крашу.
+6. **Другий екземпляр:** повторний `.exe` → ≤1.5 s exit, без другого трею.
+7. **`--settings` після Task Manager kill** → новий primary + діалог.
+
+Release: Info-лог за замовчуванням; Debug лише з `--log-level=debug`.
 
 ### Ручні (~10 хв)
 

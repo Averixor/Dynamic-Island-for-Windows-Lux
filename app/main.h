@@ -49,6 +49,8 @@ struct AppOptions {
   DWORD smokeTimeoutMs = 10000;  // used when smokeTest; override via --smoke-timeout-ms=
   // Empty = schema default. Smoke-with-workers may set acrylic unless overridden.
   wchar_t smokeBackdrop[32] = {};
+  // Empty = leave LuxLogInit default (Info in Release, Debug in Debug builds).
+  wchar_t logLevel[16] = {};
 };
 
 struct AppState {

@@ -42,3 +42,11 @@ See `app/README.md` → **Known limitations**.
 - `DynamicIslandLux.exe` (Release x64, `/MT`)
 - `LICENSE`
 - `INSTALL.txt`
+- `RELEASE_NOTES.md`
+- `SHA256SUMS.txt` (hash of the `.exe`)
+
+```bat
+certutil -hashfile build\Release\DynamicIslandLux.exe SHA256 > SHA256SUMS.txt
+```
+
+Verify Properties → Details on the exe shows **File version 1.0.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

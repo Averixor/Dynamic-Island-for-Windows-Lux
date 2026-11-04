@@ -127,6 +127,8 @@ AppOptions ParseCommandLine(int argc, wchar_t** argv) {
       }
     } else if (_wcsnicmp(argv[i], L"--backdrop=", 11) == 0) {
       wcsncpy_s(opt.smokeBackdrop, argv[i] + 11, _TRUNCATE);
+    } else if (_wcsnicmp(argv[i], L"--log-level=", 12) == 0) {
+      wcsncpy_s(opt.logLevel, argv[i] + 12, _TRUNCATE);
     }
   }
   return opt;
@@ -269,6 +271,17 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
 
   const bool ephemeral = options.ephemeral || options.smokeTest || options.testJson;
   LuxLogInit(ephemeral);
+  if (options.logLevel[0]) {
+    if (_wcsicmp(options.logLevel, L"error") == 0) {
+      LuxLogSetMinLevel(LuxLogLevel::Error);
+    } else if (_wcsicmp(options.logLevel, L"warn") == 0) {
+      LuxLogSetMinLevel(LuxLogLevel::Warn);
+    } else if (_wcsicmp(options.logLevel, L"info") == 0) {
+      LuxLogSetMinLevel(LuxLogLevel::Info);
+    } else if (_wcsicmp(options.logLevel, L"debug") == 0) {
+      LuxLogSetMinLevel(LuxLogLevel::Debug);
+    }
+  }
 
   if (!AcquireSingleInstance(g_app)) {
     const CopyDataCommand cmd =

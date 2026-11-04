@@ -11,6 +11,8 @@ enum class LuxLogLevel {
 
 void LuxLogInit(bool ephemeral);
 void LuxLogShutdown();
+void LuxLogSetMinLevel(LuxLogLevel level);
+LuxLogLevel LuxLogGetMinLevel();
 void LuxLog(LuxLogLevel level, const wchar_t* fmt, ...);
 
 #define LUX_LOGE(...) LuxLog(LuxLogLevel::Error, __VA_ARGS__)
