@@ -386,8 +386,12 @@
 //   RenderThreadProc       — layered HWND, frame cap, idle MsgWait
 //   Wh_Mod* / WhTool_Mod*  — Windhawk loads a tool-mod child process
 //
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -4448,14 +4452,15 @@ HICON getProcessIcon(DWORD pid) {
                            SHGFI_ICON | SHGFI_LARGEICON)) {
             return sfi.hIcon;
         }
-        HICON large = nullptr;
-        HICON small = nullptr;
-        if (ExtractIconExW(path.c_str(), 0, &large, &small, 1) > 0) {
-            if (small) {
-                DestroyIcon(small);
+        HICON largeIcon = nullptr;
+        // Do not name this `small` — rpcndr.h defines `#define small char`.
+        HICON smallIcon = nullptr;
+        if (ExtractIconExW(path.c_str(), 0, &largeIcon, &smallIcon, 1) > 0) {
+            if (smallIcon) {
+                DestroyIcon(smallIcon);
             }
-            if (large) {
-                return large;
+            if (largeIcon) {
+                return largeIcon;
             }
         }
     }

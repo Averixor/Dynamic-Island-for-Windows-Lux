@@ -36,5 +36,5 @@ echo === smoke --test-json ===
 "%EXE%" --test-json
 if errorlevel 1 exit /b %ERRORLEVEL%
 echo.
-echo build.bat OK — next: scripts\make-release-assets.bat  (or scripts\release.bat)
+echo build.bat OK - next: scripts\make-release-assets.bat  (or scripts\release.bat)
 exit /b 0

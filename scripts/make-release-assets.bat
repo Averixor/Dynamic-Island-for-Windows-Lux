@@ -39,11 +39,11 @@ powershell -NoProfile -Command ^
   "if (-not ($v.FileVersion -like '1.0.0*')) { Write-Error ('Expected 1.0.0*, got ' + $v.FileVersion); exit 1 };" ^
   "$v | Format-List FileVersion,ProductVersion,CompanyName,ProductName"
 if errorlevel 1 (
-  echo VERSIONINFO check FAILED — CMake did not substitute version.rc.in
+  echo VERSIONINFO check FAILED - CMake did not substitute version.rc.in
   exit /b 1
 )
 
 echo.
-echo OK — attach %OUT%\* to the GitHub Release for tag v1.0.0
+echo OK - attach %OUT%\* to the GitHub Release for tag v1.0.0
 echo Next: git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
 exit /b 0
