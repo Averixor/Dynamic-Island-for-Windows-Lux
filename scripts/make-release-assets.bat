@@ -3,13 +3,14 @@ setlocal EnableExtensions
 cd /d "%~dp0\.."
 
 REM Must run AFTER a successful app\build.bat so SHA256 matches the smoked exe.
+set VER=1.0.2
 set EXE=build\Release\DynamicIslandLux.exe
 if not exist "%EXE%" (
   echo Build Release first: app\build.bat
   exit /b 1
 )
 
-set OUT=dist\v1.0.0
+set OUT=dist\v%VER%
 if exist "%OUT%" rmdir /S /Q "%OUT%"
 mkdir "%OUT%"
 
@@ -32,11 +33,12 @@ echo SHA256SUMS.txt:
 type "%OUT%\SHA256SUMS.txt"
 echo.
 
-echo Verify VERSIONINFO (must be 1.0.0, not @PROJECT_VERSION@):
+echo Verify VERSIONINFO (must be %VER%, not @PROJECT_VERSION@):
 powershell -NoProfile -Command ^
+  "$ver='%VER%';" ^
   "$v=(Get-Item '%OUT%\DynamicIslandLux.exe').VersionInfo;" ^
   "if ($v.FileVersion -match '@|PROJECT_VERSION|\$\{') { Write-Error ('Bad FileVersion: ' + $v.FileVersion); exit 1 };" ^
-  "if (-not ($v.FileVersion -like '1.0.0*')) { Write-Error ('Expected 1.0.0*, got ' + $v.FileVersion); exit 1 };" ^
+  "if (-not ($v.FileVersion -like ($ver + '*'))) { Write-Error ('Expected ' + $ver + '*, got ' + $v.FileVersion); exit 1 };" ^
   "$v | Format-List FileVersion,ProductVersion,CompanyName,ProductName"
 if errorlevel 1 (
   echo VERSIONINFO check FAILED - CMake did not substitute version.rc.in
@@ -44,6 +46,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo OK - attach %OUT%\* to the GitHub Release for tag v1.0.0
-echo Next: git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
+echo OK - attach %OUT%\* to the GitHub Release for tag v%VER%
+echo Next: git tag -a v%VER% -m "Dynamic Island Lux standalone v%VER%"
 exit /b 0

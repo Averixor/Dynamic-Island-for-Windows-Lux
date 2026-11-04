@@ -1,10 +1,18 @@
-# Dynamic Island for Windows Lux — v1.0.0
+# Dynamic Island for Windows Lux — v1.0.2
 
-First **standalone** release (no Windhawk required).
+Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.0` — annotate on the commit that passed `scripts\release.bat` / `app\build.bat` (not an earlier prep commit)
-- **Commit:** _(paste `git rev-parse v1.0.0` after tagging)_
-- **Date:** _(UTC date on release day)_
+- **Tag:** `v1.0.2`
+- **Commit:** `5ff827b12b1f2b0262bf296880bd814140815add` (+ version bump commit)
+- **Date:** 2026-11-04
+
+## Highlights since v1.0.1
+
+- Settings dialog and context/tray menus follow the OS light/dark theme
+- Schema defaults for AlwaysOnTop, media, modules, aura, clock/date
+- Locale-aware island menu + settings UI (EN/UK/RU)
+- Scrollable fixed-size settings dialog without paint tearing
+- Standalone **Exit** closes the app; Close no longer only collapses the island
 
 ## Origin
 
@@ -56,4 +64,4 @@ app\build.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.2**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
