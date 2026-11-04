@@ -1,0 +1,17 @@
+#pragma once
+
+#define IDI_APP 101
+
+#define IDS_APP_TITLE 201
+#define IDS_TRAY_TIP 202
+#define IDS_MENU_SETTINGS 203
+#define IDS_MENU_SHOW 204
+#define IDS_MENU_EXIT 205
+
+#define IDM_TRAY_SETTINGS 1001
+#define IDM_TRAY_SHOW 1002
+#define IDM_TRAY_EXIT 1003
+
+#define WM_APP_TRAY (WM_APP + 1)
+#define WM_APP_OPEN_SETTINGS (WM_APP + 2)
+#define WM_APP_SHOW_ISLAND (WM_APP + 3)

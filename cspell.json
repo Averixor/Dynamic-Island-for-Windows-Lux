@@ -2,6 +2,14 @@
   "version": "0.2",
   "language": "en,uk",
   "allowCompoundWords": true,
+  "dictionaryDefinitions": [
+    {
+      "name": "lux-ui",
+      "path": "./dictionaries/lux-ui.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": ["lux-ui"],
   "words": [
     "Windhawk",
     "Himanshu",
@@ -50,7 +58,15 @@
     "IMM",
     "IUI",
     "PBGRA",
-    "ореолу"
+    "ореолу",
+    "скрол",
+    "оверлеї",
+    "Acrylic",
+    "Wiktionary",
+    "dictionaryapi",
+    "Français",
+    "Italiano",
+    "Türkçe"
   ],
   "ignoreRegExpList": [
     "-l[A-Za-z0-9]+",

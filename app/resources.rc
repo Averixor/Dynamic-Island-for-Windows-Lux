@@ -1,0 +1,15 @@
+#include <windows.h>
+#include "resource.h"
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "DynamicIslandLux.manifest"
+
+IDI_APP ICON "app.ico"
+
+STRINGTABLE
+BEGIN
+  IDS_APP_TITLE       "Dynamic Island Lux"
+  IDS_TRAY_TIP        "Dynamic Island for Windows Lux"
+  IDS_MENU_SETTINGS   "Settings..."
+  IDS_MENU_SHOW       "Show island"
+  IDS_MENU_EXIT       "Exit"
+END
