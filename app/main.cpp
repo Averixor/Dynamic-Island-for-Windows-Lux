@@ -125,6 +125,8 @@ AppOptions ParseCommandLine(int argc, wchar_t** argv) {
       if (ms > 0) {
         opt.smokeTimeoutMs = static_cast<DWORD>(ms);
       }
+    } else if (_wcsnicmp(argv[i], L"--backdrop=", 11) == 0) {
+      wcsncpy_s(opt.smokeBackdrop, argv[i] + 11, _TRUNCATE);
     }
   }
   return opt;
@@ -150,16 +152,21 @@ void SignalAppReady(AppState& app) {
 }
 
 bool NotifyRunningInstance(CopyDataCommand cmd) {
+  // Bounded wait — double-click on shortcut must never hang forever.
+  constexpr DWORD kReadyWaitMs = 1500;
+  constexpr int kPollAttempts = 15;
+  constexpr DWORD kPollSleepMs = 100;
+
   HANDLE ready = OpenEventW(SYNCHRONIZE, FALSE, kAppReadyEventName);
   if (ready) {
-    WaitForSingleObject(ready, 1000);
+    WaitForSingleObject(ready, kReadyWaitMs);
     CloseHandle(ready);
   } else {
-    for (int i = 0; i < 10; ++i) {
-      Sleep(100);
+    for (int i = 0; i < kPollAttempts; ++i) {
+      Sleep(kPollSleepMs);
       ready = OpenEventW(SYNCHRONIZE, FALSE, kAppReadyEventName);
       if (ready) {
-        WaitForSingleObject(ready, 200);
+        WaitForSingleObject(ready, 300);
         CloseHandle(ready);
         break;
       }
@@ -167,12 +174,12 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
   }
 
   HWND hwnd = nullptr;
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 0; i < kPollAttempts; ++i) {
     hwnd = FindWindowW(kHostClassName, nullptr);
     if (hwnd) {
       break;
     }
-    Sleep(100);
+    Sleep(kPollSleepMs);
   }
   if (!hwnd) {
     return false;
@@ -184,7 +191,9 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
   cds.dwData = 1;
   cds.cbData = sizeof(payload);
   cds.lpData = &payload;
-  SendMessageW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
+  // Short timeout so a hung primary instance cannot freeze the second process.
+  SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
+                      2000, nullptr);
   return true;
 }
 
@@ -255,7 +264,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     LuxSmokeTimeoutMs() = options.smokeTimeoutMs;
   }
 
-  INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES};
+  INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
   InitCommonControlsEx(&icc);
 
   if (!AcquireSingleInstance(g_app)) {
@@ -283,7 +292,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (g_app.singleInstanceMutex) {
       CloseHandle(g_app.singleInstanceMutex);
     }
-    return ok ? 0 : 1;
+    return ok ? static_cast<int>(LuxExitCode::Ok)
+              : static_cast<int>(LuxExitCode::JsonTestFailure);
   }
 
   g_app.taskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
@@ -300,12 +310,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
                       HWND_MESSAGE, nullptr, instance, nullptr);
   if (!g_app.hostHwnd) {
     LUX_LOGE(L"Host window failed");
-    return 1;
+    return static_cast<int>(LuxExitCode::InitFailure);
   }
 
   if (!LuxOverlay_Init(g_app)) {
     LUX_LOGE(L"LuxOverlay_Init failed");
-    return 1;
+    return static_cast<int>(LuxExitCode::InitFailure);
   }
 
   if (!options.noTray && !ephemeral) {
@@ -333,23 +343,25 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
       }
       Sleep(16);
     }
-    const bool ok = InterlockedCompareExchange(&g_app.renderedFrames, 0, 0) > 0 &&
-                    SUCCEEDED(static_cast<HRESULT>(
-                        InterlockedCompareExchange(&g_app.lastFrameHr, 0, 0)));
-    LUX_LOGI(L"smoke-test frame %s (frames=%ld hr=0x%08lX)", ok ? L"PASS" : L"FAIL",
+    const bool frameOk = InterlockedCompareExchange(&g_app.renderedFrames, 0, 0) > 0 &&
+                         SUCCEEDED(static_cast<HRESULT>(
+                             InterlockedCompareExchange(&g_app.lastFrameHr, 0, 0)));
+    LUX_LOGI(L"smoke-test frame %s (frames=%ld hr=0x%08lX)", frameOk ? L"PASS" : L"FAIL",
              InterlockedCompareExchange(&g_app.renderedFrames, 0, 0),
              static_cast<unsigned long>(
                  InterlockedCompareExchange(&g_app.lastFrameHr, 0, 0)));
 
+    bool initOk = true;
     // Optional: start workers after frame proof, then require clean Uninit.
     // Criterion stays scaffold frame only — never waits on media/weather/network.
-    if (ok && LuxShouldStartWorkers()) {
-      // Exercise DWM backdrop path (separate non-layered HWNDs) like release.
-      SettingsSetString(L"Themes.BackdropMaterial", L"acrylic");
-      LUX_LOGI(L"smoke-test: starting workers after frame proof (backdrop=acrylic)");
+    if (frameOk && LuxShouldStartWorkers()) {
+      // Default smoke forces acrylic; override with --backdrop=blur|none|acrylic.
+      const wchar_t* backdrop = options.smokeBackdrop[0] ? options.smokeBackdrop : L"acrylic";
+      SettingsSetString(L"Themes.BackdropMaterial", backdrop);
+      LUX_LOGI(L"smoke-test: starting workers after frame proof (backdrop=%s)", backdrop);
       if (!LuxOverlay_StartWorkers(g_app)) {
         LUX_LOGE(L"smoke-test: WhTool_ModInit failed");
-        ok = false;
+        initOk = false;
       }
     }
 
@@ -367,16 +379,22 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (g_app.singleInstanceMutex) {
       CloseHandle(g_app.singleInstanceMutex);
     }
-    if (!ok) {
-      return 1;
+    if (!initOk) {
+      return static_cast<int>(LuxExitCode::InitFailure);
     }
-    return workersStuck ? 2 : 0;
+    if (!frameOk) {
+      return static_cast<int>(LuxExitCode::FrameFailure);
+    }
+    if (workersStuck) {
+      return static_cast<int>(LuxExitCode::WorkersStuck);
+    }
+    return static_cast<int>(LuxExitCode::Ok);
   }
 
   if (!LuxOverlay_StartWorkers(g_app)) {
     LUX_LOGE(L"StartWorkers failed");
     LuxOverlay_Uninit(g_app);
-    return 1;
+    return static_cast<int>(LuxExitCode::InitFailure);
   }
 
   MSG msg = {};

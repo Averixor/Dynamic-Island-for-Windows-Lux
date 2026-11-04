@@ -17,6 +17,15 @@ constexpr wchar_t kHostClassName[] = L"DynamicIslandLux.Host";
 
 constexpr UINT32 kCopyDataProtocolVersion = 1;
 
+// Process exit codes (smoke / CI). Keep stable — scripts branch on these.
+enum class LuxExitCode : int {
+  Ok = 0,
+  InitFailure = 1,      // mutex/host/overlay/WhTool init failed
+  WorkersStuck = 2,     // Uninit timed out waiting for a worker thread
+  FrameFailure = 3,     // smoke: renderedFrames==0 or lastFrameHr failed
+  JsonTestFailure = 4,  // --test-json round-trip failed
+};
+
 enum class CopyDataCommand : UINT32 {
   OpenSettings = 1,
   ShowIsland = 2,
@@ -38,6 +47,8 @@ struct AppOptions {
   bool ephemeral = false;
   bool openSettings = false;
   DWORD smokeTimeoutMs = 10000;  // used when smokeTest; override via --smoke-timeout-ms=
+  // Empty = schema default. Smoke-with-workers may set acrylic unless overridden.
+  wchar_t smokeBackdrop[32] = {};
 };
 
 struct AppState {

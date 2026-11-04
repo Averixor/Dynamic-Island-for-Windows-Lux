@@ -1759,6 +1759,8 @@ std::wstring FormatIslandDate(const SYSTEMTIME& local, const std::wstring& custo
 inline bool MediaPillShowsTimeOrDate(const Settings& settings) {
     return settings.mediaPillClock || settings.mediaPillDate;
 }
+// Loc is a pure table lookup keyed by g_uiLanguage — no LoadString / static result cache.
+// Changing General.Language + g_layoutDirty is enough for the next paint to pick new strings.
 const wchar_t* Loc(const wchar_t* english) {
     struct Row {
         const wchar_t* key;
@@ -3614,6 +3616,8 @@ namespace DwmBackdrop {
             }
             g_classRegistered = true;
         }
+        // Non-layered on purpose: acrylic/blur via SetWindowCompositionAttribute requires it.
+        // WS_EX_TRANSPARENT + HTTRANSPARENT so backdrop never steals clicks from the island.
         DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
         if (GetSettingsCopy().alwaysOnTop)
             exStyle |= WS_EX_TOPMOST;
@@ -3668,6 +3672,7 @@ namespace DwmBackdrop {
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         s.topMost = wantTopMost;
     }
+    // Place each backdrop immediately below `island` in Z-order (insertAfter = island).
     void EnsureBehind(HWND island) {
         if (!island)
             return;
@@ -3679,6 +3684,9 @@ namespace DwmBackdrop {
                 prev = s.hwnd;
             }
         }
+    }
+    void InvalidateSync() {
+        g_lastSync = {};
     }
     void PlaceSlot(Slot& s, HWND prev, int x, int y, int w, int h, int radius, int lift,
                    bool wantTopMost) {
@@ -8254,21 +8262,29 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
             static_cast<int>(totalFreeBytes.QuadPart * 100 / totalBytes.QuadPart), 0, 100);
     }
     // Game-overlay / idle title: polled on the metrics path (no dedicated thread).
-    // Absent a game, foregroundTitle stays empty and DrawGameOverlay still paints
-    // CPU/RAM/… when Modules.GameOverlay or pin is on — smoke idle path is fine.
-    HWND foreground = GetForegroundWindow();
-    if (foreground && foreground != g_hwnd) {
-        wchar_t title[96] = {};
-        GetWindowTextW(foreground, title, ARRAYSIZE(title));
-        if (!IsIgnorableForegroundWindow(foreground, title)) {
-            next.foregroundTitle = title;
-            if (next.foregroundTitle.size() > 42) {
-                next.foregroundTitle.resize(42);
-                next.foregroundTitle += L"...";
+    // Cache ~250 ms — avoid OpenProcess/GetWindowThreadProcessId every render frame.
+    {
+        static ULONGLONG s_fgCachedAt = 0;
+        static HWND s_fgHwnd = nullptr;
+        static std::wstring s_fgTitle;
+        const ULONGLONG nowTick = GetTickCount64();
+        if (nowTick - s_fgCachedAt >= 250 || !s_fgHwnd) {
+            s_fgCachedAt = nowTick;
+            s_fgHwnd = GetForegroundWindow();
+            s_fgTitle.clear();
+            if (s_fgHwnd && s_fgHwnd != g_hwnd) {
+                wchar_t title[96] = {};
+                GetWindowTextW(s_fgHwnd, title, ARRAYSIZE(title));
+                if (!IsIgnorableForegroundWindow(s_fgHwnd, title)) {
+                    s_fgTitle = title;
+                    if (s_fgTitle.size() > 42) {
+                        s_fgTitle.resize(42);
+                        s_fgTitle += L"...";
+                    }
+                }
             }
-        } else {
-            next.foregroundTitle.clear();
         }
+        next.foregroundTitle = s_fgTitle;
     }
     FILETIME idle = {};
     FILETIME kernel = {};
@@ -9919,7 +9935,9 @@ LPCWSTR LookupCursorAt(int x, int y) {
     return LookupFieldHitTest(pt) ? IDC_IBEAM : IDC_ARROW;
 }
 void ApplyLookupHotkey() {
-    // Hotkey is bound to the render-thread HWND (g_hwnd), which outlives init.
+    // RegisterHotKey is tied to the calling THREAD (render thread), not merely HWND.
+    // g_hwnd is created + PeekMessage-pumped on RenderThreadProc — same thread as this call
+    // (init path and WM_APP_APPLY_HOTKEY). Main.cpp host loop does NOT own hotkeys.
     // Quick Lookup does NOT use WH_KEYBOARD_LL — only RegisterHotKey + in-panel WM_KEY*.
     HWND hwnd = g_hwnd;
     if (!hwnd) {
@@ -19503,6 +19521,8 @@ void NotifyKeyboardThreadSettingChanged() {
     }
 }
 DWORD WINAPI KeyboardThreadProc(void*) {
+    // Long-lived owner of WH_KEYBOARD_LL: lives until g_stopEvent / WM_QUIT from StopThreads.
+    // UnhookWindowsHookEx runs on this same thread before return — required for LL hooks.
     while (!g_hwnd && WaitForSingleObject(g_stopEvent, 10) == WAIT_TIMEOUT) {
     }
     bool quit = false;
@@ -19612,6 +19632,7 @@ static bool MouseWakeHookWanted() {
            g_autoHiddenParked.load(std::memory_order_relaxed);
 }
 DWORD WINAPI MouseThreadProc(void*) {
+    // Long-lived owner of WH_MOUSE_LL; Unhook on this thread at exit (see StopThreads WM_QUIT).
     while (!g_hwnd && WaitForSingleObject(g_stopEvent, 10) == WAIT_TIMEOUT) {
     }
     bool quit = false;
@@ -20313,6 +20334,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
     case WM_DESTROY:
+        // RegisterHotKey is owned by this thread (render); unregister BEFORE the HWND dies
+        // so the next process start does not see a stale hotkey occupancy race.
+        if (g_lookupHotkeyRegistered) {
+            UnregisterHotKey(hwnd, ID_LOOKUP_HOTKEY);
+            g_lookupHotkeyRegistered = false;
+        }
+        if (g_hotkeyRegistered) {
+            UnregisterHotKey(hwnd, ID_HIDE_SHOW_HOTKEY);
+            g_hotkeyRegistered = false;
+        }
         RevokeDragDrop(hwnd);
         if (g_oleInitialized) {
             OleUninitialize();
@@ -20398,6 +20429,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         return 0;
     case WM_NCHITTEST: {
+        // Pill zone → HTCLIENT (clicks + OLE drop land here).
+        // Outside pill → HTTRANSPARENT (pass through to windows below — NOT "accept drop").
         POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(hwnd, &pt);
         if (g_pillClientRect.valid) {
@@ -20970,6 +21003,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_DISPLAYCHANGE: {
         InvalidateMonitorCache();
         g_dockCacheValid.store(false, std::memory_order_release);
+        DwmBackdrop::InvalidateSync();  // force backdrop reposition with island next frame
+        DwmBackdrop::EnsureBehind(hwnd);
         g_layoutDirty = true;
         PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
         return 0;
@@ -21808,6 +21843,15 @@ DWORD WINAPI RenderThreadProc(void*) {
     UnbindVolumeEndpoint();
     DwmBackdrop::DestroyAll();
     renderer.Shutdown();
+    // Unregister hotkeys on this thread before DestroyWindow (also handled in WM_DESTROY).
+    if (g_lookupHotkeyRegistered) {
+        UnregisterHotKey(hwnd, ID_LOOKUP_HOTKEY);
+        g_lookupHotkeyRegistered = false;
+    }
+    if (g_hotkeyRegistered) {
+        UnregisterHotKey(hwnd, ID_HIDE_SHOW_HOTKEY);
+        g_hotkeyRegistered = false;
+    }
     DestroyWindow(hwnd);
     g_hwnd = nullptr;
     UnregisterClassW(kWindowClass, wc.hInstance);

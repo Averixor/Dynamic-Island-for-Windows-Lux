@@ -19,6 +19,11 @@ std::wstring ExePath() {
   return path;
 }
 
+// Quoted always — paths with spaces (e.g. "Dynamic Island…") break Run otherwise.
+std::wstring QuotedExeCommand() {
+  return L"\"" + ExePath() + L"\"";
+}
+
 bool ReadApprovedDisabled() {
   HKEY key = nullptr;
   if (RegOpenKeyExW(HKEY_CURRENT_USER, kApprovedKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
@@ -32,8 +37,23 @@ bool ReadApprovedDisabled() {
   if (rc != ERROR_SUCCESS || type != REG_BINARY || size < 1) {
     return false;
   }
-  // StartupApproved: first byte 0x02/0x03 typically means disabled by Task Manager.
+  // StartupApproved: low bit clear ⇒ disabled by Task Manager / Settings.
   return (data[0] & 0x01) == 0;
+}
+
+bool WriteStartupApproved(bool enabled) {
+  HKEY key = nullptr;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kApprovedKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key,
+                      nullptr) != ERROR_SUCCESS) {
+    return false;
+  }
+  // 12-byte binary blob Explorer expects; 0x02 = enabled, 0x03 = disabled.
+  BYTE data[12] = {};
+  data[0] = enabled ? 0x02 : 0x03;
+  const LONG rc =
+      RegSetValueExW(key, kValueName, 0, REG_BINARY, data, static_cast<DWORD>(sizeof(data)));
+  RegCloseKey(key);
+  return rc == ERROR_SUCCESS;
 }
 }  // namespace
 
@@ -61,12 +81,12 @@ bool AutostartSetEnabled(bool enabled) {
   HKEY key = nullptr;
   if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key,
                       nullptr) != ERROR_SUCCESS) {
-    LUX_LOGE(L"Autostart: cannot open Run key");
+    LUX_LOGE(L"Autostart: cannot open HKCU Run key");
     return false;
   }
   LONG rc = ERROR_SUCCESS;
   if (enabled) {
-    std::wstring cmd = L"\"" + ExePath() + L"\"";
+    const std::wstring cmd = QuotedExeCommand();
     rc = RegSetValueExW(key, kValueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()),
                         static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
   } else {
@@ -77,8 +97,12 @@ bool AutostartSetEnabled(bool enabled) {
   }
   RegCloseKey(key);
   if (rc != ERROR_SUCCESS) {
-    LUX_LOGE(L"Autostart: RegSet/Delete failed (%ld)", rc);
+    LUX_LOGE(L"Autostart: RegSet/Delete Run failed (%ld)", rc);
     return false;
+  }
+  // Keep StartupApproved in sync so Task Manager "Disabled" does not stick after re-enable.
+  if (!WriteStartupApproved(enabled)) {
+    LUX_LOGW(L"Autostart: StartupApproved\\Run write failed (Run value still updated)");
   }
   return true;
 }
