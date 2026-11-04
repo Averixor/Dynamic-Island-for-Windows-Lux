@@ -66,7 +66,14 @@
     "dictionaryapi",
     "Français",
     "Italiano",
-    "Türkçe"
+    "Türkçe",
+    "трей",
+    "треєм",
+    "трею",
+    "воркери",
+    "воркер",
+    "Інжект",
+    "інжект"
   ],
   "ignoreRegExpList": [
     "-l[A-Za-z0-9]+",
