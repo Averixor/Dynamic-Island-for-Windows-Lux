@@ -17,7 +17,7 @@ BEGIN
       VALUE "FileDescription", "Dynamic Island for Windows Lux"
       VALUE "FileVersion", "@PROJECT_VERSION@"
       VALUE "InternalName", "DynamicIslandLux"
-      VALUE "LegalCopyright", "MIT"
+      VALUE "LegalCopyright", "Copyright (c) Himanshu (Averixor). MIT License."
       VALUE "OriginalFilename", "DynamicIslandLux.exe"
       VALUE "ProductName", "Dynamic Island for Windows Lux"
       VALUE "ProductVersion", "@PROJECT_VERSION@"

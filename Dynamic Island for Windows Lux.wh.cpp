@@ -10,11 +10,17 @@
 // @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lpropsys
 // @license MIT
 // ==/WindhawkMod==
+//
+// STANDALONE NOTE: This file is also linked into app/ (LUX_STANDALONE). Keep it —
+// it is the island implementation TU, not leftover junk. Windhawk @version stays
+// 1.9.0 for the mod channel; the exe product version is CMake project(VERSION)
+// (see app/version.rc.in → 1.0.0 for the first standalone release).
+//
 // ==WindhawkModReadme==
 /*
 # Dynamic Island for Windows Lux
 
-Жива пігулка поверх робочого столу Windows, натхненна Dynamic Island на iPhone. Версія **1.9.0**.
+Жива пігулка поверх робочого столу Windows, натхненна Dynamic Island на iPhone. Версія **1.9.0** (Windhawk).
 
 **Весь мод — цей один файл.** Вставте його цілком у Windhawk. Окремих `.cpp` / `.h` немає: код, YAML-настройки, рядки інтерфейсу і ця інструкція живуть тут.
 

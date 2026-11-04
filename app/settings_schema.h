@@ -3,7 +3,7 @@
 #include <cstddef>
 
 #ifndef LUX_APP_VERSION_STR
-#define LUX_APP_VERSION_STR "1.9.0"
+#define LUX_APP_VERSION_STR "1.0.0"
 #endif
 #define LUX_WIDEN_HELPER(x) L##x
 #define LUX_WIDEN(x) LUX_WIDEN_HELPER(x)

@@ -1,0 +1,54 @@
+# Build trees
+/build/
+/out/
+/cmake-build-*/
+app/out/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/install_manifest.txt
+**/compile_commands.json
+
+# MSVC / VS
+.vs/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+ipch/
+
+# Binaries & debug symbols (keep sources only)
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.exp
+*.idb
+*.iobj
+*.ipdb
+*.res
+*.aps
+
+# Generated VERSIONINFO (CMake configure_file → build dir)
+**/version.gen.rc
+
+# Local / editor
+.vscode/settings.json
+*.code-workspace
+.idea/
+
+# Temp / crash leftovers from atomic writers
+*.tmp
+*~
+Thumbs.db
+Desktop.ini
+
+# Do not commit machine-local AppData copies if someone dumps them here
+DynamicIslandLux/
+settings.json
+runtime.json

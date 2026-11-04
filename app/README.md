@@ -1,6 +1,9 @@
 # Dynamic Island Lux (standalone)
 
-Окремий Win32-застосунок для Windows 10/11. Windhawk не потрібен.
+Окремий Win32-застосунок для Windows 10/11. **Windhawk не потрібен.**
+
+Ported from the Windhawk mod by **Himanshu ([Averixor](https://github.com/Averixor))** — license **MIT** (see `/LICENSE`).  
+Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive** of the original single-file mod and the TU linked into this app — do not delete it as “junk”.
 
 ## Збірка
 
@@ -10,14 +13,9 @@
 app\build.bat
 ```
 
-або:
+VERSIONINFO (`FileVersion` / `ProductVersion` / `CompanyName` / `ProductName`) генерується з `project(VERSION …)` через `version.rc.in` → `version.gen.rc`. Не хардкодити версію в `resources.rc`.
 
-```bat
-cmake -S app -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-```
-
-Результат: `build\Release\DynamicIslandLux.exe`.
+Результат: `build\Release\DynamicIslandLux.exe` (прапорці `--smoke-test` / `--test-json` доступні в **Release**, не лише Debug).
 
 ## Запуск
 
@@ -29,7 +27,6 @@ build\Release\DynamicIslandLux.exe --smoke-test --no-workers
 build\Release\DynamicIslandLux.exe --smoke-test
 build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
 build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
-build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 ```
 
 ### Exit codes (`LuxExitCode`)
@@ -37,57 +34,59 @@ build\Release\DynamicIslandLux.exe --smoke-test --smoke-timeout-ms=3000
 | Code | Meaning |
 |------|---------|
 | 0 | OK |
-| 1 | Init failure (host/overlay/WhTool) |
-| 2 | Worker stuck on Uninit (smoke timeout) |
-| 3 | Smoke frame failure (`renderedFrames` / `lastFrameHr`) |
+| 1 | Init failure |
+| 2 | Worker stuck on Uninit |
+| 3 | Smoke frame failure |
 | 4 | `--test-json` failed |
 
-`--smoke-test` — ephemeral. Кадр зі scaffold; **не чекає** media/мережу.
-`--no-workers` — без CreateThread / SetWindowsHookEx / hotkeys (exit `2` неможливий).
-`--backdrop=` — якщо **не** задано → схема `Themes.BackdropMaterial` (`none`). Лог: `backdrop: source=schema|flag value=…`.
-`--settings` — другий екземпляр чекає Ready; якщо peer помер → retry mutex як primary **і відкриває діалог**.
+`--backdrop=` відсутній → схема `Themes.BackdropMaterial` (`none`). Лог: `backdrop: source=schema|flag value=…`.
 
-Порядок старту: mutex → host HWND → `LuxOverlay_Init` → Ready → workers → кадр.
+`app.version` у `settings.json` оновлюється **лише якщо змінився** (не перезаписує файл щосесії).
 
-## Acceptance перед тегом v1.0
+## Known limitations
 
-### Автоматичні (CI / `app\build.bat`)
+- **`SetWindowCompositionAttribute` (WCA)** — недокументований API. На майбутніх збірках Win11 accent може зникнути без попередження. Fallback = backdrop `none`, не crash (Warn у лозі).
+- **LL-хуки** (`WH_KEYBOARD_LL` / `WH_MOUSE_LL`) можуть блокуватись антивірусом/EDR — Caps/Num і mouse-wake тоді мовчать; решта острова працює. Quick Lookup hotkey = `RegisterHotKey` (не LL).
+- **Autostart** через `HKCU\…\Run` не поважає Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) — на керованих ПК toggle може бути no-op без Error.
+- **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
+- **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
-- [ ] `--smoke-test --no-workers` → exit 0, лог без Error
-- [ ] `--smoke-test` (без `--backdrop`) → exit 0, лог `backdrop: source=schema value=none`
-- [ ] `--smoke-test --backdrop=blur` → exit 0, лог `source=flag value=blur`
-- [ ] `--smoke-test --backdrop=acrylic` → exit 0, лог `source=flag value=acrylic`
-- [ ] `--smoke-test --smoke-timeout-ms=3000` → exit 0 (не 2)
+## Acceptance перед тегом v1.0.0
+
+### Автоматичні (`app\build.bat`)
+
+- [ ] `--smoke-test --no-workers` → exit 0
+- [ ] `--smoke-test` → exit 0, `backdrop: source=schema value=none`
+- [ ] `--smoke-test --backdrop=blur` → exit 0
+- [ ] `--smoke-test --backdrop=acrylic` → exit 0
 - [ ] `--test-json` → exit 0
 - [ ] Дві послідовні `--smoke-test` → друга не падає на mutex
 
+### Холодний старт (CI не покриває)
+
+- [ ] Змінити 2–3 налаштування → вихід → повторний запуск: JSON валідний, без `*.tmp`
+- [ ] Видалити `%AppData%\DynamicIslandLux\` → запуск → дефолти зі схеми, без крашу
+
 ### Ручні (~10 хв)
 
-- [ ] Запуск без аргументів: пігулка, трей, Idle → media
-- [ ] Медіа play/pause/next → пігулка оновлюється
-- [ ] Погода: оновлення або Warn мережі, не crash
-- [ ] Quick Lookup hotkey; після 10 хв ще працює
-- [ ] Backdrop у діалозі без рестарту; DPI 100→150→100 без чорного backdrop
-- [ ] File tray: drop на pill; поза pill ігнор; explorer restart → tray іконка + persist
-- [ ] Game overlay idle без гри; alt-tab; закриття гри → idle
-- [ ] Мова в діалозі → перерендер без рестарту
-- [ ] Settings OK застосовує; Cancel без змін; без Apply-кнопки
-- [ ] Autostart on → HKCU Run quoted; Task Manager Disable → діалог «вимкнено»; off → ключ видалено
-- [ ] `--settings` при запущеному → діалог у першому; другий виходить
-- [ ] `--settings` після краху peer → новий primary + діалог
-- [ ] Вихід з трею ≤1 s; лог `worker … stopped`
-- [ ] Лог 10 хв: без Error; Warn лише очікувані
+Див. попередній чекліст: пігулка, media, weather, lookup, backdrop+DPI, file tray, game overlay, мови, settings OK/Cancel, autostart, `--settings` IPC, чистий exit, лог без зайвих Error.
 
-### Регресії
+### Тег
 
-- [ ] Візуально ≈ Windhawk-версія (розмір/позиція/анімації)
+Після зеленого чекліста:
+
+```bat
+git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"
+```
+
+Release assets: `DynamicIslandLux.exe` + `LICENSE` + `INSTALL.txt` (див. `/RELEASE_NOTES.md`).
 
 ## Архітектурні інваріанти
 
-- Hotkey: `RegisterHotKey` + `PeekMessage` + `UnregisterHotKey` на **render-thread**
-- Backdrop: island layered; DwmBackdrop non-layered + WCA; Show island → EnsureBehind; accent після SetWindowPos
-- Settings OK → `SettingsStoreReload` (main) + `PostMessage(WM_APP_RELOAD_SETTINGS)` (render)
-- Modal dialog на main не блокує render-thread
+- Hotkey / PeekMessage / Unregister — **render-thread**
+- Island layered; DwmBackdrop non-layered + WCA; Show → EnsureBehind; accent після SetWindowPos
+- Settings OK → store reload (main) + `WM_APP_RELOAD_SETTINGS` (render)
+- Custom settings dialog (не PROPSHEET)
 
 ## Дані
 

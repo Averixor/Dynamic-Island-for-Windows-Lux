@@ -1,0 +1,17 @@
+Dynamic Island for Windows Lux — install
+
+1. Copy DynamicIslandLux.exe somewhere permanent (e.g. %LOCALAPPDATA%\DynamicIslandLux\).
+2. Double-click to run. A tray icon appears; the island pill shows at the top of the screen.
+3. Right-click the tray icon → Settings… to change options.
+4. Optional: enable “Autostart with Windows” in Settings (writes HKCU Run + StartupApproved).
+
+Data (created on first launch):
+  %AppData%\DynamicIslandLux\settings.json
+  %AppData%\DynamicIslandLux\runtime.json
+  %AppData%\DynamicIslandLux\modstorage\
+  %LocalAppData%\DynamicIslandLux\logs\lux.log
+
+Uninstall: exit from the tray, delete the exe folder, and optionally delete the two AppData folders above.
+No installer / no admin rights required for normal use.
+
+Minimum OS: Windows 10 version 1809 (build 17763)+; Windows 11 recommended for acrylic backdrop.
