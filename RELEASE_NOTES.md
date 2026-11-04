@@ -1,9 +1,9 @@
-﻿# Dynamic Island for Windows Lux вЂ” v1.0.2
+﻿# Dynamic Island for Windows Lux — v1.0.2
 
 Standalone release (no Windhawk required).
 
 - **Tag:** `v1.0.2`
-- **Commit:** `bd7e00ec2890504a8126b244f8b96446c1a7c400`
+- **Commit:** `19c07015611ee4cef2584cb8a353295a7354d8ef`
 - **Date:** 2026-11-04
 
 ## Highlights since v1.0.1
@@ -19,19 +19,19 @@ Standalone release (no Windhawk required).
 Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Himanshu (Averixor)**, MIT license.
 
 The original single-file mod body remains at the repo root as  
-`Dynamic Island for Windows Lux.wh.cpp` вЂ” intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
+`Dynamic Island for Windows Lux.wh.cpp` — intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
 
-## WhatвЂ™s included
+## What’s included
 
 - Dynamic island overlay (media, volume, brightness, clipboard, battery, weather, calendar, system monitor, Bluetooth, DND, focus timer, lyrics)
 - Quick Lookup (dictionary / Wikipedia)
 - DWM blur / acrylic backdrop (separate non-layered windows via WCA)
-- File tray (OLE drop + atomic persist; corrupt JSON в†’ `.bad` + defaults)
+- File tray (OLE drop + atomic persist; corrupt JSON → `.bad` + defaults)
 - Game overlay metrics (idle without a game is fine)
 - Multi-language UI via `General.Language`
 - Tray icon, custom settings dialog, HKCU autostart
 - Flat JSON settings + separate `runtime.json`, rotating logs
-- `--smoke-test` / `--test-json` / `--log-level=` / exit codes 0вЂ“4
+- `--smoke-test` / `--test-json` / `--log-level=` / exit codes 0–4
 
 ## What changed vs Windhawk
 
@@ -40,7 +40,7 @@ The original single-file mod body remains at the repo root as
 | Injected / tool-mod process | Own Win32 exe + tray |
 | Windhawk YAML settings | Flat `settings.json` + schema-driven dialog |
 | Windhawk storage API | `%AppData%\DynamicIslandLux\` |
-| No CI hook | `--smoke-test`, `--test-json`, exit codes 0вЂ“4 |
+| No CI hook | `--smoke-test`, `--test-json`, exit codes 0–4 |
 
 ## Minimum OS
 
@@ -49,7 +49,7 @@ The original single-file mod body remains at the repo root as
 
 ## Known limitations
 
-See `app/README.md` в†’ **Known limitations**.
+See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
@@ -64,5 +64,4 @@ app\build.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties в†’ Details on the exe shows **File version 1.0.2**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
-
+Verify Properties → Details on the exe shows **File version 1.0.2**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
