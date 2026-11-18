@@ -648,11 +648,24 @@ std::atomic<float> g_mediaHitBottom{0.0f};
 std::atomic<float> g_mediaHitScale{1.0f};
 std::atomic<float> g_mediaHitTrim{0.0f};
 std::atomic<unsigned long long> g_mediaHitStamp{0};
+// mediaIconHitRect — cover/art click zone (content-relative, same space as MediaContentPoint).
 std::atomic<bool> g_mediaArtHitValid{false};
 std::atomic<float> g_mediaArtHitLeft{0.0f};
 std::atomic<float> g_mediaArtHitTop{0.0f};
 std::atomic<float> g_mediaArtHitRight{0.0f};
 std::atomic<float> g_mediaArtHitBottom{0.0f};
+// spectrumHitRect — waveform/spectrum click zone (content-relative).
+std::atomic<bool> g_spectrumHitValid{false};
+std::atomic<float> g_spectrumHitLeft{0.0f};
+std::atomic<float> g_spectrumHitTop{0.0f};
+std::atomic<float> g_spectrumHitRight{0.0f};
+std::atomic<float> g_spectrumHitBottom{0.0f};
+// mediaCenterHitRect — text zone between art and spectrum (volume wheel only).
+std::atomic<bool> g_mediaCenterHitValid{false};
+std::atomic<float> g_mediaCenterHitLeft{0.0f};
+std::atomic<float> g_mediaCenterHitTop{0.0f};
+std::atomic<float> g_mediaCenterHitRight{0.0f};
+std::atomic<float> g_mediaCenterHitBottom{0.0f};
 // Hit-testing in content space, plus every island kind and live snapshot
 // that worker threads publish into SharedState.
 struct MediaContentPoint {
@@ -863,7 +876,7 @@ struct Settings {
     bool capsLock = true;
     bool timerEnabled = true;
     bool timerContourProgress = true;
-    bool useDirectComposition = true;
+    bool useDirectComposition = false;
     bool hideShowHotkeyEnabled = true;
     UINT hideShowModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
     UINT hideShowVk = 'D';
@@ -897,7 +910,7 @@ struct Settings {
     int autoHideIdleSeconds = 0;
     bool autoHideFullscreen = true;
     SplitWheelAction splitWheelAction = SplitWheelAction::BrightnessVolume;
-    int wheelStep = 5;
+    int wheelStep = 2;
     std::wstring appBlacklist;
     BlacklistMode blacklistMode = BlacklistMode::Foreground;
     ClickThroughModifier clickThroughModifier = ClickThroughModifier::CtrlOrAlt;
@@ -2396,6 +2409,7 @@ bool MediaArtHitTest(const MediaContentPoint& pt) {
         return right > left && bottom > top &&
                pt.x >= left && pt.x <= right && pt.y >= top && pt.y <= bottom;
     };
+    // mediaIconHitRect published during DrawMedia cover/art pass.
     if (g_mediaArtHitValid.load(std::memory_order_relaxed)) {
         if (inside(g_mediaArtHitLeft.load(std::memory_order_relaxed),
                    g_mediaArtHitTop.load(std::memory_order_relaxed),
@@ -2415,6 +2429,70 @@ bool MediaArtHitTest(const MediaContentPoint& pt) {
     return inside(MediaLayout::kArtInsetX, MediaLayout::kArtInsetY,
                   MediaLayout::kArtInsetX + MediaLayout::kArtSize,
                   MediaLayout::kArtInsetY + MediaLayout::kArtSize);
+}
+bool SpectrumHitTest(const MediaContentPoint& pt) {
+    if (!pt.valid || !g_spectrumHitValid.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const float left = g_spectrumHitLeft.load(std::memory_order_relaxed);
+    const float top = g_spectrumHitTop.load(std::memory_order_relaxed);
+    const float right = g_spectrumHitRight.load(std::memory_order_relaxed);
+    const float bottom = g_spectrumHitBottom.load(std::memory_order_relaxed);
+    return right > left && bottom > top && pt.x >= left && pt.x <= right && pt.y >= top &&
+           pt.y <= bottom;
+}
+void PublishSpectrumHitRect(const D2D1_RECT_F& waveRect) {
+    const float ox = g_mediaHitLeft.load(std::memory_order_relaxed);
+    const float oy = g_mediaHitTop.load(std::memory_order_relaxed);
+    constexpr float kPad = 4.0f;
+    g_spectrumHitLeft.store(waveRect.left - ox - kPad, std::memory_order_relaxed);
+    g_spectrumHitTop.store(waveRect.top - oy - kPad, std::memory_order_relaxed);
+    g_spectrumHitRight.store(waveRect.right - ox + kPad, std::memory_order_relaxed);
+    g_spectrumHitBottom.store(waveRect.bottom - oy + kPad, std::memory_order_relaxed);
+    g_spectrumHitValid.store(true, std::memory_order_release);
+}
+void ClearSpectrumHitRect() {
+    g_spectrumHitValid.store(false, std::memory_order_release);
+}
+void ClearMediaCenterHitRect() {
+    g_mediaCenterHitValid.store(false, std::memory_order_release);
+}
+void PublishMediaCenterHitRect(float contentHeight) {
+    if (!g_mediaArtHitValid.load(std::memory_order_relaxed) ||
+        !g_spectrumHitValid.load(std::memory_order_relaxed) || contentHeight < 2.0f) {
+        ClearMediaCenterHitRect();
+        return;
+    }
+    // Between mediaIconHitRect.right and spectrumHitRect.left, full pill height.
+    const float left = g_mediaArtHitRight.load(std::memory_order_relaxed);
+    const float right = g_spectrumHitLeft.load(std::memory_order_relaxed);
+    if (right <= left + 2.0f) {
+        ClearMediaCenterHitRect();
+        return;
+    }
+    g_mediaCenterHitLeft.store(left, std::memory_order_relaxed);
+    g_mediaCenterHitTop.store(0.0f, std::memory_order_relaxed);
+    g_mediaCenterHitRight.store(right, std::memory_order_relaxed);
+    g_mediaCenterHitBottom.store(contentHeight, std::memory_order_relaxed);
+    g_mediaCenterHitValid.store(true, std::memory_order_release);
+}
+bool MediaCenterHitTest(const MediaContentPoint& pt) {
+    if (!pt.valid || !g_mediaCenterHitValid.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const float left = g_mediaCenterHitLeft.load(std::memory_order_relaxed);
+    const float top = g_mediaCenterHitTop.load(std::memory_order_relaxed);
+    const float right = g_mediaCenterHitRight.load(std::memory_order_relaxed);
+    const float bottom = g_mediaCenterHitBottom.load(std::memory_order_relaxed);
+    return right > left && bottom > top && pt.x >= left && pt.x <= right && pt.y >= top &&
+           pt.y <= bottom;
+}
+void OpenSystemSoundSettings() {
+    if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"ms-settings:sound", nullptr,
+                                                nullptr, SW_SHOWNORMAL)) > 32) {
+        return;
+    }
+    ShellExecuteW(nullptr, L"open", L"sndvol.exe", nullptr, nullptr, SW_SHOWNORMAL);
 }
 bool MediaLyricsButtonHitTest(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
@@ -4165,19 +4243,23 @@ bool IsWindowsBuildAtLeast(DWORD minBuild) {
     }
     return vi.dwBuildNumber >= minBuild;
 }
+bool HwndUsesNoRedirectionBitmap(HWND hwnd) {
+    return hwnd && (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0;
+}
 void ApplySystemMicaBackdrop(HWND hwnd, bool enable) {
+    // Island HWND must never receive DWMWA_SYSTEMBACKDROP_TYPE / blur-behind: on Win11 those
+    // APIs paint the entire client rect (black/mica) and fight WS_EX_LAYERED ULW and
+    // WS_EX_NOREDIRECTIONBITMAP swapchains. Acrylic/blur lives only on DwmBackdrop slots.
+    UNREFERENCED_PARAMETER(enable);
     if (!hwnd) {
         return;
     }
-    const BOOL dark = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    if (!IsWindowsBuildAtLeast(22621)) {
-        DWORD none = DWMSBT_NONE;
-        DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
-        return;
-    }
-    DWORD type = enable ? DWMSBT_MAINWINDOW : DWMSBT_NONE;
-    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type));
+    DWORD none = DWMSBT_NONE;
+    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
+    DWM_BLURBEHIND blur = {};
+    blur.dwFlags = DWM_BB_ENABLE;
+    blur.fEnable = FALSE;
+    DwmEnableBlurBehindWindow(hwnd, &blur);
 }
 void ApplyBackdropMaterial(HWND hwnd) {
     const Settings settings = GetSettingsCopy();
@@ -4186,14 +4268,17 @@ void ApplyBackdropMaterial(HWND hwnd) {
         settings.backdropMaterial == BackdropMaterial::Mica) {
         DwmBackdrop::HideAll();
     }
-    const bool wantMica =
-        settings.backdropMaterial == BackdropMaterial::Mica && IsWindowsBuildAtLeast(22621);
-    ApplySystemMicaBackdrop(hwnd, wantMica);
-    // Win10 / pre-22H2 mica → acrylic-like DwmBackdrop slots on next Sync.
-    if (settings.backdropMaterial == BackdropMaterial::Mica && !wantMica) {
-        // Leave Sync to treat as acrylic when material remapped in render loop.
-    }
+    ApplySystemMicaBackdrop(hwnd, false);
     g_layoutDirty = true;
+}
+void PrepareIslandWindowChrome(HWND hwnd) {
+    if (!hwnd) {
+        return;
+    }
+    ApplySystemMicaBackdrop(hwnd, false);
+    // Fully transparent DWM frame so no opaque client fill shows around the pill.
+    MARGINS margins = {-1, -1, -1, -1};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
 }
 void ApplyHideShowHotkey() {
     ApplyLookupHotkey();
@@ -12361,8 +12446,45 @@ public:
         target_ = d2dContext_;
         bitmapWidth_ = width;
         bitmapHeight_ = height;
+        ApplySystemMicaBackdrop(hwnd_, false);
         Wh_Log(L"DirectComposition presenter enabled (%dx%d)", width, height);
         return true;
+    }
+    void PresentCompositionClippedToPill(const POINT& stageOrigin, const RECT& bounds,
+                                         bool flushTop) {
+        if (!compositionActive_ || !dcompVisual_ || !dcompDevice_) {
+            return;
+        }
+        ApplySystemMicaBackdrop(hwnd_, false);
+        const int clipW = (std::max)(1, static_cast<int>(bounds.right - bounds.left));
+        const int clipH = (std::max)(1, static_cast<int>(bounds.bottom - bounds.top));
+        dcompVisual_->SetOffsetX(static_cast<float>(-bounds.left));
+        dcompVisual_->SetOffsetY(static_cast<float>(-bounds.top));
+        ComPtr<IDCompositionRectangleClip> clip;
+        if (SUCCEEDED(dcompDevice_->CreateRectangleClip(clip.GetAddressOf())) && clip) {
+            clip->SetLeft(static_cast<float>(bounds.left));
+            clip->SetTop(static_cast<float>(bounds.top));
+            clip->SetRight(static_cast<float>(bounds.right));
+            clip->SetBottom(static_cast<float>(bounds.bottom));
+            float radius = 12.0f;
+            if (pillCount_ > 0) {
+                radius = pillRadii_[0];
+            }
+            const float clipR =
+                (std::min)(radius + 4.0f, 0.5f * static_cast<float>((std::min)(clipW, clipH)));
+            const float topR = flushTop ? 0.0f : clipR;
+            clip->SetTopLeftRadiusX(topR);
+            clip->SetTopLeftRadiusY(topR);
+            clip->SetTopRightRadiusX(topR);
+            clip->SetTopRightRadiusY(topR);
+            clip->SetBottomLeftRadiusX(clipR);
+            clip->SetBottomLeftRadiusY(clipR);
+            clip->SetBottomRightRadiusX(clipR);
+            clip->SetBottomRightRadiusY(clipR);
+            dcompVisual_->SetClip(clip.Get());
+        }
+        SetWindowPos(hwnd_, nullptr, stageOrigin.x + bounds.left, stageOrigin.y + bounds.top, clipW,
+                     clipH, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     bool BindCompositionTargetBitmap() {
         if (!swapChain_ || !d2dContext_) {
@@ -12450,11 +12572,20 @@ public:
                 g_layoutDirty = true;
             }
         }
+        float extentW = width;
+        float extentH = height;
+        if (secondary) {
+            const float gap = 12.0f * settings.sizeScale;
+            extentW = width + gap + secondary->width;
+            extentH = std::max(height, secondary->height);
+        }
         RECT bounds;
         bounds.left = std::max(0, static_cast<int>(std::floor(left - kRenderPadX - 4.0f)));
         bounds.top = std::max(0, static_cast<int>(std::floor(top - kRenderPadY - 12.0f)));
-        bounds.right = std::min(pixelWidth, static_cast<int>(std::ceil(left + width + kRenderPadX + 4.0f)));
-        bounds.bottom = std::min(pixelHeight, static_cast<int>(std::ceil(top + height + kRenderPadY + 12.0f)));
+        bounds.right =
+            std::min(pixelWidth, static_cast<int>(std::ceil(left + extentW + kRenderPadX + 4.0f)));
+        bounds.bottom =
+            std::min(pixelHeight, static_cast<int>(std::ceil(top + extentH + kRenderPadY + 12.0f)));
         RECT dirty = {0, 0, pixelWidth, pixelHeight};
         if (!fullPaint && !compositionActive_) {
             UnionRect(&dirty, &lastBounds_, &bounds);
@@ -12482,7 +12613,7 @@ public:
             D2D1::RectF(static_cast<float>(dirty.left), static_cast<float>(dirty.top),
                         static_cast<float>(dirty.right), static_cast<float>(dirty.bottom)),
             D2D1_ANTIALIAS_MODE_ALIASED);
-        target_->Clear(D2D1::ColorF(0, 0.0f));
+        target_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
         BeginFrameResources();
         EnsureBrushes(settings, state, now);
         settingsOpacity_ = settings.pillOpacity;
@@ -12534,8 +12665,7 @@ public:
         }
         bool presented = false;
         if (compositionActive_) {
-            SetWindowPos(hwnd_, nullptr, stage.origin.x, stage.origin.y, bitmapWidth_,
-                         bitmapHeight_, SWP_NOZORDER | SWP_NOACTIVATE);
+            PresentCompositionClippedToPill(stage.origin, bounds, flushTop);
             const HRESULT presentHr = swapChain_->Present(1, 0);
             if (presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET) {
                 HandleCompositionDeviceLost();
@@ -12572,13 +12702,24 @@ public:
             lastAlpha_ = alpha;
             if (fullPaint)
                 lastFullPaint_ = now;
-            g_pillClientRect = PillClientRect{left, top, left + width, top + height, true};
+            if (compositionActive_) {
+                g_pillClientRect = PillClientRect{left - static_cast<float>(bounds.left),
+                                                  top - static_cast<float>(bounds.top),
+                                                  left + width - static_cast<float>(bounds.left),
+                                                  top + height - static_cast<float>(bounds.top),
+                                                  true};
+            } else {
+                g_pillClientRect = PillClientRect{left, top, left + width, top + height, true};
+            }
         } else {
             stageValid_ = false;
         }
         if (presented) {
             BackdropMaterial syncMat = settings.backdropMaterial;
-            if (syncMat == BackdropMaterial::Mica && !IsWindowsBuildAtLeast(22621)) {
+            // HWND Mica is incompatible with WS_EX_NOREDIRECTIONBITMAP — emulate via Acrylic
+            // backdrop slots (or the translucent D2D pill fill already drawn above).
+            if (syncMat == BackdropMaterial::Mica &&
+                (compositionActive_ || !IsWindowsBuildAtLeast(22621))) {
                 syncMat = BackdropMaterial::Acrylic;
             }
             if (syncMat == BackdropMaterial::Solid) {
@@ -12586,9 +12727,7 @@ public:
             }
             DwmBackdrop::Sync(hwnd_, stage.origin, pillRects_, pillRadii_, pillCount_,
                               settings.notchStyle, syncMat, pillBgColor_, settings.backdropTint);
-            ApplySystemMicaBackdrop(
-                hwnd_, settings.backdropMaterial == BackdropMaterial::Mica &&
-                           IsWindowsBuildAtLeast(22621));
+            ApplySystemMicaBackdrop(hwnd_, false);
         }
         return presented;
     }
@@ -16255,6 +16394,8 @@ private:
     }
     void DrawMedia(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                    double now) {
+        ClearSpectrumHitRect();
+        ClearMediaCenterHitRect();
         const float height = rect.bottom - rect.top;
         {
             const float curW = rect.right - rect.left;
@@ -16420,6 +16561,7 @@ private:
                                 }
                             }
                             mutedBrush_->SetOpacity(0.75f);
+                            PublishSpectrumHitRect(waveRect);
                             if (state.media.playing) {
                                 DrawSpectrum(state, waveRect, settings, now);
                             } else {
@@ -16608,6 +16750,7 @@ private:
             }
             D2D1_RECT_F waveRect = D2D1::RectF(rect.right - 42.0f - shiftX, cy - 10.0f,
                                                rect.right - 14.0f - shiftX, cy + 10.0f);
+            PublishSpectrumHitRect(waveRect);
             if (state.media.playing) {
                 DrawSpectrum(state, waveRect, settings, now);
             } else {
@@ -16780,6 +16923,7 @@ private:
                 }
             }
         }
+        PublishMediaCenterHitRect(height);
     }
     float UpdateImmersiveMix(const Settings& settings, float height, double now) {
         if (!settings.mediaTabLyrics) {
@@ -18882,6 +19026,7 @@ private:
         return sum / static_cast<float>(b - a);
     }
     void DrawSpectrum(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now) {
+        PublishSpectrumHitRect(rect);
         constexpr double kSpecDur = 1.15;
         const bool recentlyDrawn = specLastDrawn_ >= 0.0 && (now - specLastDrawn_) < 0.25;
         TickSpectrumMotion(state, now);
@@ -19654,17 +19799,22 @@ private:
         mutedBrush_->SetOpacity(0.50f);
     }
     void DrawVolume(const SharedState& state, D2D1_RECT_F rect) {
-        if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 140.0f)
+        if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 80.0f)
             return;
-        const bool muted = state.volume.muted || state.volume.percent == 0;
+        const int shownPct = ClampInt(
+            static_cast<int>(std::lround(state.volume.displayPercent)), 0, 100);
+        const bool muted = state.volume.muted || shownPct == 0 || state.volume.percent == 0;
         const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float badgeSz = (rect.bottom - rect.top) - 16.0f;
-        D2D1_RECT_F badge = D2D1::RectF(rect.left + 14, cy - badgeSz * 0.5f,
-                                        rect.left + 14 + badgeSz, cy + badgeSz * 0.5f);
+        const float badgeSz = (std::min)((rect.bottom - rect.top) - 12.0f, 36.0f);
+        D2D1_RECT_F badge = D2D1::RectF(rect.left + 12.0f, cy - badgeSz * 0.5f,
+                                        rect.left + 12.0f + badgeSz, cy + badgeSz * 0.5f);
         const float br = badgeSz * 0.35f;
         ComPtr<ID2D1SolidColorBrush> badgeBg;
         target_->CreateSolidColorBrush(material_.raisedStrong, &badgeBg);
-        target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), badgeBg.Get());
+        if (badgeBg) {
+            target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), badgeBg.Get());
+        }
+        // Mute glyph when muted / 0%; speaker otherwise.
         const wchar_t* glyph = muted ? L"\uE74F" : (usingFluentIcons_ ? L"\uE767" : L"\uE993");
         textBrush_->SetOpacity(0.95f);
         if (iconFormat_) {
@@ -19675,57 +19825,30 @@ private:
             iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
-        const float tx = badge.right + 14;
-        D2D1_RECT_F labelRect = D2D1::RectF(tx, cy - 13.0f, rect.right - 58, cy + 3.0f);
-        mutedBrush_->SetOpacity(0.50f);
-        const std::wstring deviceLabel =
-            state.volume.deviceName.empty() ? std::wstring(Loc(L"Volume")) : state.volume.deviceName;
-        target_->DrawTextW(deviceLabel.c_str(), static_cast<UINT32>(deviceLabel.size()),
-                           smallTextFormat_.Get(), labelRect, mutedBrush_.Get(),
-                           D2D1_DRAW_TEXT_OPTIONS_CLIP);
         wchar_t value[32] = {};
-        if (muted) {
+        if (muted && state.volume.muted) {
             wcscpy_s(value, ARRAYSIZE(value), Loc(L"Muted"));
         } else {
-            swprintf_s(value, L"%d%%", state.volume.percent);
+            swprintf_s(value, L"%d%%", shownPct);
         }
-        D2D1_RECT_F valueRect = D2D1::RectF(rect.right - 58, cy - 13.0f, rect.right - 14, cy + 3.0f);
-        target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), smallTextFormat_.Get(),
-                           valueRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        IDWriteTextFormat* valueFmt =
+            boldTextFormat_ ? boldTextFormat_.Get()
+                            : (textFormat_ ? textFormat_.Get() : smallTextFormat_.Get());
+        D2D1_RECT_F valueRect =
+            D2D1::RectF(badge.right + 8.0f, rect.top + 4.0f, rect.right - 12.0f, rect.bottom - 4.0f);
+        if (valueFmt) {
+            valueFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            textBrush_->SetOpacity(0.98f);
+            target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), valueFmt, valueRect,
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            valueFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
         textBrush_->SetOpacity(0.90f);
-        // Interactive slider track (taller hit/visual for thumb).
-        D2D1_RECT_F track = D2D1::RectF(tx, cy + 6.0f, rect.right - 14, cy + 13.0f);
-        const float pct = Clamp(state.volume.displayPercent / 100.0f, 0.0f, 1.0f);
-        if (muted) {
-            ComPtr<ID2D1SolidColorBrush> trackBrush;
-            if (SUCCEEDED(target_->CreateSolidColorBrush(material_.raisedStrong, &trackBrush)) &&
-                trackBrush) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(track, 3.0f, 3.0f), trackBrush.Get());
-            }
-            D2D1_RECT_F fill = D2D1::RectF(track.left, track.top,
-                                           track.left + (track.right - track.left) * pct,
-                                           track.bottom);
-            ComPtr<ID2D1SolidColorBrush> dim;
-            if (SUCCEEDED(target_->CreateSolidColorBrush(
-                    WithAlpha(material_.textSecondary, 0.35f), &dim)) &&
-                dim) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(fill, 3.0f, 3.0f), dim.Get());
-            }
-        } else {
-            DrawAccentTrack(track, pct, 3.0f);
-        }
-        // Thumb for interactive feel.
-        const float thumbX = track.left + (track.right - track.left) * pct;
-        const float thumbY = (track.top + track.bottom) * 0.5f;
-        const float thumbR = g_volumeDragging.load(std::memory_order_relaxed) ? 7.0f : 5.5f;
-        ComPtr<ID2D1SolidColorBrush> thumbBrush;
-        if (SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f),
-                                                     &thumbBrush)) &&
-            thumbBrush) {
-            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, thumbY), thumbR, thumbR),
-                                 thumbBrush.Get());
-        }
-        PublishVolumeHitLayout(rect, badge, track, frameSettings_.sizeScale);
+        // No slider/track — mute badge remains clickable; track hit disabled.
+        const D2D1_RECT_F noTrack = D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
+        PublishVolumeHitLayout(rect, badge, noTrack, frameSettings_.sizeScale);
         accentBrush_->SetOpacity(1.0f);
         mutedBrush_->SetOpacity(0.58f);
     }
@@ -22035,6 +22158,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     static POINT s_trayPressPt = {0, 0};
     static std::wstring s_trayPressPath;
     switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
     case WM_CREATE:
         // Order: CreateWindow → accept files / OLE drop → later ShowWindow (RenderThreadProc).
         DragAcceptFiles(hwnd, TRUE);
@@ -22276,7 +22401,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             const int currentTab = NormalizedTabIndex(settings);
             if (mediaActive && currentTab == MediaTabIndex(settings)) {
                 const MediaContentPoint cp = MediaContentFromClient(pt.x, pt.y);
-                const bool hoverClickable = MediaArtHitTest(cp) ||
+                const bool hoverClickable = MediaArtHitTest(cp) || SpectrumHitTest(cp) ||
                                             MediaTransportHitTest(cp) != -1 ||
                                             MediaScrubFractionFromContent(cp) >= 0.0f ||
                                             g_hoveredSourceSlot.load(std::memory_order_relaxed) >= 0 ||
@@ -22712,7 +22837,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             !kinds.empty() && kinds[0] == IslandKind::Idle &&
             (settings.gameOverlay || g_gameOverlayPinned.load());
         const MediaContentPoint cpEarly = MediaContentFromClient(xPos, yPos);
+        if (mediaActive && SpectrumHitTest(cpEarly)) {
+            g_clickExpanded = true;
+            g_pinnedExpanded.store(true, std::memory_order_relaxed);
+            ShowVolumeControlPanel();
+            OpenSystemSoundSettings();
+            g_layoutDirty = true;
+            return 0;
+        }
         if (mediaActive && MediaArtHitTest(cpEarly)) {
+            // mediaIconHitRect → foreground the GSMTC source app (AUMID / window hunt).
             OpenRelevantApp();
             return 0;
         }
@@ -22785,6 +22919,14 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         if (mediaActive && currentTab == MediaTabIndex(settings)) {
+            if (SpectrumHitTest(cp)) {
+                g_clickExpanded = true;
+                g_pinnedExpanded.store(true, std::memory_order_relaxed);
+                ShowVolumeControlPanel();
+                OpenSystemSoundSettings();
+                g_layoutDirty = true;
+                return 0;
+            }
             if (MediaArtHitTest(cp)) {
                 OpenRelevantApp();
                 return 0;
@@ -22908,9 +23050,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 return 0;
             }
         }
+        // One mouse-wheel notch = exactly WheelStep percent (default 2).
+        const int notches = (std::max)(1, abs(delta) / WHEEL_DELTA);
         const int wheelStepPct = (std::max)(1, settings.wheelStep);
-        const int wheelDeltaSteps =
-            (delta > 0 ? wheelStepPct : -wheelStepPct) * (std::max)(1, abs(delta) / WHEEL_DELTA);
+        const int wheelDeltaSteps = (delta > 0 ? wheelStepPct : -wheelStepPct) * notches;
         auto adjustVolumeByWheel = [&]() {
             if (!settings.volume) {
                 return false;
@@ -22932,9 +23075,27 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             SetSystemBrightnessPercent(cur + wheelDeltaSteps);
             return true;
         };
-        // Split wheel: left half brightness, right half volume (pill client X).
-        if (settings.splitWheelAction == SplitWheelAction::BrightnessVolume &&
-            g_pillClientRect.valid) {
+        // Media mode: volume wheel only in mediaCenterHitRect (between art and spectrum).
+        if (onMediaPlayer) {
+            if (settings.volume && MediaCenterHitTest(wheelMediaPt)) {
+                adjustVolumeByWheel();
+                return 0;
+            }
+            // Brightness still allowed on the left half outside icon/spectrum/center text.
+            if (settings.splitWheelAction == SplitWheelAction::BrightnessVolume &&
+                g_pillClientRect.valid && settings.brightness) {
+                const float midX =
+                    g_pillClientRect.left +
+                    (g_pillClientRect.right - g_pillClientRect.left) * 0.5f;
+                if (static_cast<float>(wheelClient.x) < midX &&
+                    !MediaArtHitTest(wheelMediaPt) && !SpectrumHitTest(wheelMediaPt) &&
+                    adjustBrightnessByWheel()) {
+                    return 0;
+                }
+            }
+        } else if (settings.splitWheelAction == SplitWheelAction::BrightnessVolume &&
+                   g_pillClientRect.valid) {
+            // Non-media: split left=brightness, right=volume.
             const float midX =
                 g_pillClientRect.left +
                 (g_pillClientRect.right - g_pillClientRect.left) * 0.5f;
@@ -22946,10 +23107,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 return 0;
             }
         } else if (settings.splitWheelAction == SplitWheelAction::Volume) {
-            if (adjustVolumeByWheel()) {
-                return 0;
-            }
-        } else if (onMediaPlayer && settings.volume) {
             if (adjustVolumeByWheel()) {
                 return 0;
             }
@@ -23086,6 +23243,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = kWindowClass;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;  // never erase opaque client behind ULW / DComp alpha
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
@@ -23130,6 +23288,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
     }
     EnableBlurBehind(hwnd);
+    PrepareIslandWindowChrome(hwnd);
     ApplyBackdropMaterial(hwnd);
     // Show island FIRST, then stack backdrop under it (never reverse — first-frame z-order).
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);

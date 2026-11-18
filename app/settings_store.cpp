@@ -21,6 +21,7 @@ std::map<std::wstring, std::wstring> g_user;
 std::map<std::wstring, std::wstring> g_runtime;
 std::atomic<ULONGLONG> g_runtimeLastFlushMs{0};
 std::atomic<bool> g_runtimeDirty{false};
+std::atomic<bool> g_userDirty{false};
 
 std::wstring AppDataDir() {
   wchar_t base[MAX_PATH] = {};
@@ -375,16 +376,27 @@ bool SettingsStoreInit() {
       schemaFilled = true;
     }
   }
+  // One-shot only: never rewrite Appearance.UseDirectComposition again after the flag is set.
+  {
+    auto mig = g_user.find(L"app.migrate.ulwDefault");
+    if (mig == g_user.end() || mig->second != L"1") {
+      g_user[L"Appearance.UseDirectComposition"] = L"0";
+      g_user[L"app.migrate.ulwDefault"] = L"1";
+      schemaFilled = true;
+    }
+  }
   const std::wstring ver = LUX_APP_VERSION_STRING;
   const bool versionBump = g_user[L"app.version"] != ver;
   if (versionBump) {
+    // Bump version stamp only — do not reset any user preference keys.
     g_user[L"app.version"] = ver;
   }
-  // First launch / corrupt recovery / schema growth: persist so LoadSettings sees defaults.
+  // First launch / corrupt recovery / schema growth / one-shot migration: persist.
   if (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled) {
     if (!SaveFileMap(UserPath(), g_user) && userLoad == JsonLoadResult::Corrupt) {
       LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
     }
+    g_userDirty.store(false);
   }
   return true;
 }
@@ -393,6 +405,12 @@ void SettingsStoreShutdown() {
   RuntimeSaveDebounced();
   if (g_runtimeDirty.load()) {
     RuntimeSave();
+  }
+  if (g_userDirty.load()) {
+    std::lock_guard lock(g_mutex);
+    if (SaveFileMap(UserPath(), g_user)) {
+      g_userDirty.store(false);
+    }
   }
 }
 
@@ -411,12 +429,17 @@ void SettingsStoreReload() {
 
 bool SettingsStoreSaveUser() {
   std::lock_guard lock(g_mutex);
-  return SaveFileMap(UserPath(), g_user);
+  if (!SaveFileMap(UserPath(), g_user)) {
+    return false;
+  }
+  g_userDirty.store(false);
+  return true;
 }
 
 int SettingsGetInt(const wchar_t* key, int fallback) {
   std::lock_guard lock(g_mutex);
-  const std::wstring v = Lookup(g_runtime, g_user, key, nullptr);
+  // User settings.json always wins over runtime ephemeral values.
+  const std::wstring v = Lookup(g_user, g_runtime, key, nullptr);
   if (v.empty()) {
     return fallback;
   }
@@ -425,7 +448,7 @@ int SettingsGetInt(const wchar_t* key, int fallback) {
 
 bool SettingsGetBool(const wchar_t* key, bool fallback) {
   std::lock_guard lock(g_mutex);
-  const std::wstring v = Lookup(g_runtime, g_user, key, nullptr);
+  const std::wstring v = Lookup(g_user, g_runtime, key, nullptr);
   if (v.empty()) {
     return fallback;
   }
@@ -440,16 +463,19 @@ std::wstring SettingsGetString(const wchar_t* key, const wchar_t* fallback) {
 void SettingsSetInt(const wchar_t* key, int value) {
   std::lock_guard lock(g_mutex);
   g_user[key] = std::to_wstring(value);
+  g_userDirty.store(true);
 }
 
 void SettingsSetBool(const wchar_t* key, bool value) {
   std::lock_guard lock(g_mutex);
   g_user[key] = value ? L"1" : L"0";
+  g_userDirty.store(true);
 }
 
 void SettingsSetString(const wchar_t* key, const wchar_t* value) {
   std::lock_guard lock(g_mutex);
   g_user[key] = value ? value : L"";
+  g_userDirty.store(true);
 }
 
 int RuntimeGetInt(const wchar_t* key, int fallback) {

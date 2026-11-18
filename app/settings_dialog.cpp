@@ -673,12 +673,28 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
     }
     return TRUE;
-  case WM_COMMAND:
-    if (HIWORD(wParam) == EN_CHANGE && LOWORD(wParam) == kIdSearch) {
+  case WM_COMMAND: {
+    const WORD id = LOWORD(wParam);
+    const WORD code = HIWORD(wParam);
+    if (code == EN_CHANGE && id == kIdSearch) {
       SetTimer(hwnd, kFilterTimer, 120, nullptr);
       return TRUE;
     }
-    if (LOWORD(wParam) == IDOK) {
+    // Persist immediately when a schema control changes (checkbox / combo / edit blur).
+    if (DialogState* st = State(hwnd)) {
+      const bool schemaChanged =
+          (code == BN_CLICKED && id != IDOK && id != IDCANCEL) || code == CBN_SELCHANGE ||
+          code == EN_KILLFOCUS;
+      if (schemaChanged && id != kIdSearch) {
+        for (const RowRef& row : st->rows) {
+          if (GetDlgCtrlID(row.control) == static_cast<int>(id)) {
+            SaveFromControls(hwnd, *st);
+            break;
+          }
+        }
+      }
+    }
+    if (id == IDOK) {
       if (DialogState* st = State(hwnd)) {
         if (SaveFromControls(hwnd, *st)) {
           EndDialog(hwnd, IDOK);
@@ -686,11 +702,13 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
       return TRUE;
     }
-    if (LOWORD(wParam) == IDCANCEL) {
+    if (id == IDCANCEL) {
+      // Already flushed on each change; Cancel just closes without reverting.
       EndDialog(hwnd, IDCANCEL);
       return TRUE;
     }
     break;
+  }
   case WM_DESTROY:
     if (DialogState* st = State(hwnd)) {
       FreeThemeBrushes(*st);
