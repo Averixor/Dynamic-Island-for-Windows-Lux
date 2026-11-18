@@ -183,6 +183,13 @@ void LuxOverlay_OnSettingsChanged() {
   LUX_LOGI(L"LuxOverlay_OnSettingsChanged queued/applied");
 }
 
+void LuxOverlay_Reload() {
+  SettingsStoreReload();
+  WhTool_ModSettingsChanged();
+  LuxOverlay_ShowIsland();
+  LUX_LOGI(L"LuxOverlay_Reload: settings reloaded from disk");
+}
+
 bool LuxOverlay_StartWorkers(AppState& app) {
   (void)app;
   if (!LuxShouldStartWorkers()) {

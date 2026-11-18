@@ -52,6 +52,7 @@ struct AppOptions {
   bool testJson = false;
   bool noTray = false;
   bool noAutostart = false;
+  bool fromStartup = false;  // launched via HKCU Run (--startup)
   bool ephemeral = false;
   bool openSettings = false;
   DWORD smokeTimeoutMs = 10000;  // used when smokeTest; override via --smoke-timeout-ms=

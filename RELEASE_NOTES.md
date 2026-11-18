@@ -53,7 +53,8 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux.exe` (Release x64, `/MT`)
+- `DynamicIslandLux-Setup-1.0.2.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `INSTALL.txt`
 - `RELEASE_NOTES.md`
@@ -61,6 +62,7 @@ See `app/README.md` → **Known limitations**.
 
 ```bat
 app\build.bat
+scripts\make-installer.bat
 scripts\make-release-assets.bat
 ```
 

@@ -27,6 +27,34 @@ if not defined CMAKE (
 )
 echo Using CMake: %CMAKE%
 
+rem Fail before CMake/MSBuild emits a long, misleading list of missing standard headers.
+rem Nested wildcards need nested for /d loops (cmd does not expand 2022\*\VC\Tools\MSVC\*).
+set "HAS_WINDOWS_SDK="
+for /d %%I in ("%ProgramFiles(x86)%\Windows Kits\10\Include\*") do (
+  if exist "%%~fI\um\windows.h" set "HAS_WINDOWS_SDK=1"
+)
+if not defined HAS_WINDOWS_SDK (
+  echo ERROR: Windows 10/11 SDK headers were not found.
+  echo Install the "Windows 10 SDK" or "Windows 11 SDK" component through Visual Studio Installer,
+  echo then rerun this script.
+  exit /b 1
+)
+
+set "HAS_MSVC_CRT="
+for /d %%E in ("%ProgramFiles(x86)%\Microsoft Visual Studio\2022\*") do (
+  for /d %%I in ("%%~fE\VC\Tools\MSVC\*") do (
+    rem crtdbg.h lives in Universal CRT (Windows Kits\...\ucrt); MSVC ships vcruntime.h.
+    if exist "%%~fI\include\vcruntime.h" set "HAS_MSVC_CRT=1"
+    if exist "%%~fI\include\crtdbg.h" set "HAS_MSVC_CRT=1"
+  )
+)
+if not defined HAS_MSVC_CRT (
+  echo ERROR: MSVC C++ headers were not found.
+  echo In Visual Studio Installer, add "Desktop development with C++" and the MSVC build tools,
+  echo then rerun this script.
+  exit /b 1
+)
+
 "%CMAKE%" -S app -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 exit /b 1
 "%CMAKE%" --build build --config Release

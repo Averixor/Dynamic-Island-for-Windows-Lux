@@ -9,11 +9,19 @@
 #include "settings_dialog.h"
 #include "settings_schema.h"
 #include "settings_store.h"
+#include "settings_ui_loc.h"
 
 #include <shellapi.h>
 
 #include <string>
 #include <vector>
+
+#ifndef NIN_SELECT
+#define NIN_SELECT (WM_USER + 0)
+#endif
+#ifndef NIN_KEYSELECT
+#define NIN_KEYSELECT (WM_USER + 1)
+#endif
 
 namespace {
 AppState g_app;
@@ -29,24 +37,32 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
   }
 
   switch (msg) {
-  case WM_APP_TRAY:
-    if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
+  case WM_APP_TRAY: {
+    // NOTIFYICON_VERSION_4: event is LOWORD(lParam). Also accept legacy full lParam.
+    const UINT trayEvent = LOWORD(lParam);
+    if (trayEvent == WM_RBUTTONUP || trayEvent == WM_CONTEXTMENU || lParam == WM_RBUTTONUP ||
+        lParam == WM_CONTEXTMENU) {
       POINT pt = {};
       GetCursorPos(&pt);
       ShowTrayMenu(app, pt);
-    } else if (lParam == WM_LBUTTONDBLCLK) {
-      OpenSettingsDialog(hwnd);
+    } else if (trayEvent == NIN_SELECT || trayEvent == NIN_KEYSELECT || trayEvent == WM_LBUTTONUP ||
+               lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK) {
+      // Left click: collapse / expand the island widget.
+      LuxOverlay_ToggleIsland();
     }
     return 0;
+  }
   case WM_APP_OPEN_SETTINGS:
     OpenSettingsDialog(hwnd);
     return 0;
   case WM_APP_SHOW_ISLAND:
-    if (app.overlayHwnd) {
-      ShowWindow(app.overlayHwnd, SW_SHOWNOACTIVATE);
-      SetWindowPos(app.overlayHwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
+    LuxOverlay_ShowIsland();
+    return 0;
+  case WM_APP_TOGGLE_ISLAND:
+    LuxOverlay_ToggleIsland();
+    return 0;
+  case WM_APP_RELOAD:
+    LuxOverlay_Reload();
     return 0;
   case WM_COPYDATA: {
     const COPYDATASTRUCT* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
@@ -76,7 +92,10 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       OpenSettingsDialog(hwnd);
       break;
     case IDM_TRAY_SHOW:
-      PostMessageW(hwnd, WM_APP_SHOW_ISLAND, 0, 0);
+      PostMessageW(hwnd, WM_APP_TOGGLE_ISLAND, 0, 0);
+      break;
+    case IDM_TRAY_RELOAD:
+      PostMessageW(hwnd, WM_APP_RELOAD, 0, 0);
       break;
     case IDM_TRAY_EXIT:
       PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -113,6 +132,10 @@ AppOptions ParseCommandLine(int argc, wchar_t** argv) {
       opt.noTray = true;
     } else if (_wcsicmp(argv[i], L"--no-autostart") == 0) {
       opt.noAutostart = true;
+    } else if (_wcsicmp(argv[i], L"--startup") == 0) {
+      // OS logon via HKCU Run: show island immediately and keep tray.
+      opt.fromStartup = true;
+      opt.noTray = false;
     } else if (_wcsicmp(argv[i], L"--no-workers") == 0) {
       LuxNoWorkersFlag() = true;
     } else if (_wcsicmp(argv[i], L"--ephemeral") == 0) {
@@ -214,7 +237,7 @@ void RegisterTrayIcon(AppState& app) {
   if (!app.tray.hIcon) {
     app.tray.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
   }
-  wcsncpy_s(app.tray.szTip, L"Dynamic Island for Windows Lux", _TRUNCATE);
+  wcsncpy_s(app.tray.szTip, SettingsUiLoc::TrayTip(SettingsUiLoc::ResolveLang()), _TRUNCATE);
   if (Shell_NotifyIconW(NIM_ADD, &app.tray)) {
     app.tray.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &app.tray);
@@ -232,11 +255,12 @@ void UnregisterTrayIcon(AppState& app) {
 
 void ShowTrayMenu(AppState& app, POINT screenPt) {
   MenuTheme::PreparePopup();
+  const SettingsUiLoc::Lang lang = SettingsUiLoc::ResolveLang();
   HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, IDM_TRAY_SHOW, L"Show island");
-  AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, L"Settings...");
+  AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, SettingsUiLoc::TraySettings(lang));
+  AppendMenuW(menu, MF_STRING, IDM_TRAY_RELOAD, SettingsUiLoc::TrayReload(lang));
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, L"Exit");
+  AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, SettingsUiLoc::TrayExit(lang));
   SetForegroundWindow(app.hostHwnd);
   TrackPopupMenuEx(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN, screenPt.x, screenPt.y,
                    app.hostHwnd, nullptr);
@@ -316,6 +340,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   SettingsStoreInit();
   LUX_LOGI(L"Dynamic Island Lux %s starting", LUX_APP_VERSION_STRING);
 
+  // Keep HKCU Run in sync with the setting (refresh exe path / --startup after move/update).
+  if (!ephemeral && !options.noAutostart &&
+      SettingsGetBool(L"General.LaunchAtStartup", false)) {
+    AutostartSetEnabled(true);
+  }
+
   if (options.testJson) {
     const bool ok = SettingsStoreSelfTestJson();
     SettingsStoreShutdown();
@@ -359,6 +389,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   // Ready AFTER host HWND (+ scaffold if any) exist; BEFORE workers.
   // Settings dialog reads settings.json only — safe while workers init.
   SignalAppReady(g_app);
+
+  if (options.fromStartup && !ephemeral) {
+    // Logon start: clear persisted hide and show the island; tray already registered.
+    LuxOverlay_ShowIsland();
+    LUX_LOGI(L"Autostart (--startup): island shown, tray registered");
+  }
 
   if (options.openSettings && !options.smokeTest) {
     PostMessageW(g_app.hostHwnd, WM_APP_OPEN_SETTINGS, 0, 0);

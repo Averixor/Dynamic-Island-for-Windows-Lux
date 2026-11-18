@@ -8,6 +8,15 @@ bool LuxOverlay_Init(AppState& app);
 void LuxOverlay_Uninit(AppState& app);
 void LuxOverlay_OnSettingsChanged();
 
+// Clear manual/auto hide and show the overlay (tray / second-instance hop).
+void LuxOverlay_ShowIsland();
+
+// Tray left-click: hide island if visible, show if hidden/parked.
+void LuxOverlay_ToggleIsland();
+
+// Reload settings from disk and re-apply on the render thread.
+void LuxOverlay_Reload();
+
 // Request one paint; returns true when renderedFrames > 0 and lastFrameHr == S_OK.
 bool LuxOverlay_PumpFrame(AppState& app);
 

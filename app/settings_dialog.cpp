@@ -13,6 +13,7 @@
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <cwchar>
 #include <cwctype>
 #include <string>
 #include <vector>
@@ -23,7 +24,6 @@
 namespace {
 constexpr int kControlIdBase = 4000;
 constexpr int kIdSearch = 3900;
-constexpr int kIdAutostart = 3901;
 constexpr UINT_PTR kFilterTimer = 1;
 
 constexpr int kDlgClientW = 580;
@@ -57,7 +57,6 @@ struct DialogState {
   HWND search = nullptr;
   HWND scroll = nullptr;
   HWND content = nullptr;
-  HWND autostart = nullptr;
   HWND okBtn = nullptr;
   HWND cancelBtn = nullptr;
   std::vector<RowRef> rows;
@@ -137,7 +136,6 @@ void ThemeControl(HWND hwnd, bool dark) {
 
 void ThemeAllControls(DialogState& st) {
   ThemeControl(st.search, st.dark);
-  ThemeControl(st.autostart, st.dark);
   ThemeControl(st.okBtn, st.dark);
   ThemeControl(st.cancelBtn, st.dark);
   for (RowRef& row : st.rows) {
@@ -220,7 +218,7 @@ void LayoutContentChildren(DialogState& st) {
   int y = 8;
   SettingGroup lastGroup = SettingGroup::Runtime;
   bool first = true;
-  int deferCount = 2;  // autostart may move; count visible rows below
+  int deferCount = 1;
   for (const RowRef& row : st.rows) {
     if (!RowMatchesFilter(row, st.filter)) {
       continue;
@@ -270,12 +268,6 @@ void LayoutContentChildren(DialogState& st) {
     hdwp = DeferWindowPos(hdwp, row.control, nullptr, 280, y, 240, kControlH,
                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     y += kRowH;
-  }
-
-  if (st.autostart) {
-    hdwp = DeferWindowPos(hdwp, st.autostart, nullptr, 16, y + 10, 420, 22,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    y += 44;
   }
 
   if (hdwp) {
@@ -527,7 +519,11 @@ void BuildControls(HWND hwnd, DialogState& st) {
                                 0, 0, st.content, nullptr, GetModuleHandleW(nullptr), nullptr);
     const int id = kControlIdBase + static_cast<int>(i);
     if (def.type == SettingType::Bool) {
-      const bool on = SettingsGetBool(def.key, def.defaultString && def.defaultString[0] == L'1');
+      bool on = SettingsGetBool(def.key, def.defaultString && def.defaultString[0] == L'1');
+      // Registry / StartupApproved is the live truth for OS autostart.
+      if (wcscmp(def.key, L"General.LaunchAtStartup") == 0) {
+        on = AutostartIsEnabled();
+      }
       row.control = CreateWindowExW(0, L"BUTTON", L"",
                                     WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX, 0, 0, 0,
                                     0, st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
@@ -560,13 +556,6 @@ void BuildControls(HWND hwnd, DialogState& st) {
     st.rows.push_back(std::move(row));
   }
 
-  st.autostart = CreateWindowExW(
-      0, L"BUTTON", SettingsUiLoc::Autostart(st.lang),
-      WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX, 0, 0, 0, 0, st.content,
-      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutostart)), GetModuleHandleW(nullptr),
-      nullptr);
-  SendMessageW(st.autostart, BM_SETCHECK, AutostartIsEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
-
   st.okBtn =
       CreateWindowExW(0, L"BUTTON", SettingsUiLoc::Ok(st.lang),
                       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_DEFPUSHBUTTON, 0, 0, 90, 28, hwnd,
@@ -585,19 +574,39 @@ bool SaveFromControls(HWND hwnd, DialogState& st) {
   for (const RowRef& row : st.rows) {
     const SettingDef& def = kSettingSchema[row.schemaIndex];
     if (def.type == SettingType::Bool) {
-      SettingsSetBool(def.key, SendMessageW(row.control, BM_GETCHECK, 0, 0) == BST_CHECKED);
+      const bool checked = SendMessageW(row.control, BM_GETCHECK, 0, 0) == BST_CHECKED;
+      SettingsSetBool(def.key, checked);
+      if (wcscmp(def.key, L"General.LaunchAtStartup") == 0) {
+        AutostartSetEnabled(checked);
+      }
     } else if (def.type == SettingType::Enum && def.enums && def.enumCount > 0) {
       const int sel = static_cast<int>(SendMessageW(row.control, CB_GETCURSEL, 0, 0));
       if (sel >= 0 && static_cast<size_t>(sel) < def.enumCount) {
         SettingsSetString(def.key, def.enums[sel].value);
       }
+    } else if (def.type == SettingType::Int) {
+      wchar_t buf[512] = {};
+      GetWindowTextW(row.control, buf, ARRAYSIZE(buf));
+      wchar_t* end = nullptr;
+      long value = wcstol(buf, &end, 10);
+      while (end && iswspace(*end)) {
+        ++end;
+      }
+      if (end == buf || (end && *end != L'\0')) {
+        value = wcstol(def.defaultString, nullptr, 10);
+      }
+      if (def.minValue < def.maxValue) {
+        value = (std::max)(static_cast<long>(def.minValue), value);
+        value = (std::min)(static_cast<long>(def.maxValue), value);
+      }
+      const std::wstring normalized = std::to_wstring(value);
+      SettingsSetString(def.key, normalized.c_str());
     } else {
       wchar_t buf[512] = {};
       GetWindowTextW(row.control, buf, ARRAYSIZE(buf));
       SettingsSetString(def.key, buf);
     }
   }
-  AutostartSetEnabled(SendMessageW(st.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED);
   if (!SettingsStoreSaveUser()) {
     LUX_LOGE(L"Settings dialog: SettingsStoreSaveUser failed");
     return false;

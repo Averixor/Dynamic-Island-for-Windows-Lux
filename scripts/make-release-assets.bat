@@ -46,6 +46,13 @@ if errorlevel 1 (
 )
 
 echo.
+echo Optional: build Setup.exe if Inno Setup is installed...
+call scripts\make-installer.bat
+if errorlevel 1 (
+  echo NOTE: installer skipped ^(ISCC missing or compile failed^) - portable assets still OK
+)
+
+echo.
 echo OK - attach %OUT%\* to the GitHub Release for tag v%VER%
 echo Next: git tag -a v%VER% -m "Dynamic Island Lux standalone v%VER%"
 exit /b 0

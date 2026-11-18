@@ -64,7 +64,25 @@ inline const wchar_t* Cancel(Lang lang) {
 }
 
 inline const wchar_t* Autostart(Lang lang) {
-  return Pick(lang, L"Autostart with Windows", L"Автозапуск з Windows", L"Автозапуск с Windows");
+  return Pick(lang, L"Launch with system", L"Запускати разом із системою",
+              L"Запускать вместе с системой");
+}
+
+inline const wchar_t* TraySettings(Lang lang) {
+  return Pick(lang, L"Settings", L"Налаштування", L"Настройки");
+}
+
+inline const wchar_t* TrayReload(Lang lang) {
+  return Pick(lang, L"Reload", L"Перезавантажити", L"Перезагрузить");
+}
+
+inline const wchar_t* TrayExit(Lang lang) {
+  return Pick(lang, L"Exit", L"Вихід", L"Выход");
+}
+
+inline const wchar_t* TrayTip(Lang lang) {
+  return Pick(lang, L"Dynamic Island for Windows Lux", L"Dynamic Island for Windows Lux",
+              L"Dynamic Island for Windows Lux");
 }
 
 inline const wchar_t* GroupTitle(Lang lang, SettingGroup g) {
@@ -95,6 +113,11 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   }
   if (wcscmp(key, L"Behavior.AlwaysOnTop") == 0) {
     return Pick(lang, L"Always on top", L"Поверх усіх вікон", L"Поверх всех окон");
+  }
+  if (wcscmp(key, L"Behavior.AutoHideIdleSeconds") == 0) {
+    return Pick(lang, L"Auto-hide after idle (seconds; 0 = never, -1 = hover/events)",
+                L"Автоприховування (секунди; 0 = ніколи, -1 = наведення/події)",
+                L"Автоскрытие (секунды; 0 = никогда, -1 = наведение/события)");
   }
   if (wcscmp(key, L"Behavior.ExpandOnHover") == 0) {
     return Pick(lang, L"Expand on hover", L"Розгортати наведенням", L"Раскрывать наведением");
@@ -144,6 +167,9 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Modules.Weather") == 0) {
     return Pick(lang, L"Weather", L"Погода", L"Погода");
   }
+  if (wcscmp(key, L"Modules.WeatherFahrenheit") == 0) {
+    return Pick(lang, L"Use Fahrenheit", L"Показувати у Фаренгейтах", L"Показывать в Фаренгейтах");
+  }
   if (wcscmp(key, L"Modules.CalendarModule") == 0) {
     return Pick(lang, L"Calendar", L"Календар", L"Календарь");
   }
@@ -183,8 +209,17 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Themes.BackdropFillOpacity") == 0) {
     return Pick(lang, L"Backdrop opacity", L"Непрозорість фону", L"Непрозрачность фона");
   }
+  if (wcscmp(key, L"Themes.PillOpacity") == 0) {
+    return Pick(lang, L"Island opacity (%)", L"Непрозорість острова (%)", L"Непрозрачность острова (%)");
+  }
+  if (wcscmp(key, L"Themes.TextScale") == 0) {
+    return Pick(lang, L"Text size (%)", L"Розмір тексту (%)", L"Размер текста (%)");
+  }
   if (wcscmp(key, L"General.Language") == 0) {
     return Pick(lang, L"Language", L"Мова", L"Язык");
+  }
+  if (wcscmp(key, L"General.LaunchAtStartup") == 0) {
+    return Autostart(lang);
   }
   if (wcscmp(key, L"Modules.QuickLookup") == 0) {
     return Pick(lang, L"Quick Lookup", L"Швидкий пошук", L"Быстрый поиск");
@@ -194,6 +229,18 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   }
   if (wcscmp(key, L"Shortcuts.LookupKey") == 0) {
     return Pick(lang, L"Lookup key", L"Клавіша пошуку", L"Клавиша поиска");
+  }
+  if (wcscmp(key, L"Shortcuts.HideShowHotkeyEnabled") == 0) {
+    return Pick(lang, L"Show/hide shortcut", L"Гаряча клавіша показу/приховування",
+                L"Горячая клавиша показа/скрытия");
+  }
+  if (wcscmp(key, L"Shortcuts.HideShowModifiers") == 0) {
+    return Pick(lang, L"Show/hide modifiers", L"Модифікатори показу/приховування",
+                L"Модификаторы показа/скрытия");
+  }
+  if (wcscmp(key, L"Shortcuts.HideShowKey") == 0) {
+    return Pick(lang, L"Show/hide key", L"Клавіша показу/приховування",
+                L"Клавиша показа/скрытия");
   }
   if (wcscmp(key, L"Modules.FileTrayModule") == 0) {
     return Pick(lang, L"File tray", L"Файловий лоток", L"Файловый лоток");

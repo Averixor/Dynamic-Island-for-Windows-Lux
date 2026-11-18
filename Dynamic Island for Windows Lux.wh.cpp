@@ -995,6 +995,10 @@ struct NotificationSnapshot {
     std::wstring app;
     std::wstring title;
     std::wstring body;
+    // Source app identity for tap-to-open (packaged AUMID or classic exe path).
+    std::wstring aumid;
+    // Optional toast launch args / deep link (opens a specific screen when provided).
+    std::wstring activationArgs;
     PixelsRef icon;
     double expiresAt = 0.0;
 };
@@ -1341,6 +1345,24 @@ std::atomic<bool> g_defaultOutputIsBluetooth{false};
 std::atomic<int> g_lyricsEffectiveOffsetMs{0};
 std::atomic<int> g_lyricsEffectiveOffsetBtMs{0};
 std::atomic<bool> g_volumeEndpointStale{true};
+// Interactive system-volume UI (mute badge + slider on the volume pill).
+std::atomic<bool> g_volumeDragging{false};
+std::atomic<bool> g_volumeHovering{false};
+std::atomic<unsigned> g_volumeHitSeq{0};
+std::atomic<float> g_volumeHitLeft{0.0f};
+std::atomic<float> g_volumeHitTop{0.0f};
+std::atomic<float> g_volumeHitRight{0.0f};
+std::atomic<float> g_volumeHitBottom{0.0f};
+std::atomic<float> g_volumeHitScale{1.0f};
+std::atomic<float> g_volumeMuteL{0.0f};
+std::atomic<float> g_volumeMuteT{0.0f};
+std::atomic<float> g_volumeMuteR{0.0f};
+std::atomic<float> g_volumeMuteB{0.0f};
+std::atomic<float> g_volumeTrackL{0.0f};
+std::atomic<float> g_volumeTrackT{0.0f};
+std::atomic<float> g_volumeTrackR{0.0f};
+std::atomic<float> g_volumeTrackB{0.0f};
+std::atomic<unsigned long long> g_volumeHitStamp{0};
 std::atomic<bool> g_layoutDirty = true;
 std::atomic<bool> g_clickExpanded = false;
 std::atomic<int> g_pressedMediaButton = -1;
@@ -5079,6 +5101,42 @@ void TriggerNudge() {
         PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
     }
 }
+void RequestShowIsland() {
+    const Settings settings = GetSettingsCopy();
+    g_manuallyHidden = false;
+    Wh_SetIntValue(L"ManuallyHidden", 0);
+    g_autoHiddenParked = false;
+    g_fullscreenOverrideVisible = true;
+    g_hotkeyUnhideUntil.store(
+        NowSeconds() + (settings.autoHideIdleSeconds > 0 ? settings.autoHideIdleSeconds : 6.0));
+    g_layoutDirty = true;
+    HWND hwnd = g_hwnd;
+    if (hwnd) {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
+    }
+}
+void RequestHideIsland() {
+    g_manuallyHidden = true;
+    Wh_SetIntValue(L"ManuallyHidden", 1);
+    g_hotkeyUnhideUntil.store(0.0);
+    g_fullscreenOverrideVisible = false;
+    g_layoutDirty = true;
+    HWND hwnd = g_hwnd;
+    if (hwnd) {
+        PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
+    }
+}
+void RequestToggleIsland() {
+    const bool hidden = g_manuallyHidden.load(std::memory_order_relaxed) ||
+                        g_autoHiddenParked.load(std::memory_order_relaxed) ||
+                        (g_hwnd && !IsWindowVisible(g_hwnd));
+    if (hidden) {
+        RequestShowIsland();
+    } else {
+        RequestHideIsland();
+    }
+}
 winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession SelectActiveMediaSession(
     winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager const& manager,
     const std::wstring& preferredAumid) {
@@ -5731,6 +5789,11 @@ DWORD WINAPI NotificationThreadProc(void*) {
                             snapshot.active = true;
                             snapshot.expiresAt = NowSeconds() + 4.0;
                             auto appInfo = userNotification.AppInfo();
+                            // AppInfo.Id is the AUMID for toast sources (packaged + many classic).
+                            try {
+                                snapshot.aumid = appInfo.Id().c_str();
+                            } catch (...) {
+                            }
                             auto displayInfo = appInfo.DisplayInfo();
                             snapshot.app = displayInfo.DisplayName().c_str();
                             const std::wstring lowerApp = ToLowerCopy(snapshot.app);
@@ -8857,6 +8920,18 @@ void CaptureShellNotification(HWND hwnd) {
     notification.app = Loc(L"Notification");
     notification.title = title;
     notification.expiresAt = NowSeconds() + 4.0;
+    notification.aumid = QueryWindowAumid(hwnd);
+    if (notification.aumid.empty()) {
+        DWORD toastPid = 0;
+        GetWindowThreadProcessId(hwnd, &toastPid);
+        notification.aumid = QueryProcessAumid(toastPid);
+        if (notification.aumid.empty() && toastPid) {
+            std::wstring exePath;
+            if (ProcessImageNameForPid(toastPid, &exePath)) {
+                notification.aumid = std::move(exePath);
+            }
+        }
+    }
     notification.icon = GetWindowIconPixels(hwnd, 64);
     if (notification.title.size() > 96) {
         notification.body = notification.title.substr(64);
@@ -10185,26 +10260,186 @@ void StopFocusTimer() {
     }
     TriggerNudge();
 }
-void ToggleEndpointMute() {
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    ComPtr<IMMDevice> device;
-    ComPtr<IAudioEndpointVolume> volume;
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                  CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-    if (SUCCEEDED(hr)) {
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+void KeepVolumePanelAlive(double seconds = 2.8) {
+    std::lock_guard lock(g_stateMutex);
+    if (!g_state.volume.active) {
+        return;
     }
-    if (SUCCEEDED(hr)) {
-        hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
-                              reinterpret_cast<void**>(volume.GetAddressOf()));
-    }
-    if (SUCCEEDED(hr)) {
-        BOOL muted = FALSE;
-        volume->GetMute(&muted);
-        volume->SetMute(!muted, nullptr);
+    g_state.volume.expiresAt = NowSeconds() + seconds;
+}
+void ShowVolumeControlPanel() {
+    BindVolumeEndpoint();
+    float level = 0.0f;
+    BOOL muted = FALSE;
+    if (g_endpointVolume) {
+        g_endpointVolume->GetMasterVolumeLevelScalar(&level);
+        g_endpointVolume->GetMute(&muted);
+    } else {
         std::lock_guard lock(g_stateMutex);
-        g_state.muted = !muted;
+        level = Clamp(g_state.system.volumePercent / 100.0f, 0.0f, 1.0f);
+        muted = g_state.system.volumeMuted ? TRUE : FALSE;
     }
+    const int percent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_state.system.volumePercent = percent;
+        g_state.system.volumeMuted = muted != FALSE;
+        g_state.muted = muted != FALSE;
+        g_state.volume.active = true;
+        g_state.volume.percent = percent;
+        g_state.volume.muted = muted != FALSE;
+        g_state.volume.deviceName = Loc(L"System audio");
+        g_state.volume.expiresAt = NowSeconds() + 4.0;
+        g_state.volume.displayPercent = static_cast<float>(percent);
+    }
+    g_layoutDirty = true;
+    TriggerNudge();
+}
+bool SetSystemVolumePercent(int percent) {
+    percent = ClampInt(percent, 0, 100);
+    BindVolumeEndpoint();
+    if (!g_endpointVolume) {
+        return false;
+    }
+    const float level = static_cast<float>(percent) / 100.0f;
+    if (FAILED(g_endpointVolume->SetMasterVolumeLevelScalar(level, nullptr))) {
+        return false;
+    }
+    BOOL muted = FALSE;
+    g_endpointVolume->GetMute(&muted);
+    // Optimistic UI; OnNotify will confirm and keep OS sync.
+    ApplyVolumeReading(level, muted != FALSE, true);
+    KeepVolumePanelAlive(2.8);
+    g_layoutDirty = true;
+    return true;
+}
+void ToggleEndpointMute() {
+    BindVolumeEndpoint();
+    ComPtr<IAudioEndpointVolume> volume = g_endpointVolume;
+    if (!volume) {
+        ComPtr<IMMDeviceEnumerator> enumerator;
+        ComPtr<IMMDevice> device;
+        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      IID_PPV_ARGS(&enumerator));
+        if (SUCCEEDED(hr)) {
+            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                                  reinterpret_cast<void**>(volume.GetAddressOf()));
+        }
+        if (FAILED(hr) || !volume) {
+            return;
+        }
+    }
+    BOOL muted = FALSE;
+    volume->GetMute(&muted);
+    volume->SetMute(!muted, nullptr);
+    float level = 0.0f;
+    volume->GetMasterVolumeLevelScalar(&level);
+    ApplyVolumeReading(level, muted == FALSE, true);
+    KeepVolumePanelAlive(2.8);
+    g_layoutDirty = true;
+}
+struct VolumeContentPoint {
+    bool valid = false;
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+};
+VolumeContentPoint VolumeContentFromClient(int clientX, int clientY) {
+    VolumeContentPoint out;
+    float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f, scale = 1.0f;
+    unsigned long long stamp = 0;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const unsigned before = g_volumeHitSeq.load(std::memory_order_relaxed);
+        if (before & 1u) {
+            continue;
+        }
+        std::atomic_thread_fence(std::memory_order_acquire);
+        left = g_volumeHitLeft.load(std::memory_order_relaxed);
+        top = g_volumeHitTop.load(std::memory_order_relaxed);
+        right = g_volumeHitRight.load(std::memory_order_relaxed);
+        bottom = g_volumeHitBottom.load(std::memory_order_relaxed);
+        scale = g_volumeHitScale.load(std::memory_order_relaxed);
+        stamp = g_volumeHitStamp.load(std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (g_volumeHitSeq.load(std::memory_order_relaxed) == before) {
+            break;
+        }
+        stamp = 0;
+    }
+    if (stamp == 0 || GetTickCount64() - stamp > 800) {
+        return out;
+    }
+    if (scale < 0.05f) {
+        scale = 1.0f;
+    }
+    const float width = right - left;
+    const float height = bottom - top;
+    if (width <= 1.0f || height <= 1.0f) {
+        return out;
+    }
+    const float centerX = (left + right) * 0.5f;
+    const float centerY = (top + bottom) * 0.5f;
+    const float contentX = (static_cast<float>(clientX) - centerX) / scale + centerX;
+    const float contentY = (static_cast<float>(clientY) - centerY) / scale + centerY;
+    out.valid = true;
+    out.x = contentX - left;
+    out.y = contentY - top;
+    out.width = width;
+    out.height = height;
+    return out;
+}
+bool VolumeMuteHitTest(const VolumeContentPoint& pt) {
+    if (!pt.valid) {
+        return false;
+    }
+    const float l = g_volumeMuteL.load(std::memory_order_relaxed);
+    const float t = g_volumeMuteT.load(std::memory_order_relaxed);
+    const float r = g_volumeMuteR.load(std::memory_order_relaxed);
+    const float b = g_volumeMuteB.load(std::memory_order_relaxed);
+    return pt.x >= l && pt.x <= r && pt.y >= t && pt.y <= b;
+}
+float VolumeTrackFractionFromContent(const VolumeContentPoint& pt, bool padHit) {
+    if (!pt.valid) {
+        return -1.0f;
+    }
+    const float l = g_volumeTrackL.load(std::memory_order_relaxed);
+    const float t = g_volumeTrackT.load(std::memory_order_relaxed);
+    const float r = g_volumeTrackR.load(std::memory_order_relaxed);
+    const float b = g_volumeTrackB.load(std::memory_order_relaxed);
+    if (r - l <= 1.0f) {
+        return -1.0f;
+    }
+    const float padY = padHit ? 10.0f : 0.0f;
+    if (pt.y < t - padY || pt.y > b + padY || pt.x < l - 6.0f || pt.x > r + 6.0f) {
+        return -1.0f;
+    }
+    return Clamp((Clamp(pt.x, l, r) - l) / (r - l), 0.0f, 1.0f);
+}
+void PublishVolumeHitLayout(const D2D1_RECT_F& rect, const D2D1_RECT_F& mute,
+                            const D2D1_RECT_F& track, float sizeScale) {
+    const unsigned seq = g_volumeHitSeq.load(std::memory_order_relaxed);
+    g_volumeHitSeq.store(seq + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    g_volumeHitLeft.store(rect.left, std::memory_order_relaxed);
+    g_volumeHitTop.store(rect.top, std::memory_order_relaxed);
+    g_volumeHitRight.store(rect.right, std::memory_order_relaxed);
+    g_volumeHitBottom.store(rect.bottom, std::memory_order_relaxed);
+    g_volumeHitScale.store(sizeScale > 0.05f ? sizeScale : 1.0f, std::memory_order_relaxed);
+    g_volumeMuteL.store(mute.left - rect.left, std::memory_order_relaxed);
+    g_volumeMuteT.store(mute.top - rect.top, std::memory_order_relaxed);
+    g_volumeMuteR.store(mute.right - rect.left, std::memory_order_relaxed);
+    g_volumeMuteB.store(mute.bottom - rect.top, std::memory_order_relaxed);
+    g_volumeTrackL.store(track.left - rect.left, std::memory_order_relaxed);
+    g_volumeTrackT.store(track.top - rect.top, std::memory_order_relaxed);
+    g_volumeTrackR.store(track.right - rect.left, std::memory_order_relaxed);
+    g_volumeTrackB.store(track.bottom - rect.top, std::memory_order_relaxed);
+    g_volumeHitStamp.store(GetTickCount64(), std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    g_volumeHitSeq.store(seq + 2, std::memory_order_relaxed);
 }
 void SeekMediaToTicks(int64_t targetTicks) {
     LaunchBackgroundTask([targetTicks]() {
@@ -10424,7 +10659,7 @@ BOOL CALLBACK HuntMediaSourceWindowProc(HWND hwnd, LPARAM lParam) {
     }
     return TRUE;
 }
-bool ActivatePackagedApp(const std::wstring& aumid) {
+bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments = nullptr) {
     if (aumid.empty() || (aumid.find(L'!') == std::wstring::npos &&
                           aumid.find(L'_') == std::wstring::npos)) {
         return false;
@@ -10441,7 +10676,147 @@ bool ActivatePackagedApp(const std::wstring& aumid) {
         return false;
     }
     DWORD pid = 0;
-    return SUCCEEDED(activator->ActivateApplication(aumid.c_str(), nullptr, AO_NONE, &pid));
+    return SUCCEEDED(
+        activator->ActivateApplication(aumid.c_str(), arguments, AO_NONE, &pid));
+}
+struct NotificationWindowHunt {
+    std::wstring aumidLower;
+    std::wstring appNameLower;
+    HWND best = nullptr;
+    int bestScore = 0;
+};
+BOOL CALLBACK HuntNotificationSourceWindowProc(HWND hwnd, LPARAM lParam) {
+    auto* hunt = reinterpret_cast<NotificationWindowHunt*>(lParam);
+    if (!hwnd || hwnd == g_hwnd || !IsWindowVisible(hwnd) || WindowIsCloaked(hwnd)) {
+        return TRUE;
+    }
+    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    if (!(style & WS_VISIBLE) || (style & WS_CHILD)) {
+        return TRUE;
+    }
+    int score = 0;
+    if (!hunt->aumidLower.empty()) {
+        const std::wstring winAumid = ToLowerCopy(QueryWindowAumid(hwnd));
+        if (AumidsReferToSameApp(winAumid, hunt->aumidLower)) {
+            score += 100;
+        }
+    }
+    if (!hunt->appNameLower.empty()) {
+        wchar_t title[512] = {};
+        if (GetWindowTextW(hwnd, title, ARRAYSIZE(title)) > 0) {
+            const std::wstring titleLower = ToLowerCopy(title);
+            if (titleLower.find(hunt->appNameLower) != std::wstring::npos) {
+                score += 40;
+            }
+        }
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        std::wstring exePath;
+        if (pid && ProcessImageNameForPid(pid, &exePath)) {
+            const std::wstring exeLower = ToLowerCopy(exePath);
+            size_t slash = exeLower.find_last_of(L"\\/");
+            const std::wstring exeName =
+                slash == std::wstring::npos ? exeLower : exeLower.substr(slash + 1);
+            if (exeName.find(hunt->appNameLower) != std::wstring::npos) {
+                score += 50;
+            }
+        }
+    }
+    if (score <= 0) {
+        return TRUE;
+    }
+    if (!IsIconic(hwnd)) {
+        score += 10;
+    }
+    const LONG ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    if (ex & WS_EX_APPWINDOW) {
+        score += 5;
+    }
+    RECT r = {};
+    GetWindowRect(hwnd, &r);
+    if ((r.right - r.left) >= 200 && (r.bottom - r.top) >= 120) {
+        score += 5;
+    }
+    if (score > hunt->bestScore) {
+        hunt->bestScore = score;
+        hunt->best = hwnd;
+    }
+    return TRUE;
+}
+// Tap-to-open for island notifications.
+// Source-app states:
+//   foreground  — already focused (still ForceForeground to be safe)
+//   background  — running but not focused / minimized → restore + focus
+//   terminated  — not running → ActivateApplication / shell:AppsFolder / exe path
+// Optional activationArgs act as a deep link to a specific screen inside the app.
+void OpenNotificationSource() {
+    NotificationSnapshot snap;
+    {
+        std::lock_guard lock(g_stateMutex);
+        snap = g_state.notification;
+    }
+    if (!snap.active) {
+        return;
+    }
+    NotificationWindowHunt hunt;
+    hunt.aumidLower = ToLowerCopy(snap.aumid);
+    hunt.appNameLower = ToLowerCopy(snap.app);
+    if (hunt.appNameLower == ToLowerCopy(Loc(L"Notification")) ||
+        hunt.appNameLower == L"notification" || hunt.appNameLower == L"new notification") {
+        hunt.appNameLower.clear();
+    }
+    if (!hunt.aumidLower.empty() || hunt.appNameLower.size() >= 2) {
+        EnumWindows(HuntNotificationSourceWindowProc, reinterpret_cast<LPARAM>(&hunt));
+    }
+    if (hunt.best) {
+        // foreground or background (incl. minimized)
+        ForceForegroundWindow(hunt.best);
+        return;
+    }
+    const wchar_t* args = snap.activationArgs.empty() ? nullptr : snap.activationArgs.c_str();
+    if (!snap.aumid.empty() && ActivatePackagedApp(snap.aumid, args)) {
+        // terminated packaged / Store app — cold start (with deep link when args set)
+        return;
+    }
+    if (!snap.aumid.empty()) {
+        std::wstring executePath = snap.aumid;
+        if (executePath.size() >= 2 && executePath.front() == L'"' && executePath.back() == L'"') {
+            executePath = executePath.substr(1, executePath.size() - 2);
+        }
+        const bool isFilePath =
+            (executePath.find(L":\\") != std::wstring::npos ||
+             (executePath.size() >= 4 &&
+              EqualsNoCase(executePath.substr(executePath.size() - 4), L".exe")));
+        if (isFilePath) {
+            if (GetFileAttributesW(executePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                SHELLEXECUTEINFOW sei = {sizeof(sei)};
+                sei.fMask = SEE_MASK_FLAG_NO_UI;
+                sei.lpFile = executePath.c_str();
+                if (args) {
+                    sei.lpParameters = args;
+                }
+                sei.nShow = SW_SHOWNORMAL;
+                ShellExecuteExW(&sei);
+                return;
+            }
+        } else {
+            std::wstring shellPath = L"shell:AppsFolder\\" + executePath;
+            SHELLEXECUTEINFOW sei = {sizeof(sei)};
+            sei.fMask = SEE_MASK_FLAG_NO_UI;
+            sei.lpFile = shellPath.c_str();
+            sei.nShow = SW_SHOWNORMAL;
+            ShellExecuteExW(&sei);
+            return;
+        }
+    }
+    if (!snap.app.empty() && snap.app != Loc(L"Notification")) {
+        // Last resort: let Shell resolve the display name (rare).
+        SHELLEXECUTEINFOW sei = {sizeof(sei)};
+        sei.fMask = SEE_MASK_FLAG_NO_UI;
+        sei.lpFile = snap.app.c_str();
+        sei.nShow = SW_SHOWNORMAL;
+        ShellExecuteExW(&sei);
+    }
 }
 void OpenRelevantApp() {
     std::wstring title;
@@ -18293,12 +18668,14 @@ private:
         target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), smallTextFormat_.Get(),
                            valueRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         textBrush_->SetOpacity(0.90f);
-        D2D1_RECT_F track = D2D1::RectF(tx, cy + 7.0f, rect.right - 14, cy + 12.0f);
+        // Interactive slider track (taller hit/visual for thumb).
+        D2D1_RECT_F track = D2D1::RectF(tx, cy + 6.0f, rect.right - 14, cy + 13.0f);
         const float pct = Clamp(state.volume.displayPercent / 100.0f, 0.0f, 1.0f);
         if (muted) {
             ComPtr<ID2D1SolidColorBrush> trackBrush;
-            if (SUCCEEDED(target_->CreateSolidColorBrush(material_.raisedStrong, &trackBrush)) && trackBrush) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(track, 2.5f, 2.5f), trackBrush.Get());
+            if (SUCCEEDED(target_->CreateSolidColorBrush(material_.raisedStrong, &trackBrush)) &&
+                trackBrush) {
+                target_->FillRoundedRectangle(D2D1::RoundedRect(track, 3.0f, 3.0f), trackBrush.Get());
             }
             D2D1_RECT_F fill = D2D1::RectF(track.left, track.top,
                                            track.left + (track.right - track.left) * pct,
@@ -18307,11 +18684,23 @@ private:
             if (SUCCEEDED(target_->CreateSolidColorBrush(
                     WithAlpha(material_.textSecondary, 0.35f), &dim)) &&
                 dim) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(fill, 2.5f, 2.5f), dim.Get());
+                target_->FillRoundedRectangle(D2D1::RoundedRect(fill, 3.0f, 3.0f), dim.Get());
             }
         } else {
-            DrawAccentTrack(track, pct, 2.5f);
+            DrawAccentTrack(track, pct, 3.0f);
         }
+        // Thumb for interactive feel.
+        const float thumbX = track.left + (track.right - track.left) * pct;
+        const float thumbY = (track.top + track.bottom) * 0.5f;
+        const float thumbR = g_volumeDragging.load(std::memory_order_relaxed) ? 7.0f : 5.5f;
+        ComPtr<ID2D1SolidColorBrush> thumbBrush;
+        if (SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f),
+                                                     &thumbBrush)) &&
+            thumbBrush) {
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, thumbY), thumbR, thumbR),
+                                 thumbBrush.Get());
+        }
+        PublishVolumeHitLayout(rect, badge, track, frameSettings_.sizeScale);
         accentBrush_->SetOpacity(1.0f);
         mutedBrush_->SetOpacity(0.58f);
     }
@@ -20760,6 +21149,34 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         s_trayPressActive = false;
+        // Interactive system volume: mute badge / slider drag on the volume pill.
+        if (settings.volume) {
+            bool volumeUi = false;
+            {
+                std::lock_guard lock(g_stateMutex);
+                volumeUi = g_state.volume.active && NowSeconds() < g_state.volume.expiresAt;
+            }
+            if (volumeUi) {
+                const VolumeContentPoint vpt = VolumeContentFromClient(xPos, yPos);
+                if (VolumeMuteHitTest(vpt)) {
+                    ToggleEndpointMute();
+                    SetCapture(hwnd);
+                    g_layoutDirty = true;
+                    return 0;
+                }
+                const float frac = VolumeTrackFractionFromContent(vpt, true);
+                if (frac >= 0.0f) {
+                    g_volumeDragging = true;
+                    SetSystemVolumePercent(static_cast<int>(frac * 100.0f + 0.5f));
+                    SetCapture(hwnd);
+                    g_layoutDirty = true;
+                    return 0;
+                }
+            } else if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+                ShowVolumeControlPanel();
+                return 0;
+            }
+        }
         if (settings.fileTrayModule &&
             NormalizedTabIndex(settings) == FileTrayTabIndex(settings)) {
             const MediaContentPoint tcp = MediaContentFromClient(xPos, yPos);
@@ -20850,6 +21267,39 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
         } else if (g_dragPending && !(wParam & MK_LBUTTON)) {
             g_dragPending = false;
+        }
+        if (g_volumeDragging.load(std::memory_order_relaxed)) {
+            const VolumeContentPoint vpt = VolumeContentFromClient(xPos, yPos);
+            float frac = VolumeTrackFractionFromContent(vpt, true);
+            if (frac < 0.0f && vpt.valid) {
+                const float l = g_volumeTrackL.load(std::memory_order_relaxed);
+                const float r = g_volumeTrackR.load(std::memory_order_relaxed);
+                if (r > l) {
+                    frac = Clamp((vpt.x - l) / (r - l), 0.0f, 1.0f);
+                }
+            }
+            if (frac >= 0.0f) {
+                SetSystemVolumePercent(static_cast<int>(frac * 100.0f + 0.5f));
+            }
+            return 0;
+        }
+        if (settings.volume) {
+            bool volumeUi = false;
+            {
+                std::lock_guard lock(g_stateMutex);
+                volumeUi = g_state.volume.active && NowSeconds() < g_state.volume.expiresAt;
+            }
+            if (volumeUi) {
+                const VolumeContentPoint vpt = VolumeContentFromClient(xPos, yPos);
+                const bool over =
+                    vpt.valid && (VolumeMuteHitTest(vpt) || VolumeTrackFractionFromContent(vpt, true) >= 0.0f);
+                g_volumeHovering.store(over, std::memory_order_relaxed);
+                if (over) {
+                    KeepVolumePanelAlive(2.8);
+                }
+            } else {
+                g_volumeHovering.store(false, std::memory_order_relaxed);
+            }
         }
         if (g_scrubbing.load()) {
             const MediaContentPoint cp = MediaContentFromClient(xPos, yPos, true);
@@ -20943,6 +21393,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
     case WM_MOUSELEAVE:
+        g_volumeHovering.store(false, std::memory_order_relaxed);
         if (g_hoveredSourceSlot.exchange(-1) != -1 || g_pressedSourceSlot.exchange(-1) != -1) {
             g_layoutDirty = true;
         }
@@ -20962,6 +21413,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     case WM_CAPTURECHANGED:
         if (reinterpret_cast<HWND>(lParam) != hwnd) {
+            if (g_volumeDragging.exchange(false)) {
+                g_layoutDirty = true;
+            }
             if (g_scrubbing.exchange(false)) {
                 g_layoutDirty = true;
             }
@@ -20977,6 +21431,12 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         return 0;
     case WM_LBUTTONUP: {
+        if (g_volumeDragging.exchange(false)) {
+            ReleaseCapture();
+            KeepVolumePanelAlive(2.8);
+            g_layoutDirty = true;
+            return 0;
+        }
         if (g_islandDragging.load(std::memory_order_relaxed)) {
             EndIslandDrag(true);
             ReleaseCapture();
@@ -21043,6 +21503,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                                        xPos > (g_pillClientRect.left + (g_pillClientRect.right - g_pillClientRect.left) * 0.5f));
         if (!kinds.empty() && !onSecondarySplit &&
             (kinds[0] == IslandKind::Notification || kinds[0] == IslandKind::Clipboard)) {
+            if (kinds[0] == IslandKind::Notification) {
+                // Tap notification pill → open source app (fg / bg / terminated), then dismiss.
+                OpenNotificationSource();
+            }
             {
                 std::lock_guard lock(g_stateMutex);
                 if (kinds[0] == IslandKind::Notification) {
@@ -21192,7 +21656,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
         return 0;
     case WM_MBUTTONUP:
-        ToggleEndpointMute();
+        if (settings.volume) {
+            ToggleEndpointMute();
+            ShowVolumeControlPanel();
+        }
         return 0;
     case WM_LBUTTONDBLCLK: {
         const bool nextVal = !g_pinnedExpanded.load();
@@ -21208,6 +21675,24 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         if (delta == 0)
             return 0;
+        // Ctrl+Wheel or active volume pill → system volume (real-time OS sync).
+        bool volumeUi = false;
+        if (settings.volume) {
+            std::lock_guard lock(g_stateMutex);
+            volumeUi = g_state.volume.active && NowSeconds() < g_state.volume.expiresAt;
+        }
+        const bool ctrlWheel = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
+        if (settings.volume && (volumeUi || ctrlWheel || g_volumeHovering.load())) {
+            int cur = 0;
+            {
+                std::lock_guard lock(g_stateMutex);
+                cur = g_state.system.volumePercent;
+            }
+            const int step = (delta > 0 ? 2 : -2) * std::max(1, abs(delta) / WHEEL_DELTA);
+            SetSystemVolumePercent(cur + step);
+            ShowVolumeControlPanel();
+            return 0;
+        }
         if (wheelNow - s_lastWheelEvent > 220 ||
             (s_wheelAccum != 0 && ((delta > 0) != (s_wheelAccum > 0)))) {
             s_wheelAccum = 0;
@@ -21569,7 +22054,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 g_state.notification.active = false;
                 snapshot.notification.active = false;
             }
-            if (g_state.volume.active && now >= g_state.volume.expiresAt) {
+            if (g_state.volume.active &&
+                (g_volumeDragging.load(std::memory_order_relaxed) ||
+                 g_volumeHovering.load(std::memory_order_relaxed))) {
+                g_state.volume.expiresAt = now + 2.8;
+                snapshot.volume = g_state.volume;
+            } else if (g_state.volume.active && now >= g_state.volume.expiresAt) {
                 g_state.volume.active = false;
                 snapshot.volume.active = false;
             }
@@ -22369,6 +22859,14 @@ void WhTool_ModUninit() {
     StopThreads();
     Wh_Log(L"WhTool_ModUninit: workers stopped");
 }
+#ifdef LUX_STANDALONE
+void LuxOverlay_ShowIsland() {
+    RequestShowIsland();
+}
+void LuxOverlay_ToggleIsland() {
+    RequestToggleIsland();
+}
+#endif
 #ifndef LUX_STANDALONE
 bool g_isToolModProcessLauncher;
 HANDLE g_toolModProcessMutex;

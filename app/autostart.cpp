@@ -19,9 +19,9 @@ std::wstring ExePath() {
   return path;
 }
 
-// Quoted always — paths with spaces (e.g. "Dynamic Island…") break Run otherwise.
+// Quoted path + --startup so logon launch shows island immediately and keeps the tray icon.
 std::wstring QuotedExeCommand() {
-  return L"\"" + ExePath() + L"\"";
+  return L"\"" + ExePath() + L"\" --startup";
 }
 
 bool ReadApprovedDisabled() {
