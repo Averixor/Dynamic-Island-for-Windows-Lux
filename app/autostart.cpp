@@ -19,9 +19,9 @@ std::wstring ExePath() {
   return path;
 }
 
-// Quoted path + --startup so logon launch shows island immediately and keeps the tray icon.
+// Quoted path + --minimized: logon starts in tray (island hidden until tray LMB).
 std::wstring QuotedExeCommand() {
-  return L"\"" + ExePath() + L"\" --startup";
+  return L"\"" + ExePath() + L"\" --minimized";
 }
 
 bool ReadApprovedDisabled() {

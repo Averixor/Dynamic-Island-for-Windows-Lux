@@ -59,6 +59,10 @@ target_link_libraries(DynamicIslandLux PRIVATE
   d2d1
   dwrite
   dwmapi
+  d3d11
+  dxgi
+  dcomp
+  dxva2
   gdi32
   user32
   shell32
@@ -73,6 +77,7 @@ target_link_libraries(DynamicIslandLux PRIVATE
   uxtheme
   advapi32
   comdlg32
+  wbemuuid
 )
 
 set_target_properties(DynamicIslandLux PROPERTIES

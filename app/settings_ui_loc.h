@@ -73,7 +73,7 @@ inline const wchar_t* TraySettings(Lang lang) {
 }
 
 inline const wchar_t* TrayReload(Lang lang) {
-  return Pick(lang, L"Reload", L"Перезавантажити", L"Перезагрузить");
+  return Pick(lang, L"Restart", L"Перезапуск", L"Перезапуск");
 }
 
 inline const wchar_t* TrayExit(Lang lang) {
@@ -101,6 +101,8 @@ inline const wchar_t* GroupTitle(Lang lang, SettingGroup g) {
     return Pick(lang, L"Shortcuts", L"Гарячі клавіші", L"Горячие клавиши");
   case SettingGroup::Modules:
     return Pick(lang, L"Modules", L"Модулі", L"Модули");
+  case SettingGroup::Indicators:
+    return Pick(lang, L"Indicators", L"Індикатори", L"Индикаторы");
   case SettingGroup::Runtime:
     return Pick(lang, L"Runtime", L"Службове", L"Служебное");
   }
@@ -130,6 +132,59 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   }
   if (wcscmp(key, L"Behavior.AutoHideFullscreen") == 0) {
     return Pick(lang, L"Hide in fullscreen", L"Ховати в повноекранних", L"Скрывать в полноэкранных");
+  }
+  if (wcscmp(key, L"Behavior.ClickThroughModifier") == 0) {
+    return Pick(lang, L"Click-through modifier", L"Модифікатор наскрізних кліків",
+                L"Модификатор сквозных кликов");
+  }
+  if (wcscmp(key, L"Behavior.SplitWheelAction") == 0) {
+    return Pick(lang, L"Mouse wheel on island", L"Колесо миші на острові",
+                L"Колесо мыши на острове");
+  }
+  if (wcscmp(key, L"Behavior.WheelStep") == 0) {
+    return Pick(lang, L"Wheel step (%)", L"Крок колеса (%)", L"Шаг колеса (%)");
+  }
+  if (wcscmp(key, L"Behavior.AppBlacklist") == 0) {
+    return Pick(lang, L"App blacklist (exe names)", L"Чорний список додатків (exe)",
+                L"Чёрный список приложений (exe)");
+  }
+  if (wcscmp(key, L"Behavior.BlacklistMode") == 0) {
+    return Pick(lang, L"Blacklist mode", L"Режим чорного списку", L"Режим чёрного списка");
+  }
+  if (wcscmp(key, L"Appearance.TargetMonitor") == 0) {
+    return Pick(lang, L"Target monitor", L"Цільовий монітор", L"Целевой монитор");
+  }
+  if (wcscmp(key, L"Appearance.SpectrumStyle") == 0) {
+    return Pick(lang, L"Spectrum style", L"Стиль спектра", L"Стиль спектра");
+  }
+  if (wcscmp(key, L"Appearance.BackdropMaterial") == 0) {
+    return Pick(lang, L"Backdrop material", L"Матеріал підложки", L"Материал подложки");
+  }
+  if (wcscmp(key, L"Appearance.UseDirectComposition") == 0) {
+    return Pick(lang, L"DirectComposition rendering", L"Рендер DirectComposition",
+                L"Рендер DirectComposition");
+  }
+  if (wcscmp(key, L"Modules.TimerContourProgress") == 0) {
+    return Pick(lang, L"Timer contour progress", L"Контур прогресу таймера",
+                L"Контур прогресса таймера");
+  }
+  if (wcscmp(key, L"Indicators.PrivacyDots") == 0) {
+    return Pick(lang, L"Privacy dots", L"Індикатори приватності", L"Индикаторы приватности");
+  }
+  if (wcscmp(key, L"Indicators.PrivacyDotsMic") == 0) {
+    return Pick(lang, L"Microphone dot", L"Точка мікрофона", L"Точка микрофона");
+  }
+  if (wcscmp(key, L"Indicators.PrivacyDotsCam") == 0) {
+    return Pick(lang, L"Camera dot", L"Точка камери", L"Точка камеры");
+  }
+  if (wcscmp(key, L"Indicators.PrivacyDotsMicHex") == 0) {
+    return Pick(lang, L"Microphone dot color", L"Колір точки мікрофона", L"Цвет точки микрофона");
+  }
+  if (wcscmp(key, L"Indicators.PrivacyDotsCamHex") == 0) {
+    return Pick(lang, L"Camera dot color", L"Колір точки камери", L"Цвет точки камеры");
+  }
+  if (wcscmp(key, L"Modules.LyricsVisualizer") == 0) {
+    return Pick(lang, L"Lyrics visualizer", L"Візуалізатор тексту пісні", L"Визуализатор текста песни");
   }
   if (wcscmp(key, L"Themes.BackdropMaterial") == 0) {
     return Pick(lang, L"Backdrop material", L"Матеріал фону", L"Материал фона");
@@ -288,6 +343,15 @@ inline const wchar_t* BackdropLabel(Lang lang, const wchar_t* value) {
   if (_wcsicmp(value, L"acrylic") == 0) {
     return Pick(lang, L"Acrylic", L"Acrylic", L"Acrylic");
   }
+  if (_wcsicmp(value, L"mica") == 0) {
+    return Pick(lang, L"Mica", L"Mica", L"Mica");
+  }
+  if (_wcsicmp(value, L"solid") == 0) {
+    return Pick(lang, L"Solid", L"Суцільний", L"Сплошной");
+  }
+  if (_wcsicmp(value, L"auto") == 0) {
+    return Pick(lang, L"Auto (Themes)", L"Авто (Themes)", L"Авто (Themes)");
+  }
   return value;
 }
 
@@ -297,6 +361,9 @@ inline const wchar_t* AuraLabel(Lang lang, const wchar_t* value) {
   }
   if (_wcsicmp(value, L"glow") == 0) {
     return Pick(lang, L"Glow", L"Свічення", L"Свечение");
+  }
+  if (_wcsicmp(value, L"equalizer") == 0) {
+    return Pick(lang, L"Equalizer", L"Еквалайзер", L"Эквалайзер");
   }
   if (_wcsicmp(value, L"rays") == 0) {
     return Pick(lang, L"Rays", L"Промені", L"Лучи");
@@ -310,15 +377,107 @@ inline const wchar_t* AuraLabel(Lang lang, const wchar_t* value) {
   return value;
 }
 
+inline const wchar_t* TargetMonitorLabel(Lang lang, const wchar_t* value) {
+  if (_wcsicmp(value, L"primary") == 0) {
+    return Pick(lang, L"Primary", L"Основний", L"Основной");
+  }
+  if (_wcsicmp(value, L"cursor") == 0) {
+    return Pick(lang, L"Cursor monitor", L"Монітор курсора", L"Монитор курсора");
+  }
+  if (_wcsicmp(value, L"follow") == 0) {
+    return Pick(lang, L"Follow active window", L"За активним вікном", L"За активным окном");
+  }
+  if (_wcsicmp(value, L"1") == 0) {
+    return Pick(lang, L"Monitor 1", L"Монітор 1", L"Монитор 1");
+  }
+  if (_wcsicmp(value, L"2") == 0) {
+    return Pick(lang, L"Monitor 2", L"Монітор 2", L"Монитор 2");
+  }
+  if (_wcsicmp(value, L"3") == 0) {
+    return Pick(lang, L"Monitor 3", L"Монітор 3", L"Монитор 3");
+  }
+  return value;
+}
+
+inline const wchar_t* SplitWheelActionLabel(Lang lang, const wchar_t* value) {
+  if (_wcsicmp(value, L"off") == 0) {
+    return Pick(lang, L"Off", L"Вимкнено", L"Выкл");
+  }
+  if (_wcsicmp(value, L"volume") == 0) {
+    return Pick(lang, L"Volume everywhere", L"Гучність скрізь", L"Громкость везде");
+  }
+  if (_wcsicmp(value, L"brightness_volume") == 0) {
+    return Pick(lang, L"Brightness left / Volume right", L"Яскравість зліва / Гучність справа",
+                L"Яркость слева / Громкость справа");
+  }
+  return value;
+}
+
+inline const wchar_t* BlacklistModeLabel(Lang lang, const wchar_t* value) {
+  if (_wcsicmp(value, L"foreground") == 0) {
+    return Pick(lang, L"Foreground app", L"Активне вікно", L"Активное окно");
+  }
+  if (_wcsicmp(value, L"running") == 0) {
+    return Pick(lang, L"Any running process", L"Будь-який запущений процес",
+                L"Любой запущенный процесс");
+  }
+  return value;
+}
+
+inline const wchar_t* SpectrumStyleLabel(Lang lang, const wchar_t* value) {
+  if (_wcsicmp(value, L"bars") == 0) {
+    return Pick(lang, L"Bars", L"Стовпчики", L"Столбики");
+  }
+  if (_wcsicmp(value, L"orb") == 0) {
+    return Pick(lang, L"Orb", L"Орб", L"Орб");
+  }
+  if (_wcsicmp(value, L"plasma") == 0) {
+    return Pick(lang, L"Plasma", L"Плазма", L"Плазма");
+  }
+  if (_wcsicmp(value, L"led") == 0) {
+    return Pick(lang, L"LED", L"LED", L"LED");
+  }
+  return value;
+}
+
+inline const wchar_t* ClickThroughModifierLabel(Lang lang, const wchar_t* value) {
+  if (_wcsicmp(value, L"ctrl") == 0) {
+    return Pick(lang, L"Ctrl", L"Ctrl", L"Ctrl");
+  }
+  if (_wcsicmp(value, L"alt") == 0) {
+    return Pick(lang, L"Alt", L"Alt", L"Alt");
+  }
+  if (_wcsicmp(value, L"ctrl_or_alt") == 0) {
+    return Pick(lang, L"Ctrl or Alt", L"Ctrl або Alt", L"Ctrl или Alt");
+  }
+  return value;
+}
+
 inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) {
   if (!def.enums || index >= def.enumCount) {
     return L"";
   }
-  if (wcscmp(def.key, L"Themes.BackdropMaterial") == 0) {
+  if (wcscmp(def.key, L"Themes.BackdropMaterial") == 0 ||
+      wcscmp(def.key, L"Appearance.BackdropMaterial") == 0) {
     return BackdropLabel(lang, def.enums[index].value);
   }
   if (wcscmp(def.key, L"Themes.AuraStyle") == 0) {
     return AuraLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Appearance.TargetMonitor") == 0) {
+    return TargetMonitorLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Appearance.SpectrumStyle") == 0) {
+    return SpectrumStyleLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Behavior.ClickThroughModifier") == 0) {
+    return ClickThroughModifierLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Behavior.SplitWheelAction") == 0) {
+    return SplitWheelActionLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Behavior.BlacklistMode") == 0) {
+    return BlacklistModeLabel(lang, def.enums[index].value);
   }
   // Language / modifiers: keep schema labels (endonyms / chord names).
   return def.enums[index].label;

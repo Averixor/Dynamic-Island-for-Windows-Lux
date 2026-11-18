@@ -11,6 +11,9 @@ void LuxOverlay_OnSettingsChanged();
 // Clear manual/auto hide and show the overlay (tray / second-instance hop).
 void LuxOverlay_ShowIsland();
 
+// Hide the island (autostart --minimized / tray toggle).
+void LuxOverlay_HideIsland();
+
 // Tray left-click: hide island if visible, show if hidden/parked.
 void LuxOverlay_ToggleIsland();
 

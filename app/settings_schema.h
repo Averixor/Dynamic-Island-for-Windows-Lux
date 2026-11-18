@@ -24,6 +24,7 @@ enum class SettingGroup {
   General,
   Shortcuts,
   Modules,
+  Indicators,
   Runtime,
 };
 
@@ -47,14 +48,57 @@ inline constexpr SettingEnumOption kBackdropMaterialEnums[] = {
     {L"none", L"None"},
     {L"blur", L"Blur"},
     {L"acrylic", L"Acrylic"},
+    {L"mica", L"Mica"},
+    {L"solid", L"Solid"},
+};
+
+inline constexpr SettingEnumOption kAppearanceBackdropEnums[] = {
+    {L"acrylic", L"Acrylic"},
+    {L"mica", L"Mica"},
+    {L"solid", L"Solid"},
+    {L"auto", L"Auto (Themes)"},
 };
 
 inline constexpr SettingEnumOption kAuraStyleEnums[] = {
     {L"off", L"Off"},
     {L"glow", L"Glow"},
+    {L"equalizer", L"Equalizer"},
     {L"rays", L"Rays"},
     {L"pulse", L"Rings"},
     {L"orbit", L"Orbit"},
+};
+
+inline constexpr SettingEnumOption kTargetMonitorEnums[] = {
+    {L"primary", L"Primary"},
+    {L"cursor", L"Cursor monitor"},
+    {L"follow", L"Follow active window"},
+    {L"1", L"Monitor 1"},
+    {L"2", L"Monitor 2"},
+    {L"3", L"Monitor 3"},
+};
+
+inline constexpr SettingEnumOption kSplitWheelActionEnums[] = {
+    {L"off", L"Off"},
+    {L"volume", L"Volume"},
+    {L"brightness_volume", L"Brightness / Volume"},
+};
+
+inline constexpr SettingEnumOption kBlacklistModeEnums[] = {
+    {L"foreground", L"Foreground"},
+    {L"running", L"Running"},
+};
+
+inline constexpr SettingEnumOption kSpectrumStyleEnums[] = {
+    {L"bars", L"Bars"},
+    {L"orb", L"Orb"},
+    {L"plasma", L"Plasma"},
+    {L"led", L"LED"},
+};
+
+inline constexpr SettingEnumOption kClickThroughModifierEnums[] = {
+    {L"ctrl", L"Ctrl"},
+    {L"alt", L"Alt"},
+    {L"ctrl_or_alt", L"Ctrl or Alt"},
 };
 
 inline constexpr SettingEnumOption kLanguageEnums[] = {
@@ -112,6 +156,14 @@ inline constexpr SettingEnumOption kDateFormatEnums[] = {
 inline constexpr SettingDef kSettingSchema[] = {
     {L"Appearance.Position", SettingType::String, SettingGroup::Appearance, L"top-center", 0, 0,
      nullptr, 0},
+    {L"Appearance.TargetMonitor", SettingType::Enum, SettingGroup::Appearance, L"primary", 0, 0,
+     kTargetMonitorEnums, sizeof(kTargetMonitorEnums) / sizeof(kTargetMonitorEnums[0])},
+    {L"Appearance.SpectrumStyle", SettingType::Enum, SettingGroup::Appearance, L"bars", 0, 0,
+     kSpectrumStyleEnums, sizeof(kSpectrumStyleEnums) / sizeof(kSpectrumStyleEnums[0])},
+    {L"Appearance.BackdropMaterial", SettingType::Enum, SettingGroup::Appearance, L"acrylic", 0, 0,
+     kAppearanceBackdropEnums, sizeof(kAppearanceBackdropEnums) / sizeof(kAppearanceBackdropEnums[0])},
+    {L"Appearance.UseDirectComposition", SettingType::Bool, SettingGroup::Appearance, L"1", 0, 1,
+     nullptr, 0},
     {L"Behavior.AlwaysOnTop", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideIdleSeconds", SettingType::Int, SettingGroup::Behavior, L"0", -1, 3600,
      nullptr, 0},
@@ -120,6 +172,16 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Behavior.AllowDragMove", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideFullscreen", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr,
      0},
+    {L"Behavior.SplitWheelAction", SettingType::Enum, SettingGroup::Behavior, L"brightness_volume",
+     0, 0, kSplitWheelActionEnums,
+     sizeof(kSplitWheelActionEnums) / sizeof(kSplitWheelActionEnums[0])},
+    {L"Behavior.WheelStep", SettingType::Int, SettingGroup::Behavior, L"5", 1, 20, nullptr, 0},
+    {L"Behavior.AppBlacklist", SettingType::String, SettingGroup::Behavior, L"", 0, 0, nullptr, 0},
+    {L"Behavior.BlacklistMode", SettingType::Enum, SettingGroup::Behavior, L"foreground", 0, 0,
+     kBlacklistModeEnums, sizeof(kBlacklistModeEnums) / sizeof(kBlacklistModeEnums[0])},
+    {L"Behavior.ClickThroughModifier", SettingType::Enum, SettingGroup::Behavior, L"ctrl_or_alt", 0,
+     0, kClickThroughModifierEnums,
+     sizeof(kClickThroughModifierEnums) / sizeof(kClickThroughModifierEnums[0])},
     {L"Themes.BackdropMaterial", SettingType::Enum, SettingGroup::Themes, L"none", 0, 0,
      kBackdropMaterialEnums, sizeof(kBackdropMaterialEnums) / sizeof(kBackdropMaterialEnums[0])},
     {L"Themes.BackdropTint", SettingType::Int, SettingGroup::Themes, L"55", 0, 100, nullptr, 0},
@@ -131,6 +193,15 @@ inline constexpr SettingDef kSettingSchema[] = {
      sizeof(kAuraStyleEnums) / sizeof(kAuraStyleEnums[0])},
     {L"Themes.AuraIntensity", SettingType::Int, SettingGroup::Themes, L"70", 0, 100, nullptr, 0},
     {L"Themes.AdaptiveTheme", SettingType::Bool, SettingGroup::Themes, L"1", 0, 1, nullptr, 0},
+    {L"Indicators.PrivacyDots", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr, 0},
+    {L"Indicators.PrivacyDotsMic", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr,
+     0},
+    {L"Indicators.PrivacyDotsCam", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr,
+     0},
+    {L"Indicators.PrivacyDotsMicHex", SettingType::String, SettingGroup::Indicators, L"#FF9500", 0, 0,
+     nullptr, 0},
+    {L"Indicators.PrivacyDotsCamHex", SettingType::String, SettingGroup::Indicators, L"#22C63D", 0, 0,
+     nullptr, 0},
     {L"General.Language", SettingType::Enum, SettingGroup::General, L"uk", 0, 0, kLanguageEnums,
      sizeof(kLanguageEnums) / sizeof(kLanguageEnums[0])},
     {L"General.LaunchAtStartup", SettingType::Bool, SettingGroup::General, L"0", 0, 1, nullptr, 0},
@@ -152,6 +223,8 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Modules.DoNotDisturbIndicator", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr,
      0},
     {L"Modules.TimerModule", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
+    {L"Modules.TimerContourProgress", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr,
+     0},
     {L"Modules.MediaPillClock", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.MediaPillDate", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.ClockFormat", SettingType::Enum, SettingGroup::Modules, L"24h", 0, 0, kClockFormatEnums,
@@ -161,6 +234,7 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Modules.ShowSeconds", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
     {L"Modules.DateFirst", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
     {L"Modules.QuickLookup", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
+    {L"Modules.LyricsVisualizer", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Shortcuts.LookupModifiers", SettingType::Enum, SettingGroup::Shortcuts, L"ctrl_alt", 0, 0,
      kLookupModifierEnums, sizeof(kLookupModifierEnums) / sizeof(kLookupModifierEnums[0])},
     {L"Shortcuts.LookupKey", SettingType::String, SettingGroup::Shortcuts, L"Space", 0, 0, nullptr,

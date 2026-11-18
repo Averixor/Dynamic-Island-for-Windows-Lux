@@ -132,9 +132,10 @@ AppOptions ParseCommandLine(int argc, wchar_t** argv) {
       opt.noTray = true;
     } else if (_wcsicmp(argv[i], L"--no-autostart") == 0) {
       opt.noAutostart = true;
-    } else if (_wcsicmp(argv[i], L"--startup") == 0) {
-      // OS logon via HKCU Run: show island immediately and keep tray.
+    } else if (_wcsicmp(argv[i], L"--minimized") == 0 || _wcsicmp(argv[i], L"--startup") == 0) {
+      // OS logon via HKCU Run: tray immediately; island stays hidden until tray click.
       opt.fromStartup = true;
+      opt.startMinimized = true;
       opt.noTray = false;
     } else if (_wcsicmp(argv[i], L"--no-workers") == 0) {
       LuxNoWorkersFlag() = true;
@@ -391,9 +392,13 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   SignalAppReady(g_app);
 
   if (options.fromStartup && !ephemeral) {
-    // Logon start: clear persisted hide and show the island; tray already registered.
-    LuxOverlay_ShowIsland();
-    LUX_LOGI(L"Autostart (--startup): island shown, tray registered");
+    if (options.startMinimized) {
+      LuxOverlay_HideIsland();
+      LUX_LOGI(L"Autostart (--minimized): tray registered, island hidden");
+    } else {
+      LuxOverlay_ShowIsland();
+      LUX_LOGI(L"Autostart: island shown, tray registered");
+    }
   }
 
   if (options.openSettings && !options.smokeTest) {
