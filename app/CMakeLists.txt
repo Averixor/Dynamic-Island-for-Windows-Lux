@@ -44,6 +44,9 @@ target_compile_definitions(DynamicIslandLux PRIVATE
   WIN32_LEAN_AND_MEAN
   NOMINMAX
   _CRT_SECURE_NO_WARNINGS
+  # MSVC 14.50+ (VS 2026) errors on <experimental/coroutine>, which C++/WinRT
+  # still includes when the project is C++17. The header names this macro.
+  _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
   LUX_APP_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
   LUX_APP_VERSION_MINOR=${PROJECT_VERSION_MINOR}
   LUX_APP_VERSION_PATCH=${PROJECT_VERSION_PATCH}
