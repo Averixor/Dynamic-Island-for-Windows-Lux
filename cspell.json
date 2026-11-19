@@ -88,12 +88,19 @@
     "HMONITOR",
     "Wbem",
     "wekyb",
-    "bbwe"
+    "bbwe",
+    "enumer",
+    "BHID",
+    "pidl",
+    "PIDL",
+    "SIGDN"
   ],
   "ignorePaths": [
     "LICENSE",
     "**/LICENSE",
     ".clang-format",
+    ".gitignore",
+    ".gitattributes",
     "installer/**",
     "**/*.iss",
     "dist/**",

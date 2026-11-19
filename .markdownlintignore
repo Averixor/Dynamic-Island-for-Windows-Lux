@@ -1,10 +1,11 @@
-# Non-Markdown / generated / packaging
+# Non-Markdown / generated / packaging (single ignore list for CLI + IDE)
 LICENSE
 **/LICENSE
+INSTALL.txt
 *.iss
+**/*.gen.rc
 installer/**
 dist/**
 build/**
 dictionaries/**
-**/*.gen.rc
 **/node_modules/**

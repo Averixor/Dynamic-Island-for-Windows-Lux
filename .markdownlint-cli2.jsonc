@@ -1,0 +1,22 @@
+{
+  // Rules come from .markdownlint.json. Keep ignores here AND in .markdownlintignore
+  // (cli2 honors this file's ignores; the VS Code extension uses .markdownlintignore).
+  "globs": [
+    "**/*.md"
+  ],
+  "ignores": [
+    "LICENSE",
+    "**/LICENSE",
+    "INSTALL.txt",
+    "*.iss",
+    "**/*.gen.rc",
+    "installer/**",
+    "dist/**",
+    "build/**",
+    "dictionaries/**",
+    "**/node_modules/**"
+  ],
+  "config": {
+    "extends": ".markdownlint.json"
+  }
+}
