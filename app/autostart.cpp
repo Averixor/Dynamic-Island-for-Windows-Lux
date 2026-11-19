@@ -24,18 +24,37 @@ std::wstring ExePath() {
       path.resize(n);
       return path;
     }
-    // Truncated: grow and retry (long paths / \\?\).
     path.resize(path.size() * 2);
   }
 }
 
-// Quoted path + --minimized: logon starts in tray (island hidden until tray LMB).
 std::wstring QuotedExeCommand() {
   const std::wstring exe = ExePath();
   if (exe.empty()) {
     return {};
   }
   return L"\"" + exe + L"\" --minimized";
+}
+
+std::wstring UnquoteExeFromCommand(const std::wstring& command) {
+  if (command.size() >= 2 && command[0] == L'"') {
+    const size_t end = command.find(L'"', 1);
+    if (end != std::wstring::npos) {
+      return command.substr(1, end - 1);
+    }
+  }
+  const size_t space = command.find(L' ');
+  if (space == std::wstring::npos) {
+    return command;
+  }
+  return command.substr(0, space);
+}
+
+bool PathsEqual(const std::wstring& left, const std::wstring& right) {
+  if (left.empty() || right.empty()) {
+    return false;
+  }
+  return _wcsicmp(left.c_str(), right.c_str()) == 0;
 }
 
 bool ReadApprovedDisabled() {
@@ -52,7 +71,7 @@ bool ReadApprovedDisabled() {
     return false;
   }
   // StartupApproved first byte: 0x02 = enabled, 0x03 = disabled (Task Manager).
-  // Odd low bit ⇒ disabled. (Was inverted: 0x02 looked "off" so the checkbox never stuck.)
+  // Odd low bit ⇒ disabled.
   return (data[0] & 0x01) != 0;
 }
 
@@ -62,7 +81,6 @@ bool WriteStartupApproved(bool enabled) {
                       nullptr) != ERROR_SUCCESS) {
     return false;
   }
-  // 12-byte binary blob Explorer expects; 0x02 = enabled, 0x03 = disabled.
   BYTE data[12] = {};
   data[0] = enabled ? 0x02 : 0x03;
   const LONG rc =
@@ -70,9 +88,9 @@ bool WriteStartupApproved(bool enabled) {
   RegCloseKey(key);
   return rc == ERROR_SUCCESS;
 }
-}  // namespace
 
-bool AutostartIsEnabled() {
+bool ReadRunCommand(std::wstring* command) {
+  command->clear();
   HKEY key = nullptr;
   if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
     return false;
@@ -80,7 +98,7 @@ bool AutostartIsEnabled() {
   DWORD type = 0;
   DWORD size = 0;
   LONG rc = RegQueryValueExW(key, kValueName, nullptr, &type, nullptr, &size);
-  if (rc != ERROR_SUCCESS || type != REG_SZ || size < sizeof(wchar_t)) {
+  if (rc != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) || size < sizeof(wchar_t)) {
     RegCloseKey(key);
     return false;
   }
@@ -89,13 +107,32 @@ bool AutostartIsEnabled() {
   rc = RegQueryValueExW(key, kValueName, nullptr, &type, reinterpret_cast<LPBYTE>(value.data()),
                         &bytes);
   RegCloseKey(key);
-  if (rc != ERROR_SUCCESS || type != REG_SZ || value[0] == L'\0') {
+  if (rc != ERROR_SUCCESS || value[0] == L'\0') {
     return false;
   }
-  if (ReadApprovedDisabled()) {
-    return false;
-  }
+  *command = value.data();
   return true;
+}
+}  // namespace
+
+AutostartState AutostartQuery() {
+  std::wstring command;
+  if (!ReadRunCommand(&command)) {
+    return AutostartState::Off;
+  }
+  const std::wstring registered = UnquoteExeFromCommand(command);
+  const bool samePath = PathsEqual(registered, ExePath());
+  if (ReadApprovedDisabled()) {
+    return AutostartState::DisabledByUser;
+  }
+  if (!samePath) {
+    return AutostartState::StalePath;
+  }
+  return AutostartState::On;
+}
+
+bool AutostartIsEnabled() {
+  return AutostartQuery() == AutostartState::On;
 }
 
 bool AutostartSetEnabled(bool enabled) {
@@ -126,7 +163,6 @@ bool AutostartSetEnabled(bool enabled) {
     LUX_LOGE(L"Autostart: RegSet/Delete Run failed (%ld)", rc);
     return false;
   }
-  // Keep StartupApproved in sync so Task Manager "Disabled" does not stick after re-enable.
   if (!WriteStartupApproved(enabled)) {
     LUX_LOGW(L"Autostart: StartupApproved\\Run write failed (Run value still updated)");
   }

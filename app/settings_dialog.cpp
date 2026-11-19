@@ -76,6 +76,9 @@ struct DialogState {
   int scrollY = 0;
   bool dark = false;
   ULONGLONG suppressCloseUntil = 0;
+  int dpi = 96;
+  int wheelRemainder = 0;
+  HFONT uiFont = nullptr;
   COLORREF bg = RGB(255, 255, 255);
   COLORREF text = RGB(0, 0, 0);
   COLORREF editBg = RGB(255, 255, 255);
@@ -85,6 +88,60 @@ struct DialogState {
 
 DialogState* State(HWND hwnd) {
   return reinterpret_cast<DialogState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+}
+
+int Px(const DialogState& st, int dip) {
+  const int dpi = st.dpi > 0 ? st.dpi : 96;
+  return MulDiv(dip, dpi, 96);
+}
+
+HFONT CreateUiFont(int dpi) {
+  NONCLIENTMETRICSW metrics = {};
+  metrics.cbSize = sizeof(metrics);
+  if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0,
+                                 static_cast<UINT>(dpi > 0 ? dpi : 96))) {
+    return CreateFontIndirectW(&metrics.lfMessageFont);
+  }
+  return CreateFontW(-MulDiv(12, dpi > 0 ? dpi : 96, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                     DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+void ApplyUiFont(DialogState& st) {
+  const HFONT next = CreateUiFont(st.dpi);
+  const HFONT previous = st.uiFont;
+  st.uiFont = next;
+  const auto assign = [&](HWND hwnd) {
+    if (hwnd && next) {
+      SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(next), TRUE);
+    }
+  };
+  assign(st.search);
+  assign(st.okBtn);
+  assign(st.cancelBtn);
+  assign(st.applyBtn);
+  assign(st.resetBtn);
+  for (RowRef& row : st.rows) {
+    assign(row.groupHeader);
+    assign(row.label);
+    assign(row.control);
+  }
+  if (previous) {
+    DeleteObject(previous);
+  }
+}
+
+constexpr UINT_PTR kComboSubclassId = 1;
+
+LRESULT CALLBACK ComboWheelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR,
+                                DWORD_PTR) {
+  if (msg == WM_MOUSEWHEEL && SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0) == FALSE) {
+    HWND content = GetParent(hwnd);
+    if (content) {
+      return SendMessageW(content, WM_MOUSEWHEEL, wParam, lParam);
+    }
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 bool SystemPreferLightApps() {
@@ -228,7 +285,7 @@ void LayoutContentChildren(DialogState& st) {
     return;
   }
 
-  int y = 8;
+  int y = Px(st, 8);
   SettingGroup lastGroup = SettingGroup::Runtime;
   bool first = true;
   int deferCount = 1;
@@ -248,7 +305,7 @@ void LayoutContentChildren(DialogState& st) {
   }
 
   HDWP hdwp = BeginDeferWindowPos((std::max)(deferCount, 1));
-  y = 8;
+  y = Px(st, 8);
   lastGroup = SettingGroup::Runtime;
   first = true;
 
@@ -259,16 +316,20 @@ void LayoutContentChildren(DialogState& st) {
       if (row.groupHeader) {
         ShowWindow(row.groupHeader, SW_HIDE);
       }
-      ShowWindow(row.label, SW_HIDE);
-      ShowWindow(row.control, SW_HIDE);
+      if (row.label) {
+        ShowWindow(row.label, SW_HIDE);
+      }
+      if (row.control) {
+        ShowWindow(row.control, SW_HIDE);
+      }
       continue;
     }
 
     if (first || def.group != lastGroup) {
       if (row.groupHeader) {
-        hdwp = DeferWindowPos(hdwp, row.groupHeader, nullptr, 8, y, kContentW, 20,
-                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        y += kGroupH;
+        hdwp = DeferWindowPos(hdwp, row.groupHeader, nullptr, Px(st, 8), y, Px(st, kContentW),
+                              Px(st, 20), SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        y += Px(st, kGroupH);
       }
       lastGroup = def.group;
       first = false;
@@ -276,48 +337,80 @@ void LayoutContentChildren(DialogState& st) {
       ShowWindow(row.groupHeader, SW_HIDE);
     }
 
-    hdwp = DeferWindowPos(hdwp, row.label, nullptr, 16, y + 3, 250, kLabelH,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    hdwp = DeferWindowPos(hdwp, row.control, nullptr, 280, y, 240, kControlH,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    y += kRowH;
+    if (def.type == SettingType::Bool) {
+      if (row.label) {
+        ShowWindow(row.label, SW_HIDE);
+      }
+      hdwp = DeferWindowPos(hdwp, row.control, nullptr, Px(st, 16), y,
+                            (std::max)(Px(st, 80), Px(st, kContentW) - Px(st, 24)),
+                            Px(st, kControlH), SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    } else {
+      if (row.label) {
+        hdwp = DeferWindowPos(hdwp, row.label, nullptr, Px(st, 16), y + Px(st, 3), Px(st, 250),
+                              Px(st, kLabelH), SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+      }
+      const int controlH =
+          def.type == SettingType::Enum ? Px(st, kControlH) * 8 : Px(st, kControlH);
+      hdwp = DeferWindowPos(hdwp, row.control, nullptr, Px(st, 280), y, Px(st, 240), controlH,
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    y += Px(st, kRowH);
   }
 
   if (hdwp) {
     EndDeferWindowPos(hdwp);
   }
 
-  st.contentHeight = y + 12;
+  st.contentHeight = y + Px(st, 12);
   UpdateScrollBar(st);
   PlaceContent(st);
   RedrawWindow(st.scroll, nullptr, nullptr,
                RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
-void LayoutRows(HWND hwnd, DialogState& st) {
-  SetWindowPos(hwnd, nullptr, 0, 0, kDlgClientW + 16, kDlgClientH + 40, SWP_NOMOVE | SWP_NOZORDER);
+void LayoutRows(HWND hwnd, DialogState& st, bool resizeOuter) {
+  if (resizeOuter) {
+    RECT outer = {0, 0, Px(st, kDlgClientW), Px(st, kDlgClientH)};
+    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+    AdjustWindowRectExForDpi(&outer, style, FALSE, exStyle, static_cast<UINT>(st.dpi));
+    const int width = outer.right - outer.left;
+    const int height = outer.bottom - outer.top;
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {sizeof(info)};
+    int x = 0;
+    int y = 0;
+    if (GetMonitorInfoW(monitor, &info)) {
+      x = info.rcWork.left + ((info.rcWork.right - info.rcWork.left) - width) / 2;
+      y = info.rcWork.top + ((info.rcWork.bottom - info.rcWork.top) - height) / 2;
+    }
+    SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER);
+  }
 
   RECT client = {};
   GetClientRect(hwnd, &client);
   const int clientW = client.right - client.left;
   const int clientH = client.bottom - client.top;
+  const int scrollTop = Px(st, kScrollTop);
 
   if (st.search) {
-    SetWindowPos(st.search, nullptr, 16, kTopPad, clientW - 32, kSearchH, SWP_NOZORDER);
+    SetWindowPos(st.search, nullptr, Px(st, 16), Px(st, kTopPad), clientW - Px(st, 32),
+                 Px(st, kSearchH), SWP_NOZORDER);
   }
 
-  const int scrollH = (std::max)(80, clientH - kScrollTop - kFooterH);
+  const int scrollH = (std::max)(Px(st, 80), clientH - scrollTop - Px(st, kFooterH));
   if (st.scroll) {
-    SetWindowPos(st.scroll, nullptr, 8, kScrollTop, clientW - 16, scrollH, SWP_NOZORDER);
+    SetWindowPos(st.scroll, nullptr, Px(st, 8), scrollTop, clientW - Px(st, 16), scrollH,
+                 SWP_NOZORDER);
   }
 
-  const int btnY = clientH - 40;
-  const int btnH = 28;
-  const int gap = 8;
-  const int okW = 72;
-  const int applyW = 128;
-  const int cancelW = 118;
-  const int resetW = 170;
+  const int btnY = clientH - Px(st, 40);
+  const int btnH = Px(st, 28);
+  const int gap = Px(st, 8);
+  const int okW = Px(st, 72);
+  const int applyW = Px(st, 128);
+  const int cancelW = Px(st, 118);
+  const int resetW = Px(st, 170);
   int x = clientW - 16;
   if (st.okBtn) {
     x -= okW;
@@ -332,10 +425,12 @@ void LayoutRows(HWND hwnd, DialogState& st) {
     SetWindowPos(st.cancelBtn, nullptr, x, btnY, cancelW, btnH, SWP_NOZORDER);
   }
   if (st.resetBtn) {
-    SetWindowPos(st.resetBtn, nullptr, 16, btnY, resetW, btnH, SWP_NOZORDER);
+    SetWindowPos(st.resetBtn, nullptr, Px(st, 16), btnY, resetW, btnH, SWP_NOZORDER);
   }
 
-  st.scrollY = 0;
+  if (resizeOuter) {
+    st.scrollY = 0;
+  }
   LayoutContentChildren(st);
 }
 
@@ -428,10 +523,10 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     int pos = si.nPos;
     switch (LOWORD(wParam)) {
     case SB_LINEUP:
-      pos -= kRowH;
+      pos -= st ? Px(*st, kRowH) : kRowH;
       break;
     case SB_LINEDOWN:
-      pos += kRowH;
+      pos += st ? Px(*st, kRowH) : kRowH;
       break;
     case SB_PAGEUP:
       pos -= static_cast<int>(si.nPage);
@@ -453,8 +548,12 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (!st) {
       break;
     }
-    const int delta = -GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 48;
-    ScrollTo(*st, st->scrollY + delta);
+    st->wheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+    const int steps = st->wheelRemainder / WHEEL_DELTA;
+    st->wheelRemainder -= steps * WHEEL_DELTA;
+    if (steps != 0) {
+      ScrollTo(*st, st->scrollY - steps * Px(*st, 48));
+    }
     return 0;
   }
   case WM_SIZE:
@@ -654,16 +753,13 @@ void BuildControls(HWND hwnd, DialogState& st) {
           0, L"STATIC", SettingsUiLoc::GroupTitle(st.lang, def.group),
           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT, 0, 0, 0, 0, st.content, nullptr,
           GetModuleHandleW(nullptr), nullptr);
-      HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
-      if (!font) {
-        font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-      }
-      SendMessageW(row.groupHeader, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
       prev = def.group;
     }
-    row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
-                                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOPREFIX, 0, 0,
-                                0, 0, st.content, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (def.type != SettingType::Bool) {
+      row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOPREFIX, 0,
+                                  0, 0, 0, st.content, nullptr, GetModuleHandleW(nullptr), nullptr);
+    }
     const int id = kControlIdBase + static_cast<int>(i);
     if (def.type == SettingType::Bool) {
       bool on = SettingsGetBool(def.key, def.defaultString && def.defaultString[0] == L'1');
@@ -671,7 +767,8 @@ void BuildControls(HWND hwnd, DialogState& st) {
       if (wcscmp(def.key, L"General.LaunchAtStartup") == 0) {
         on = AutostartIsEnabled();
       }
-      row.control = CreateWindowExW(0, L"BUTTON", L"",
+      // The caption is the accessible name. The separate STATIC is omitted for checkboxes.
+      row.control = CreateWindowExW(0, L"BUTTON", row.labelText.c_str(),
                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
                                     0, 0, 0, 0, st.content,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
@@ -690,6 +787,7 @@ void BuildControls(HWND hwnd, DialogState& st) {
         SendMessageW(row.control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
       }
       SelectEnumValue(row.control, def, cur);
+      SetWindowSubclass(row.control, ComboWheelProc, kComboSubclassId, 0);
     } else {
       const std::wstring value = SettingsGetString(def.key, def.defaultString);
       const DWORD editStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS | ES_AUTOHSCROLL |
@@ -723,7 +821,8 @@ void BuildControls(HWND hwnd, DialogState& st) {
                       GetModuleHandleW(nullptr), nullptr);
 
   ThemeAllControls(st);
-  LayoutRows(hwnd, st);
+  ApplyUiFont(st);
+  LayoutRows(hwnd, st, true);
   CaptureBaseline(st);
 }
 
@@ -830,15 +929,52 @@ bool ResetToFactoryDefaults(HWND hwnd, DialogState& st) {
   return true;
 }
 
+bool HotkeysCollide(const DialogState& st) {
+  std::wstring lookupKey;
+  std::wstring hideKey;
+  std::wstring lookupMod;
+  std::wstring hideMod;
+  bool lookupOn = false;
+  bool hideOn = false;
+  for (const RowRef& row : st.rows) {
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
+    if (wcscmp(def.key, L"Shortcuts.LookupKey") == 0) {
+      lookupKey = NormalizeHotkeyKey(def.key, ReadRowValue(row), L"Space");
+    } else if (wcscmp(def.key, L"Shortcuts.HideShowKey") == 0) {
+      hideKey = NormalizeHotkeyKey(def.key, ReadRowValue(row), L"D");
+    } else if (wcscmp(def.key, L"Shortcuts.LookupModifiers") == 0) {
+      lookupMod = ReadRowValue(row);
+    } else if (wcscmp(def.key, L"Shortcuts.HideShowModifiers") == 0) {
+      hideMod = ReadRowValue(row);
+    } else if (wcscmp(def.key, L"Modules.QuickLookup") == 0) {
+      lookupOn = ReadRowValue(row) == L"1";
+    } else if (wcscmp(def.key, L"Shortcuts.HideShowHotkeyEnabled") == 0) {
+      hideOn = ReadRowValue(row) == L"1";
+    }
+  }
+  return lookupOn && hideOn && !lookupKey.empty() && _wcsicmp(lookupKey.c_str(), hideKey.c_str()) == 0 &&
+         _wcsicmp(lookupMod.c_str(), hideMod.c_str()) == 0;
+}
+
 bool SaveFromControls(HWND hwnd, DialogState& st) {
-  (void)hwnd;
+  if (HotkeysCollide(st)) {
+    MessageBoxW(hwnd, SettingsUiLoc::HotkeyCollision(st.lang), SettingsUiLoc::WindowTitle(st.lang),
+                MB_OK | MB_ICONWARNING);
+    return false;
+  }
   for (const RowRef& row : st.rows) {
     const SettingDef& def = kSettingSchema[row.schemaIndex];
     if (def.type == SettingType::Bool) {
       const bool checked = SendMessageW(row.control, BM_GETCHECK, 0, 0) == BST_CHECKED;
       SettingsSetBool(def.key, checked);
       if (wcscmp(def.key, L"General.LaunchAtStartup") == 0) {
-        AutostartSetEnabled(checked);
+        if (!AutostartSetEnabled(checked)) {
+          MessageBoxW(hwnd, SettingsUiLoc::AutostartWriteFailed(st.lang),
+                      SettingsUiLoc::WindowTitle(st.lang), MB_OK | MB_ICONWARNING);
+          const bool live = AutostartIsEnabled();
+          SettingsSetBool(def.key, live);
+          SendMessageW(row.control, BM_SETCHECK, live ? BST_CHECKED : BST_UNCHECKED, 0);
+        }
       }
     } else if (def.type == SettingType::Enum && def.enums && def.enumCount > 0) {
       SettingsSetString(def.key, ComboEnumValue(row).c_str());
@@ -885,6 +1021,10 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
   case WM_INITDIALOG: {
     GetApp().settingsHwnd = hwnd;
     auto* st = new DialogState();
+    st->dpi = static_cast<int>(GetDpiForWindow(hwnd));
+    if (st->dpi < 96) {
+      st->dpi = 96;
+    }
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(st));
     st->lang = SettingsUiLoc::ResolveLang();
     SetWindowTextW(hwnd, SettingsUiLoc::WindowTitle(st->lang));
@@ -918,9 +1058,27 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       return TRUE;
     }
     break;
+  case WM_DPICHANGED: {
+    DialogState* st = State(hwnd);
+    if (!st) {
+      break;
+    }
+    st->dpi = HIWORD(wParam);
+    if (st->dpi < 96) {
+      st->dpi = 96;
+    }
+    ApplyUiFont(*st);
+    const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+    if (suggested) {
+      SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                   suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    LayoutRows(hwnd, *st, false);
+    return TRUE;
+  }
   case WM_SIZE:
     if (DialogState* st = State(hwnd)) {
-      LayoutRows(hwnd, *st);
+      LayoutRows(hwnd, *st, false);
     }
     return TRUE;
   case WM_MOUSEWHEEL:
@@ -1001,7 +1159,16 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       GetApp().settingsHwnd = nullptr;
     }
     if (DialogState* st = State(hwnd)) {
+      for (RowRef& row : st->rows) {
+        if (row.control) {
+          RemoveWindowSubclass(row.control, ComboWheelProc, kComboSubclassId);
+        }
+      }
       FreeThemeBrushes(*st);
+      if (st->uiFont) {
+        DeleteObject(st->uiFont);
+        st->uiFont = nullptr;
+      }
       delete st;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }

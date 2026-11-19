@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S app -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release
+
+      - name: JSON self-test
+        run: .\build\Release\DynamicIslandLux.exe --test-json
+
+      - name: Smoke without workers
+        run: .\build\Release\DynamicIslandLux.exe --smoke-test --no-workers

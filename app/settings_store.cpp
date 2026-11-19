@@ -13,11 +13,19 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <threadpoolapiset.h>
 #include <vector>
+
+struct SettingsSnapshotToken {
+  SettingsSnapshotToken* previous = nullptr;
+  std::map<std::wstring, std::wstring> user;
+  std::map<std::wstring, std::wstring> runtime;
+};
 
 namespace {
 
 std::mutex g_mutex;
+std::mutex g_writeMutex;
 std::map<std::wstring, std::wstring> g_user;
 std::map<std::wstring, std::wstring> g_runtime;
 std::atomic<ULONGLONG> g_runtimeLastFlushMs{0};
@@ -27,6 +35,10 @@ std::atomic<bool> g_ephemeral{false};
 // Sticky: settings.json existed but could not be opened. Refuse disk writes until a
 // successful Reload so Apply/OK cannot overwrite the real file with schema defaults.
 std::atomic<bool> g_userDiskUnreadable{false};
+std::atomic<bool> g_userFileMissingAtInit{false};
+PTP_TIMER g_runtimeFlushTimer = nullptr;
+std::once_flag g_runtimeFlushTimerOnce;
+thread_local SettingsSnapshotToken* g_tlsSnapshot = nullptr;
 
 std::wstring AppDataDir() {
   wchar_t base[MAX_PATH] = {};
@@ -190,6 +202,10 @@ bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::ws
           acc.push_back('\r');
         } else if (e == 't') {
           acc.push_back('\t');
+        } else if (e == 'b') {
+          acc.push_back('\b');
+        } else if (e == 'f') {
+          acc.push_back('\f');
         } else if (e == 'u') {
           unsigned code = 0;
           if (!parseHex4(&code)) {
@@ -221,10 +237,11 @@ bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::ws
   };
 
   skipWs();
-  if (text.empty()) {
+  // Empty or whitespace-only files are an empty object, not corruption.
+  if (i >= text.size()) {
     return true;
   }
-  if (i >= text.size() || text[i] != '{') {
+  if (text[i] != '{') {
     return false;
   }
   ++i;
@@ -247,6 +264,48 @@ bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::ws
     std::string value;
     if (i < text.size() && text[i] == '"') {
       if (!parseString(&value)) {
+        return false;
+      }
+    } else if (i < text.size() && (text[i] == '{' || text[i] == '[')) {
+      // Flat store: skip one nested value instead of rejecting the whole file.
+      const char open = text[i];
+      const char close = open == '{' ? '}' : ']';
+      int depth = 0;
+      bool inString = false;
+      bool escaped = false;
+      bool closed = false;
+      for (; i < text.size(); ++i) {
+        const char c = text[i];
+        if (inString) {
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (c == '\\') {
+            escaped = true;
+            continue;
+          }
+          if (c == '"') {
+            inString = false;
+          }
+          continue;
+        }
+        if (c == '"') {
+          inString = true;
+          continue;
+        }
+        if (c == open) {
+          ++depth;
+        } else if (c == close) {
+          --depth;
+          if (depth == 0) {
+            ++i;
+            closed = true;
+            break;
+          }
+        }
+      }
+      if (!closed) {
         return false;
       }
     } else if (i + 4 <= text.size() && text.compare(i, 4, "true") == 0) {
@@ -392,9 +451,17 @@ JsonLoadResult LoadFileMap(const std::wstring& path, std::map<std::wstring, std:
   std::map<std::wstring, std::wstring> parsed;
   if (!ParseFlatJsonObject(ss.str(), &parsed)) {
     out->clear();
-    const std::wstring bad = path + L".bad";
-    DeleteFileW(bad.c_str());
-    if (MoveFileExW(path.c_str(), bad.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+    SYSTEMTIME stamp = {};
+    GetLocalTime(&stamp);
+    wchar_t suffix[40] = {};
+    swprintf_s(suffix, L".bad.%04u%02u%02u-%02u%02u%02u", stamp.wYear, stamp.wMonth, stamp.wDay,
+               stamp.wHour, stamp.wMinute, stamp.wSecond);
+    std::wstring bad = path + suffix;
+    if (GetFileAttributesW(bad.c_str()) != INVALID_FILE_ATTRIBUTES) {
+      bad += L"-";
+      bad += std::to_wstring(GetTickCount64());
+    }
+    if (MoveFileExW(path.c_str(), bad.c_str(), MOVEFILE_COPY_ALLOWED)) {
       LUX_LOGW(L"Settings JSON corrupt: %s — moved to %s, restoring defaults", path.c_str(),
                bad.c_str());
     } else {
@@ -407,10 +474,6 @@ JsonLoadResult LoadFileMap(const std::wstring& path, std::map<std::wstring, std:
   return JsonLoadResult::Ok;
 }
 
-bool SaveFileMap(const std::wstring& path, const std::map<std::wstring, std::wstring>& map) {
-  return AtomicWriteFile(path, WriteFlatJsonObject(map));
-}
-
 const SettingDef* FindDef(const wchar_t* key) {
   for (const SettingDef& def : kSettingSchema) {
     if (wcscmp(def.key, key) == 0) {
@@ -418,6 +481,59 @@ const SettingDef* FindDef(const wchar_t* key) {
     }
   }
   return nullptr;
+}
+
+void NoteSnapshotUser(const wchar_t* key, const std::wstring& value) {
+  if (g_tlsSnapshot && key) {
+    g_tlsSnapshot->user[key] = value;
+  }
+}
+
+void NoteSnapshotRuntime(const wchar_t* key, const std::wstring& value) {
+  if (g_tlsSnapshot && key) {
+    g_tlsSnapshot->runtime[key] = value;
+  }
+}
+
+void CALLBACK RuntimeFlushTimerCallback(PTP_CALLBACK_INSTANCE, PVOID, PTP_TIMER) {
+  if (g_ephemeral.load() || !g_runtimeDirty.load()) {
+    return;
+  }
+  RuntimeSave();
+}
+
+void EnsureRuntimeFlushTimer() {
+  std::call_once(g_runtimeFlushTimerOnce, [] {
+    g_runtimeFlushTimer = CreateThreadpoolTimer(RuntimeFlushTimerCallback, nullptr, nullptr);
+  });
+}
+
+void CancelRuntimeFlushTimer() {
+  if (!g_runtimeFlushTimer) {
+    return;
+  }
+  SetThreadpoolTimer(g_runtimeFlushTimer, nullptr, 0, 0);
+  WaitForThreadpoolTimerCallbacks(g_runtimeFlushTimer, TRUE);
+}
+
+void ScheduleRuntimeFlush(DWORD delayMs) {
+  EnsureRuntimeFlushTimer();
+  if (!g_runtimeFlushTimer) {
+    return;
+  }
+  if (delayMs == 0) {
+    delayMs = 1;
+  }
+  LARGE_INTEGER due = {};
+  due.QuadPart = -static_cast<LONGLONG>(delayMs) * 10000LL;
+  FILETIME when = {};
+  when.dwLowDateTime = static_cast<DWORD>(due.LowPart);
+  when.dwHighDateTime = static_cast<DWORD>(due.HighPart);
+  SetThreadpoolTimer(g_runtimeFlushTimer, &when, 0, 50);
+}
+
+bool WriteMap(const std::wstring& path, const std::map<std::wstring, std::wstring>& map) {
+  return AtomicWriteFile(path, WriteFlatJsonObject(map));
 }
 
 std::wstring Lookup(const std::map<std::wstring, std::wstring>& primary,
@@ -441,12 +557,31 @@ std::wstring Lookup(const std::map<std::wstring, std::wstring>& primary,
 
 bool SettingsStoreInit(bool ephemeral) {
   g_ephemeral.store(ephemeral);
-  std::lock_guard lock(g_mutex);
+  std::unique_lock lock(g_mutex);
   g_user.clear();
   g_runtime.clear();
   const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
   const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
-  (void)runtimeLoad;
+  g_userFileMissingAtInit.store(userLoad == JsonLoadResult::Missing);
+  bool runtimePurged = false;
+  if (runtimeLoad == JsonLoadResult::Ok) {
+    // Menu writers for these overrides were removed. A leftover value would
+    // permanently hide the settings dialog choice.
+    const wchar_t* kOrphanRuntimeKeys[] = {
+        L"AdaptiveThemeOverride", L"AuraStyleOverride",     L"BackdropMaterialOverride",
+        L"PillOpacityOverride",   L"MediaTabLyricsOverride", L"MediaTabLyricsOverrideBase",
+        L"W11StyleOverride",      L"NotchStyleOverride",     L"GameOverlayPinned",
+        L"CollapsedLyrics",       L"LyricsPinnedFirst",
+    };
+    for (const wchar_t* key : kOrphanRuntimeKeys) {
+      if (g_runtime.erase(key) > 0) {
+        runtimePurged = true;
+      }
+    }
+  }
+  if (runtimePurged) {
+    g_runtimeDirty.store(true);
+  }
 
   bool schemaFilled = false;
   for (const SettingDef& def : kSettingSchema) {
@@ -513,10 +648,27 @@ bool SettingsStoreInit(bool ephemeral) {
     return true;
   }
   g_userDiskUnreadable.store(false);
+  std::map<std::wstring, std::wstring> userToWrite;
+  std::map<std::wstring, std::wstring> runtimeToWrite;
+  bool writeUser = false;
+  bool writeRuntime = false;
   // First launch / corrupt recovery / schema growth / one-shot migration: persist.
   if (!g_ephemeral.load() &&
       (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled)) {
-    if (SaveFileMap(UserPath(), g_user)) {
+    userToWrite = g_user;
+    writeUser = true;
+    g_userDirty.store(false);
+  } else {
+    g_userDirty.store(false);
+  }
+  if (!g_ephemeral.load() && runtimePurged) {
+    runtimeToWrite = g_runtime;
+    writeRuntime = true;
+    g_runtimeDirty.store(false);
+  }
+  lock.unlock();
+  if (writeUser) {
+    if (WriteMap(UserPath(), userToWrite)) {
       g_userDirty.store(false);
     } else {
       g_userDirty.store(true);
@@ -524,31 +676,41 @@ bool SettingsStoreInit(bool ephemeral) {
         LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
       }
     }
-  } else {
-    g_userDirty.store(false);
+  }
+  if (writeRuntime && !WriteMap(RuntimePath(), runtimeToWrite)) {
+    g_runtimeDirty.store(true);
   }
   return true;
 }
 
 void SettingsStoreShutdown() {
-  if (g_ephemeral.load()) {
-    g_userDirty.store(false);
-    g_runtimeDirty.store(false);
-    return;
-  }
-  RuntimeSaveDebounced();
-  if (g_runtimeDirty.load()) {
-    RuntimeSave();
-  }
-  if (g_userDirty.load()) {
-    if (g_userDiskUnreadable.load()) {
-      LUX_LOGW(L"SettingsStoreShutdown: skip user write — settings.json unreadable");
-    } else {
+  CancelRuntimeFlushTimer();
+  if (!g_ephemeral.load()) {
+    if (g_runtimeDirty.load()) {
+      RuntimeSave();
+    }
+    std::map<std::wstring, std::wstring> userCopy;
+    bool writeUser = false;
+    {
       std::lock_guard lock(g_mutex);
-      if (SaveFileMap(UserPath(), g_user)) {
+      if (g_userDirty.load() && !g_userDiskUnreadable.load()) {
+        userCopy = g_user;
+        writeUser = true;
         g_userDirty.store(false);
+      } else if (g_userDiskUnreadable.load() && g_userDirty.load()) {
+        LUX_LOGW(L"SettingsStoreShutdown: skip user write — settings.json unreadable");
       }
     }
+    if (writeUser && !WriteMap(UserPath(), userCopy)) {
+      g_userDirty.store(true);
+    }
+  } else {
+    g_userDirty.store(false);
+    g_runtimeDirty.store(false);
+  }
+  if (g_runtimeFlushTimer) {
+    CloseThreadpoolTimer(g_runtimeFlushTimer);
+    g_runtimeFlushTimer = nullptr;
   }
 }
 
@@ -558,36 +720,40 @@ void SettingsStoreReload() {
   if (g_runtimeDirty.load()) {
     RuntimeSave();
   }
-  std::lock_guard lock(g_mutex);
-  const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
-  if (userLoad == JsonLoadResult::Unreadable) {
-    LUX_LOGW(L"SettingsStoreReload: settings.json unreadable — keep in-memory map");
-    g_userDiskUnreadable.store(true);
-    return;
-  }
-  g_userDiskUnreadable.store(false);
-  bool filled = false;
-  for (const SettingDef& def : kSettingSchema) {
-    if (g_user.find(def.key) == g_user.end() && def.defaultString) {
-      g_user[def.key] = def.defaultString;
-      filled = true;
+  std::map<std::wstring, std::wstring> userCopy;
+  bool writeUser = false;
+  {
+    std::lock_guard lock(g_mutex);
+    const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
+    if (userLoad == JsonLoadResult::Unreadable) {
+      LUX_LOGW(L"SettingsStoreReload: settings.json unreadable — keep in-memory map");
+      g_userDiskUnreadable.store(true);
+      return;
     }
-  }
-  if (!g_ephemeral.load() && (userLoad == JsonLoadResult::Corrupt || filled)) {
-    if (SaveFileMap(UserPath(), g_user)) {
+    g_userDiskUnreadable.store(false);
+    bool filled = false;
+    for (const SettingDef& def : kSettingSchema) {
+      if (g_user.find(def.key) == g_user.end() && def.defaultString) {
+        g_user[def.key] = def.defaultString;
+        filled = true;
+      }
+    }
+    if (!g_ephemeral.load() && (userLoad == JsonLoadResult::Corrupt || filled)) {
+      userCopy = g_user;
+      writeUser = true;
       g_userDirty.store(false);
     } else {
-      g_userDirty.store(true);
+      g_userDirty.store(false);
     }
-  } else {
-    g_userDirty.store(false);
+    if (!g_runtimeDirty.load()) {
+      const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
+      if (runtimeLoad == JsonLoadResult::Unreadable) {
+        LUX_LOGW(L"SettingsStoreReload: runtime.json unreadable — keep in-memory runtime");
+      }
+    }
   }
-  // Skip disk reload if workers dirtied runtime again during RuntimeSave above.
-  if (!g_runtimeDirty.load()) {
-    const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
-    if (runtimeLoad == JsonLoadResult::Unreadable) {
-      LUX_LOGW(L"SettingsStoreReload: runtime.json unreadable — keep in-memory runtime");
-    }
+  if (writeUser && !WriteMap(UserPath(), userCopy)) {
+    g_userDirty.store(true);
   }
 }
 
@@ -600,45 +766,89 @@ bool SettingsStoreSaveUser() {
     LUX_LOGE(L"SettingsStoreSaveUser: refused — settings.json still unreadable");
     return false;
   }
-  std::lock_guard lock(g_mutex);
-  if (!g_userDirty.load()) {
-    return true;
+  std::lock_guard writeLock(g_writeMutex);
+  std::map<std::wstring, std::wstring> userCopy;
+  {
+    std::lock_guard lock(g_mutex);
+    if (!g_userDirty.load()) {
+      return true;
+    }
+    userCopy = g_user;
+    g_userDirty.store(false);
   }
-  if (!SaveFileMap(UserPath(), g_user)) {
+  if (!WriteMap(UserPath(), userCopy)) {
+    g_userDirty.store(true);
     return false;
   }
-  g_userDirty.store(false);
   return true;
 }
 
 bool SettingsStoreResetToDefaults() {
   {
     std::lock_guard lock(g_mutex);
+    std::map<std::wstring, std::wstring> fresh;
     for (const SettingDef& def : kSettingSchema) {
       if (!def.defaultString) {
         continue;
       }
       if (wcscmp(def.key, L"app.version") == 0) {
-        continue;
+        fresh[def.key] = LUX_APP_VERSION_STRING;
+      } else {
+        fresh[def.key] = def.defaultString;
       }
-      g_user[def.key] = def.defaultString;
     }
-    g_user[L"app.version"] = LUX_APP_VERSION_STRING;
     // Keep one-shot migrations marked done so Init does not rewrite defaults again.
-    g_user[L"app.migrate.ulwDefault"] = L"1";
-    g_user[L"app.migrate.wheelStep2"] = L"1";
-    g_user[L"app.migrate.backdropAuto"] = L"1";
+    fresh[L"app.migrate.ulwDefault"] = L"1";
+    fresh[L"app.migrate.wheelStep2"] = L"1";
+    fresh[L"app.migrate.backdropAuto"] = L"1";
+    g_user.swap(fresh);
     g_userDirty.store(true);
-    g_runtime[L"DragOffsetX"] = L"0";
-    g_runtime[L"DragOffsetY"] = L"0";
+    g_runtime.clear();
     g_runtimeDirty.store(true);
+    if (g_tlsSnapshot) {
+      g_tlsSnapshot->user = g_user;
+      g_tlsSnapshot->runtime.clear();
+    }
   }
   const bool userOk = SettingsStoreSaveUser();
   const bool runtimeOk = RuntimeSave();
   return userOk && runtimeOk;
 }
 
+bool SettingsStoreUserFileWasMissing() {
+  return g_userFileMissingAtInit.load();
+}
+
+SettingsSnapshotToken* SettingsStoreAcquireSnapshot() {
+  auto* token = new SettingsSnapshotToken();
+  {
+    std::lock_guard lock(g_mutex);
+    token->user = g_user;
+    token->runtime = g_runtime;
+  }
+  token->previous = g_tlsSnapshot;
+  g_tlsSnapshot = token;
+  return token;
+}
+
+void SettingsStoreReleaseSnapshot(SettingsSnapshotToken* token) {
+  if (!token) {
+    return;
+  }
+  if (g_tlsSnapshot == token) {
+    g_tlsSnapshot = token->previous;
+  }
+  delete token;
+}
+
 int SettingsGetInt(const wchar_t* key, int fallback) {
+  if (g_tlsSnapshot) {
+    const std::wstring v = Lookup(g_tlsSnapshot->user, g_tlsSnapshot->runtime, key, nullptr);
+    if (v.empty()) {
+      return fallback;
+    }
+    return _wtoi(v.c_str());
+  }
   std::lock_guard lock(g_mutex);
   // User settings.json always wins over runtime ephemeral values.
   const std::wstring v = Lookup(g_user, g_runtime, key, nullptr);
@@ -649,6 +859,13 @@ int SettingsGetInt(const wchar_t* key, int fallback) {
 }
 
 bool SettingsGetBool(const wchar_t* key, bool fallback) {
+  if (g_tlsSnapshot) {
+    const std::wstring v = Lookup(g_tlsSnapshot->user, g_tlsSnapshot->runtime, key, nullptr);
+    if (v.empty()) {
+      return fallback;
+    }
+    return _wtoi(v.c_str()) != 0;
+  }
   std::lock_guard lock(g_mutex);
   const std::wstring v = Lookup(g_user, g_runtime, key, nullptr);
   if (v.empty()) {
@@ -658,6 +875,9 @@ bool SettingsGetBool(const wchar_t* key, bool fallback) {
 }
 
 std::wstring SettingsGetString(const wchar_t* key, const wchar_t* fallback) {
+  if (g_tlsSnapshot) {
+    return Lookup(g_tlsSnapshot->user, g_tlsSnapshot->runtime, key, fallback);
+  }
   std::lock_guard lock(g_mutex);
   return Lookup(g_user, g_runtime, key, fallback);
 }
@@ -670,6 +890,7 @@ void SettingsSetInt(const wchar_t* key, int value) {
     return;
   }
   g_user[key] = next;
+  NoteSnapshotUser(key, next);
   g_userDirty.store(true);
 }
 
@@ -681,6 +902,7 @@ void SettingsSetBool(const wchar_t* key, bool value) {
     return;
   }
   g_user[key] = next;
+  NoteSnapshotUser(key, next);
   g_userDirty.store(true);
 }
 
@@ -692,10 +914,18 @@ void SettingsSetString(const wchar_t* key, const wchar_t* value) {
     return;
   }
   g_user[key] = next;
+  NoteSnapshotUser(key, next);
   g_userDirty.store(true);
 }
 
 int RuntimeGetInt(const wchar_t* key, int fallback) {
+  if (g_tlsSnapshot) {
+    auto it = g_tlsSnapshot->runtime.find(key ? key : L"");
+    if (it == g_tlsSnapshot->runtime.end()) {
+      return fallback;
+    }
+    return _wtoi(it->second.c_str());
+  }
   std::lock_guard lock(g_mutex);
   auto it = g_runtime.find(key);
   if (it == g_runtime.end()) {
@@ -705,8 +935,10 @@ int RuntimeGetInt(const wchar_t* key, int fallback) {
 }
 
 void RuntimeSetInt(const wchar_t* key, int value) {
+  const std::wstring next = std::to_wstring(value);
   std::lock_guard lock(g_mutex);
-  g_runtime[key] = std::to_wstring(value);
+  g_runtime[key] = next;
+  NoteSnapshotRuntime(key, next);
   g_runtimeDirty.store(true);
 }
 
@@ -715,13 +947,19 @@ bool RuntimeSave() {
     g_runtimeDirty.store(false);
     return true;
   }
-  std::lock_guard lock(g_mutex);
-  const bool ok = SaveFileMap(RuntimePath(), g_runtime);
-  if (ok) {
+  std::lock_guard writeLock(g_writeMutex);
+  std::map<std::wstring, std::wstring> copy;
+  {
+    std::lock_guard lock(g_mutex);
+    copy = g_runtime;
     g_runtimeDirty.store(false);
-    g_runtimeLastFlushMs.store(GetTickCount64());
   }
-  return ok;
+  if (!WriteMap(RuntimePath(), copy)) {
+    g_runtimeDirty.store(true);
+    return false;
+  }
+  g_runtimeLastFlushMs.store(GetTickCount64());
+  return true;
 }
 
 void RuntimeSaveDebounced() {
@@ -734,9 +972,10 @@ void RuntimeSaveDebounced() {
   }
   const ULONGLONG now = GetTickCount64();
   const ULONGLONG last = g_runtimeLastFlushMs.load();
-  // Leading-edge 1s coalesce. Callers that write multiple keys atomically must use
-  // RuntimeSetInt + RuntimeSave() (see PersistIslandDragOffsets). Shutdown flushes dirty.
-  if (now - last < 1000) {
+  // Leading edge when the last flush is older than 1s. Changes inside that
+  // window stay dirty and a thread-pool timer writes them on the trailing edge.
+  if (last != 0 && now - last < 1000) {
+    ScheduleRuntimeFlush(static_cast<DWORD>(1000 - (now - last)));
     return;
   }
   RuntimeSave();
@@ -786,6 +1025,23 @@ bool SettingsStoreSelfTestJson() {
   }
   if (ParseFlatJsonObject("{\"k\":\"\\uD800\"}", &emojiRound)) {
     LUX_LOGE(L"JSON self-test: lone high surrogate should fail");
+    return false;
+  }
+  std::map<std::wstring, std::wstring> escapeRound;
+  if (!ParseFlatJsonObject("{\"k\":\"a\\b\\f\"}", &escapeRound) || escapeRound[L"k"] != L"a\b\f") {
+    LUX_LOGE(L"JSON self-test: \\\\b \\\\f parse failed");
+    return false;
+  }
+  std::map<std::wstring, std::wstring> blankRound;
+  if (!ParseFlatJsonObject(" \r\n\t ", &blankRound) || !blankRound.empty()) {
+    LUX_LOGE(L"JSON self-test: whitespace-only file should be empty");
+    return false;
+  }
+  std::map<std::wstring, std::wstring> nestedRound;
+  if (!ParseFlatJsonObject("{\"nested\":{\"a\":1},\"Themes.BackdropMaterial\":\"acrylic\"}",
+                           &nestedRound) ||
+      nestedRound[L"Themes.BackdropMaterial"] != L"acrylic") {
+    LUX_LOGE(L"JSON self-test: nested value should be skipped");
     return false;
   }
   LUX_LOGI(L"JSON self-test PASS");

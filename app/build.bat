@@ -41,11 +41,24 @@ if not defined HAS_WINDOWS_SDK (
 )
 
 set "HAS_MSVC_CRT="
-for /d %%E in ("%ProgramFiles(x86)%\Microsoft Visual Studio\2022\*") do (
-  for /d %%I in ("%%~fE\VC\Tools\MSVC\*") do (
-    rem crtdbg.h lives in Universal CRT (Windows Kits\...\ucrt); MSVC ships vcruntime.h.
-    if exist "%%~fI\include\vcruntime.h" set "HAS_MSVC_CRT=1"
-    if exist "%%~fI\include\crtdbg.h" set "HAS_MSVC_CRT=1"
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" set "VSWHERE=%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+  for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+    for /d %%T in ("%%I\VC\Tools\MSVC\*") do (
+      if exist "%%~fT\include\vcruntime.h" set "HAS_MSVC_CRT=1"
+    )
+  )
+)
+if not defined HAS_MSVC_CRT (
+  for %%R in ("%ProgramFiles%\Microsoft Visual Studio\2022" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022") do (
+    for /d %%E in ("%%~R\*") do (
+      for /d %%I in ("%%~fE\VC\Tools\MSVC\*") do (
+        rem crtdbg.h lives in Universal CRT (Windows Kits\...\ucrt); MSVC ships vcruntime.h.
+        if exist "%%~fI\include\vcruntime.h" set "HAS_MSVC_CRT=1"
+        if exist "%%~fI\include\crtdbg.h" set "HAS_MSVC_CRT=1"
+      )
+    )
   )
 )
 if not defined HAS_MSVC_CRT (
@@ -55,8 +68,19 @@ if not defined HAS_MSVC_CRT (
   exit /b 1
 )
 
-rem Avoid LNK1104 when a previous Lux instance still holds the exe.
-taskkill /F /IM DynamicIslandLux.exe >nul 2>&1
+rem Ask a running copy to quit (WM_CLOSE on the host window) before taskkill.
+powershell -NoProfile -Command "Add-Type -MemberDefinition '[DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string w); [DllImport(\"user32.dll\")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);' -Name LuxClose -Namespace DynIsland -ErrorAction SilentlyContinue; $h = [DynIsland.LuxClose]::FindWindow('DynamicIslandLux.Host', $null); if ($h -ne [IntPtr]::Zero) { [DynIsland.LuxClose]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }"
+ping -n 3 127.0.0.1 >nul
+tasklist /FI "IMAGENAME eq DynamicIslandLux.exe" | find /I "DynamicIslandLux.exe" >nul
+if not errorlevel 1 (
+  taskkill /IM DynamicIslandLux.exe >nul 2>&1
+  ping -n 2 127.0.0.1 >nul
+)
+tasklist /FI "IMAGENAME eq DynamicIslandLux.exe" | find /I "DynamicIslandLux.exe" >nul
+if not errorlevel 1 (
+  echo WARNING: DynamicIslandLux.exe did not exit; forcing taskkill /F
+  taskkill /F /IM DynamicIslandLux.exe >nul 2>&1
+)
 rem ping instead of timeout: timeout prints "Input redirection is not supported" under redirected stdin.
 ping -n 2 127.0.0.1 >nul
 

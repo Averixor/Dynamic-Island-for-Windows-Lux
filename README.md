@@ -4,7 +4,7 @@ Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island.
 **Standalone app** — Windhawk is not required.
 
 **Current release:** [v1.0.6](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/tag/v1.0.6)  
-**Author:** [Averixor](https://github.com/Averixor) · **License:** [MIT](LICENSE)
+**Author:** [Averixor](https://github.com/Averixor) · **Upstream:** [devcode90](https://github.com/devcode90/Dynamic-Island-for-Windows) · **License:** [MIT](LICENSE)
 
 ---
 
@@ -64,6 +64,8 @@ Created on first launch:
 | `%AppData%\DynamicIslandLux\modstorage\` | Mod-compatible storage |
 | `%LocalAppData%\DynamicIslandLux\logs\lux.log` | Rotating log |
 
+Weather, lyrics, and Quick Lookup send the city or the query you type to third-party services (wttr.in, lrclib.net, dictionaryapi.dev, Wikipedia, Wiktionary). A blank weather city lets wttr.in choose a place from your IP address. Uninstall leaves these files in place; delete the two folders above if you want them gone. Track and city lines are written to the log only at Debug level.
+
 ---
 
 ## Requirements
@@ -106,7 +108,7 @@ Changelog: **[RELEASE_NOTES.md](RELEASE_NOTES.md)**.
 
 ## Architecture note
 
-The root file `Dynamic Island for Windows Lux.wh.cpp` is the original Windhawk single-file mod **and** the translation unit linked into the standalone exe. Keep it — it is not leftover junk.
+The root file `Dynamic Island for Windows Lux.wh.cpp` is the Windhawk single-file mod **and** the translation unit linked into the standalone exe. Keep it — it is not leftover junk. Lux is a derivative of [Dynamic Island for Windows](https://github.com/devcode90/Dynamic-Island-for-Windows) by Himanshu (devcode90), MIT. See [NOTICE](NOTICE).
 
 | Windhawk mod | Standalone |
 | --- | --- |

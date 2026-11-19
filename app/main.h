@@ -56,6 +56,8 @@ struct AppOptions {
   bool startMinimized = false; // hide island, keep tray (--minimized)
   bool ephemeral = false;
   bool openSettings = false;
+  bool quit = false;
+  bool enableAutostart = false;
   DWORD smokeTimeoutMs = 10000;  // used when smokeTest; override via --smoke-timeout-ms=
   // Empty = schema default. Smoke-with-workers may set acrylic unless overridden.
   wchar_t smokeBackdrop[32] = {};
@@ -87,3 +89,4 @@ bool NotifyRunningInstance(CopyDataCommand cmd);
 void RegisterTrayIcon(AppState& app);
 void UnregisterTrayIcon(AppState& app);
 void ShowTrayMenu(AppState& app, POINT screenPt);
+void NotifyTrayBalloon(const wchar_t* title, const wchar_t* text);

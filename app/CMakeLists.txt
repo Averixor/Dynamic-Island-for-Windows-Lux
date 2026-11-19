@@ -57,7 +57,10 @@ if(MSVC)
     /permissive-
     /W4
     /EHsc
+    /guard:cf
+    /sdl
     $<$<CONFIG:Release>:/O2>
+    $<$<CONFIG:Release>:/Zi>
   )
   # Legacy overlay TUs: keep /W3 until warning cleanup is complete.
   set_source_files_properties(
@@ -66,7 +69,13 @@ if(MSVC)
     PROPERTIES COMPILE_OPTIONS "/W3"
   )
   set_property(TARGET DynamicIslandLux PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-  target_link_options(DynamicIslandLux PRIVATE /MANIFEST:NO)
+  target_link_options(DynamicIslandLux PRIVATE
+    /MANIFEST:NO
+    /GUARD:CF
+    $<$<CONFIG:Release>:/DEBUG>
+    $<$<CONFIG:Release>:/OPT:REF>
+    $<$<CONFIG:Release>:/OPT:ICF>
+  )
 endif()
 
 target_link_libraries(DynamicIslandLux PRIVATE

@@ -50,14 +50,24 @@ if errorlevel 1 (
 )
 
 echo.
-echo Optional: build Setup.exe if Inno Setup is installed...
+echo Building Setup.exe...
 call scripts\make-installer.bat
 set "INST_RC=%ERRORLEVEL%"
 if not "%INST_RC%"=="0" (
+  if defined LUX_REQUIRE_INSTALLER (
+    echo FAILED: Setup.exe is required for release ^(installer exit %INST_RC%^)
+    exit /b %INST_RC%
+  )
   if exist "%OUT%\DynamicIslandLux-Setup-%VER%.exe" (
     echo NOTE: Setup.exe exists but post-steps failed ^(exit %INST_RC%^) - check SHA256SUMS
-  ) else (
-    echo NOTE: installer skipped ^(ISCC missing or compile failed^) - portable assets still OK
+    exit /b %INST_RC%
+  )
+  echo NOTE: installer skipped ^(ISCC missing or compile failed^) - portable assets still OK
+)
+if defined LUX_REQUIRE_INSTALLER (
+  if not exist "%OUT%\DynamicIslandLux-Setup-%VER%.exe" (
+    echo FAILED: Setup.exe missing from %OUT%
+    exit /b 1
   )
 )
 

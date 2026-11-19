@@ -17,7 +17,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppCopyright=Copyright (c) Averixor and contributors
+AppCopyright=Copyright (c) 2026 devcode90. Copyright (c) Averixor and contributors
 AppPublisherURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux
 AppSupportURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/issues
 AppUpdatesURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases
@@ -43,7 +43,7 @@ RestartApplications=no
 AllowNoIcons=yes
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoCopyright=Copyright (c) Averixor and contributors
+VersionInfoCopyright=Copyright (c) 2026 devcode90. Copyright (c) Averixor and contributors
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
@@ -60,6 +60,7 @@ Name: "autostart"; Description: "Start with Windows (HKCU Run)"; GroupDescriptio
 [Files]
 Source: "..\build\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\INSTALL.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\RELEASE_NOTES.md"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -71,7 +72,10 @@ Name: "{autodesktop}\{#MyAppNameShort}"; Filename: "{app}\{#MyAppExeName}"; Work
 
 [Registry]
 ; Same value name as app\autostart.cpp (DynamicIslandLux).
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIslandLux"; ValueData: """{app}\{#MyAppExeName}"" --minimized"; Flags: uninsdeletevalue; Tasks: autostart
+; --enable-autostart is consumed on first launch and rewritten to "--minimized" only.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIslandLux"; ValueData: """{app}\{#MyAppExeName}"" --minimized --enable-autostart"; Flags: uninsdeletevalue; Tasks: autostart
+; ValueType none: do not create StartupApproved, but delete it on uninstall if the app wrote it.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: none; ValueName: "DynamicIslandLux"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppNameShort}}"; Flags: nowait postinstall skipifsilent
@@ -79,3 +83,14 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppNameSh
 [UninstallDelete]
 ; Leave user settings/logs; only remove empty install dir leftovers.
 Type: dirifempty; Name: "{app}"
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    { App-created Run / StartupApproved values are not tracked by [Registry] Tasks. }
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DynamicIslandLux');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'DynamicIslandLux');
+  end;
+end;

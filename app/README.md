@@ -2,7 +2,7 @@
 
 Окремий Win32-застосунок для Windows 10/11. **Windhawk не потрібен.**
 
-Ported from the Windhawk mod by **[Averixor](https://github.com/Averixor)** — license **MIT** (see `/LICENSE`).  
+Derivative of [Dynamic Island for Windows](https://github.com/devcode90/Dynamic-Island-for-Windows) by **Himanshu (devcode90)**, maintained by **[Averixor](https://github.com/Averixor)** — license **MIT** (see `/LICENSE` and `/NOTICE`).  
 Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive** of the original single-file mod and the TU linked into this app — do not delete it as “junk”.
 
 ## Збірка
@@ -42,8 +42,10 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 | `--test-json` | SettingsStore JSON round-trip, then exit |
 | `--settings` | Open settings (IPC to existing instance, or become primary) |
 | `--minimized` / `--startup` | Tray only; island hidden (HKCU Run uses `--minimized`) |
-| `--no-tray` | Skip tray icon |
+| `--no-tray` | Skip tray icon. Combined with `--minimized`, the island stays visible so the process can still be closed |
 | `--no-autostart` | Do not refresh HKCU Run on this launch |
+| `--enable-autostart` | Persist `General.LaunchAtStartup` and rewrite the Run value (installer) |
+| `--quit` | Ask the running instance to exit |
 | `--ephemeral` | No settings/log file I/O |
 | `--backdrop=none\|blur\|acrylic` | Override backdrop for this run (`Appearance=auto` + `Themes=…`) |
 | `--smoke-timeout-ms=N` | Smoke wait (default 10000) |
@@ -67,8 +69,8 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 ## Known limitations
 
 - **`SetWindowCompositionAttribute` (WCA)** — недокументований API. На майбутніх збірках Win11 accent може зникнути без попередження. Fallback = backdrop `none`, не crash (Warn у лозі).
-- **LL-хуки** (`WH_KEYBOARD_LL` / `WH_MOUSE_LL`) можуть блокуватись антивірусом/EDR — Caps/Num і mouse-wake тоді мовчать; решта острова працює. Quick Lookup hotkey = `RegisterHotKey` (не LL).
-- **Autostart** (`HKCU\…\Run` + `StartupApproved\Run`) — Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) може зробити toggle no-op. Disable у Task Manager зберігається: наступний старт знімає `General.LaunchAtStartup` у JSON і не форсить Run знову.
+- **LL-хук** `WH_MOUSE_LL` (mouse-wake) може блокуватись антивірусом/EDR. Caps/Num читаються через `GetAsyncKeyState` без `WH_KEYBOARD_LL`. Quick Lookup / Hide-Show = `RegisterHotKey` (`MOD_NOREPEAT`).
+- **Autostart** (`HKCU\…\Run` + `StartupApproved\Run`) — Group Policy може зробити toggle no-op. Disable у Task Manager зберігається. Інсталятор пише `--enable-autostart`; перший запуск без `settings.json` приймає вже існуючий Run. `StalePath` переписує шлях на поточний exe. Uninstall видаляє обидва значення.
 - **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
 - **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
