@@ -1,0 +1,4 @@
+# cmd.exe requires CRLF; LF-only .bat eats the first chars of each line (setlocal → tlocal).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.iss text eol=crlf
