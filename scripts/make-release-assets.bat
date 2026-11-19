@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0\.."
 
 REM Must run AFTER a successful app\build.bat so SHA256 matches the smoked exe.
@@ -22,10 +22,16 @@ copy /Y INSTALL.txt "%OUT%\INSTALL.txt" >nul
 copy /Y RELEASE_NOTES.md "%OUT%\RELEASE_NOTES.md" >nul
 
 REM sha256sum -c compatible: "<lowercase hex>  DynamicIslandLux.exe"
-powershell -NoProfile -Command ^
-  "$h=(Get-FileHash -Algorithm SHA256 '%OUT%\DynamicIslandLux.exe').Hash.ToLowerInvariant();" ^
-  "Set-Content -Encoding ascii '%OUT%\SHA256SUMS.txt' -Value ($h + '  DynamicIslandLux.exe')"
-if errorlevel 1 exit /b 1
+call "%~dp0_sha256.cmd" "%OUT%\DynamicIslandLux.exe"
+if errorlevel 1 (
+  echo FAILED: SHA256 of portable exe
+  exit /b 1
+)
+> "%OUT%\SHA256SUMS.txt" echo %SHA256_HEX%  DynamicIslandLux.exe
+if not exist "%OUT%\SHA256SUMS.txt" (
+  echo FAILED: could not write SHA256SUMS.txt
+  exit /b 1
+)
 
 echo.
 echo Assets in %OUT%:
@@ -37,7 +43,7 @@ echo.
 
 echo Verify VERSIONINFO (must be %VER%, not @PROJECT_VERSION@):
 REM One line, no bare "|" — cmd treats | as a pipe and can pop "Open with" for leftovers.
-powershell -NoProfile -Command "$ver='%VER%'; $v=(Get-Item -LiteralPath '%OUT%\DynamicIslandLux.exe').VersionInfo; if ($v.FileVersion -like '*@*' -or $v.FileVersion -like '*PROJECT_VERSION*' -or $v.FileVersion -like '*${*') { Write-Error ('Bad FileVersion: ' + $v.FileVersion); exit 1 }; if (-not ($v.FileVersion -like ($ver + '*'))) { Write-Error ('Expected ' + $ver + '*, got ' + $v.FileVersion); exit 1 }; Write-Output ('FileVersion=' + $v.FileVersion); Write-Output ('ProductVersion=' + $v.ProductVersion); Write-Output ('CompanyName=' + $v.CompanyName); Write-Output ('ProductName=' + $v.ProductName)"
+powershell -NoProfile -Command "$ver='%VER%'; $v=(Get-Item -LiteralPath '%OUT%\DynamicIslandLux.exe').VersionInfo; if ($v.FileVersion -like '*@*' -or $v.FileVersion -like '*PROJECT_VERSION*' -or $v.FileVersion -like '*${*') { Write-Error ('Bad FileVersion: ' + $v.FileVersion); exit 1 }; if (-not ($v.FileVersion -like ($ver + '*'))) { Write-Error ('Expected ' + $ver + '*, got ' + $v.FileVersion); exit 1 }; Write-Output ('FileVersion=' + $v.FileVersion); Write-Output ('ProductVersion=' + $v.ProductVersion); Write-Output ('CompanyName=' + $v.CompanyName); Write-Output ('ProductName=' + $v.ProductName); exit 0"
 if errorlevel 1 (
   echo VERSIONINFO check FAILED - CMake did not substitute version.rc.in
   exit /b 1
@@ -46,8 +52,13 @@ if errorlevel 1 (
 echo.
 echo Optional: build Setup.exe if Inno Setup is installed...
 call scripts\make-installer.bat
-if errorlevel 1 (
-  echo NOTE: installer skipped ^(ISCC missing or compile failed^) - portable assets still OK
+set "INST_RC=%ERRORLEVEL%"
+if not "%INST_RC%"=="0" (
+  if exist "%OUT%\DynamicIslandLux-Setup-%VER%.exe" (
+    echo NOTE: Setup.exe exists but post-steps failed ^(exit %INST_RC%^) - check SHA256SUMS
+  ) else (
+    echo NOTE: installer skipped ^(ISCC missing or compile failed^) - portable assets still OK
+  )
 )
 
 echo.

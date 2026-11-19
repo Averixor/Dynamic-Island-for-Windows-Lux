@@ -5,6 +5,7 @@
 
 #include <shlobj.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cwchar>
 #include <fstream>
@@ -22,6 +23,10 @@ std::map<std::wstring, std::wstring> g_runtime;
 std::atomic<ULONGLONG> g_runtimeLastFlushMs{0};
 std::atomic<bool> g_runtimeDirty{false};
 std::atomic<bool> g_userDirty{false};
+std::atomic<bool> g_ephemeral{false};
+// Sticky: settings.json existed but could not be opened. Refuse disk writes until a
+// successful Reload so Apply/OK cannot overwrite the real file with schema defaults.
+std::atomic<bool> g_userDiskUnreadable{false};
 
 std::wstring AppDataDir() {
   wchar_t base[MAX_PATH] = {};
@@ -105,11 +110,63 @@ std::string EscapeJson(const std::string& s) {
 bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::wstring>* out) {
   out->clear();
   size_t i = 0;
+  // Notepad and some editors write UTF-8 BOM; treat it as whitespace so the
+  // file is not marked Corrupt and replaced with schema defaults.
+  if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+      static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF) {
+    i = 3;
+  }
   auto skipWs = [&] {
     while (i < text.size() &&
            (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n')) {
       ++i;
     }
+  };
+  auto appendUtf8 = [](std::string* acc, unsigned code) -> bool {
+    // Reject lone UTF-16 surrogates (would emit invalid UTF-8).
+    if (code >= 0xD800 && code <= 0xDFFF) {
+      return false;
+    }
+    if (code > 0x10FFFF) {
+      return false;
+    }
+    if (code < 0x80) {
+      acc->push_back(static_cast<char>(code));
+    } else if (code < 0x800) {
+      acc->push_back(static_cast<char>(0xC0 | (code >> 6)));
+      acc->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    } else if (code < 0x10000) {
+      acc->push_back(static_cast<char>(0xE0 | (code >> 12)));
+      acc->push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+      acc->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    } else {
+      acc->push_back(static_cast<char>(0xF0 | (code >> 18)));
+      acc->push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3F)));
+      acc->push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+      acc->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    }
+    return true;
+  };
+  auto parseHex4 = [&](unsigned* code) -> bool {
+    if (i + 4 > text.size()) {
+      return false;
+    }
+    unsigned value = 0;
+    for (int n = 0; n < 4; ++n) {
+      const char h = text[i++];
+      value <<= 4;
+      if (h >= '0' && h <= '9') {
+        value |= static_cast<unsigned>(h - '0');
+      } else if (h >= 'a' && h <= 'f') {
+        value |= static_cast<unsigned>(h - 'a' + 10);
+      } else if (h >= 'A' && h <= 'F') {
+        value |= static_cast<unsigned>(h - 'A' + 10);
+      } else {
+        return false;
+      }
+    }
+    *code = value;
+    return true;
   };
   auto parseString = [&](std::string* value) -> bool {
     if (i >= text.size() || text[i] != '"') {
@@ -133,24 +190,28 @@ bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::ws
           acc.push_back('\r');
         } else if (e == 't') {
           acc.push_back('\t');
-        } else if (e == 'u' && i + 4 <= text.size()) {
+        } else if (e == 'u') {
           unsigned code = 0;
-          for (int n = 0; n < 4; ++n) {
-            const char h = text[i++];
-            code <<= 4;
-            if (h >= '0' && h <= '9') {
-              code |= static_cast<unsigned>(h - '0');
-            } else if (h >= 'a' && h <= 'f') {
-              code |= static_cast<unsigned>(h - 'a' + 10);
-            } else if (h >= 'A' && h <= 'F') {
-              code |= static_cast<unsigned>(h - 'A' + 10);
-            }
+          if (!parseHex4(&code)) {
+            return false;
           }
-          if (code < 0x80) {
-            acc.push_back(static_cast<char>(code));
+          // UTF-16 surrogate pair → one Unicode scalar (emoji etc.).
+          if (code >= 0xD800 && code <= 0xDBFF) {
+            if (i + 6 > text.size() || text[i] != '\\' || text[i + 1] != 'u') {
+              return false;
+            }
+            i += 2;
+            unsigned low = 0;
+            if (!parseHex4(&low) || low < 0xDC00 || low > 0xDFFF) {
+              return false;
+            }
+            code = 0x10000 + (((code - 0xD800) << 10) | (low - 0xDC00));
+          }
+          if (!appendUtf8(&acc, code)) {
+            return false;
           }
         } else {
-          acc.push_back(e);
+          return false;
         }
       } else {
         acc.push_back(c);
@@ -209,6 +270,11 @@ bool ParseFlatJsonObject(const std::string& text, std::map<std::wstring, std::ws
     skipWs();
     if (i < text.size() && text[i] == ',') {
       ++i;
+      skipWs();
+      // Tolerate trailing commas from hand-edits: {"a":1,}
+      if (i < text.size() && text[i] == '}') {
+        return true;
+      }
       continue;
     }
     if (i < text.size() && text[i] == '}') {
@@ -229,23 +295,31 @@ std::string WriteFlatJsonObject(const std::map<std::wstring, std::wstring>& map)
     }
     first = false;
     const std::string key = EscapeJson(Narrow(kv.first));
-    bool asBool = false;
-    bool asInt = false;
+    const SettingDef* matched = nullptr;
     for (const SettingDef& def : kSettingSchema) {
       if (kv.first == def.key) {
-        if (def.type == SettingType::Bool) {
-          asBool = true;
-        } else if (def.type == SettingType::Int) {
-          asInt = true;
-        }
+        matched = &def;
         break;
       }
     }
     oss << "  \"" << key << "\": ";
-    if (asBool) {
+    if (matched && matched->type == SettingType::Bool) {
       oss << ((kv.second == L"1" || kv.second == L"true") ? "true" : "false");
-    } else if (asInt) {
-      oss << Narrow(kv.second.empty() ? L"0" : kv.second);
+    } else if (matched && matched->type == SettingType::Int) {
+      // Never emit raw map text — "1,2" would break JSON and trigger corrupt wipe.
+      wchar_t* end = nullptr;
+      long value = wcstol(kv.second.c_str(), &end, 10);
+      while (end && iswspace(*end)) {
+        ++end;
+      }
+      if (kv.second.empty() || end == kv.second.c_str() || (end && *end != L'\0')) {
+        value = wcstol(matched->defaultString ? matched->defaultString : L"0", nullptr, 10);
+      }
+      if (matched->minValue < matched->maxValue) {
+        value = (std::max)(static_cast<long>(matched->minValue), value);
+        value = (std::min)(static_cast<long>(matched->maxValue), value);
+      }
+      oss << value;
     } else {
       oss << '"' << EscapeJson(Narrow(kv.second)) << '"';
     }
@@ -297,23 +371,26 @@ enum class JsonLoadResult {
   Missing,
   Ok,
   Corrupt,
+  Unreadable,  // file exists but could not be opened (AV lock, sharing) — never overwrite disk
 };
 
 JsonLoadResult LoadFileMap(const std::wstring& path, std::map<std::wstring, std::wstring>* out) {
-  out->clear();
   const DWORD attrs = GetFileAttributesW(path.c_str());
   if (attrs == INVALID_FILE_ATTRIBUTES) {
+    out->clear();
     return JsonLoadResult::Missing;
   }
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    LUX_LOGW(L"Settings JSON open failed: %s — using defaults", path.c_str());
-    return JsonLoadResult::Corrupt;
+    // Keep caller's map intact — do not clear and do not rewrite disk.
+    LUX_LOGW(L"Settings JSON open failed: %s — leave memory and disk untouched", path.c_str());
+    return JsonLoadResult::Unreadable;
   }
   std::ostringstream ss;
   ss << in.rdbuf();
   in.close();
-  if (!ParseFlatJsonObject(ss.str(), out)) {
+  std::map<std::wstring, std::wstring> parsed;
+  if (!ParseFlatJsonObject(ss.str(), &parsed)) {
     out->clear();
     const std::wstring bad = path + L".bad";
     DeleteFileW(bad.c_str());
@@ -326,6 +403,7 @@ JsonLoadResult LoadFileMap(const std::wstring& path, std::map<std::wstring, std:
     }
     return JsonLoadResult::Corrupt;
   }
+  *out = std::move(parsed);
   return JsonLoadResult::Ok;
 }
 
@@ -361,7 +439,8 @@ std::wstring Lookup(const std::map<std::wstring, std::wstring>& primary,
 
 }  // namespace
 
-bool SettingsStoreInit() {
+bool SettingsStoreInit(bool ephemeral) {
+  g_ephemeral.store(ephemeral);
   std::lock_guard lock(g_mutex);
   g_user.clear();
   g_runtime.clear();
@@ -400,14 +479,43 @@ bool SettingsStoreInit() {
       schemaFilled = true;
     }
   }
+  // One-shot: Appearance used to default to acrylic and Themes to none, so the
+  // Themes row never applied. New defaults are Appearance=auto + Themes=acrylic.
+  // Rewrite only the exact legacy pair so intentional acrylic/mica/solid stays.
+  {
+    auto mig = g_user.find(L"app.migrate.backdropAuto");
+    if (mig == g_user.end() || mig->second != L"1") {
+      auto appearance = g_user.find(L"Appearance.BackdropMaterial");
+      auto themes = g_user.find(L"Themes.BackdropMaterial");
+      if (appearance != g_user.end() && themes != g_user.end() &&
+          _wcsicmp(appearance->second.c_str(), L"acrylic") == 0 &&
+          _wcsicmp(themes->second.c_str(), L"none") == 0) {
+        appearance->second = L"auto";
+        themes->second = L"acrylic";
+        schemaFilled = true;
+      }
+      g_user[L"app.migrate.backdropAuto"] = L"1";
+      schemaFilled = true;
+    }
+  }
   const std::wstring ver = LUX_APP_VERSION_STRING;
   const bool versionBump = g_user[L"app.version"] != ver;
   if (versionBump) {
     // Bump version stamp only — do not reset any user preference keys.
     g_user[L"app.version"] = ver;
   }
+  // Unreadable on cold start: map holds schema defaults only. Never write them over
+  // a locked settings.json — sticky flag blocks SaveUser until Reload succeeds.
+  if (userLoad == JsonLoadResult::Unreadable) {
+    LUX_LOGE(L"settings.json unreadable — disk left unchanged (in-memory defaults only)");
+    g_userDiskUnreadable.store(true);
+    g_userDirty.store(false);
+    return true;
+  }
+  g_userDiskUnreadable.store(false);
   // First launch / corrupt recovery / schema growth / one-shot migration: persist.
-  if (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled) {
+  if (!g_ephemeral.load() &&
+      (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled)) {
     if (SaveFileMap(UserPath(), g_user)) {
       g_userDirty.store(false);
     } else {
@@ -423,21 +531,41 @@ bool SettingsStoreInit() {
 }
 
 void SettingsStoreShutdown() {
+  if (g_ephemeral.load()) {
+    g_userDirty.store(false);
+    g_runtimeDirty.store(false);
+    return;
+  }
   RuntimeSaveDebounced();
   if (g_runtimeDirty.load()) {
     RuntimeSave();
   }
   if (g_userDirty.load()) {
-    std::lock_guard lock(g_mutex);
-    if (SaveFileMap(UserPath(), g_user)) {
-      g_userDirty.store(false);
+    if (g_userDiskUnreadable.load()) {
+      LUX_LOGW(L"SettingsStoreShutdown: skip user write — settings.json unreadable");
+    } else {
+      std::lock_guard lock(g_mutex);
+      if (SaveFileMap(UserPath(), g_user)) {
+        g_userDirty.store(false);
+      }
     }
   }
 }
 
 void SettingsStoreReload() {
+  // OK/Apply reloads the store after writing settings.json. Flush dirty runtime
+  // first so LoadFileMap cannot wipe drag offsets / pins still in the debounce window.
+  if (g_runtimeDirty.load()) {
+    RuntimeSave();
+  }
   std::lock_guard lock(g_mutex);
   const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
+  if (userLoad == JsonLoadResult::Unreadable) {
+    LUX_LOGW(L"SettingsStoreReload: settings.json unreadable — keep in-memory map");
+    g_userDiskUnreadable.store(true);
+    return;
+  }
+  g_userDiskUnreadable.store(false);
   bool filled = false;
   for (const SettingDef& def : kSettingSchema) {
     if (g_user.find(def.key) == g_user.end() && def.defaultString) {
@@ -445,7 +573,7 @@ void SettingsStoreReload() {
       filled = true;
     }
   }
-  if (userLoad == JsonLoadResult::Corrupt || filled) {
+  if (!g_ephemeral.load() && (userLoad == JsonLoadResult::Corrupt || filled)) {
     if (SaveFileMap(UserPath(), g_user)) {
       g_userDirty.store(false);
     } else {
@@ -454,10 +582,24 @@ void SettingsStoreReload() {
   } else {
     g_userDirty.store(false);
   }
-  LoadFileMap(RuntimePath(), &g_runtime);
+  // Skip disk reload if workers dirtied runtime again during RuntimeSave above.
+  if (!g_runtimeDirty.load()) {
+    const JsonLoadResult runtimeLoad = LoadFileMap(RuntimePath(), &g_runtime);
+    if (runtimeLoad == JsonLoadResult::Unreadable) {
+      LUX_LOGW(L"SettingsStoreReload: runtime.json unreadable — keep in-memory runtime");
+    }
+  }
 }
 
 bool SettingsStoreSaveUser() {
+  if (g_ephemeral.load()) {
+    g_userDirty.store(false);
+    return true;
+  }
+  if (g_userDiskUnreadable.load()) {
+    LUX_LOGE(L"SettingsStoreSaveUser: refused — settings.json still unreadable");
+    return false;
+  }
   std::lock_guard lock(g_mutex);
   if (!g_userDirty.load()) {
     return true;
@@ -467,6 +609,33 @@ bool SettingsStoreSaveUser() {
   }
   g_userDirty.store(false);
   return true;
+}
+
+bool SettingsStoreResetToDefaults() {
+  {
+    std::lock_guard lock(g_mutex);
+    for (const SettingDef& def : kSettingSchema) {
+      if (!def.defaultString) {
+        continue;
+      }
+      if (wcscmp(def.key, L"app.version") == 0) {
+        continue;
+      }
+      g_user[def.key] = def.defaultString;
+    }
+    g_user[L"app.version"] = LUX_APP_VERSION_STRING;
+    // Keep one-shot migrations marked done so Init does not rewrite defaults again.
+    g_user[L"app.migrate.ulwDefault"] = L"1";
+    g_user[L"app.migrate.wheelStep2"] = L"1";
+    g_user[L"app.migrate.backdropAuto"] = L"1";
+    g_userDirty.store(true);
+    g_runtime[L"DragOffsetX"] = L"0";
+    g_runtime[L"DragOffsetY"] = L"0";
+    g_runtimeDirty.store(true);
+  }
+  const bool userOk = SettingsStoreSaveUser();
+  const bool runtimeOk = RuntimeSave();
+  return userOk && runtimeOk;
 }
 
 int SettingsGetInt(const wchar_t* key, int fallback) {
@@ -542,6 +711,10 @@ void RuntimeSetInt(const wchar_t* key, int value) {
 }
 
 bool RuntimeSave() {
+  if (g_ephemeral.load()) {
+    g_runtimeDirty.store(false);
+    return true;
+  }
   std::lock_guard lock(g_mutex);
   const bool ok = SaveFileMap(RuntimePath(), g_runtime);
   if (ok) {
@@ -552,11 +725,17 @@ bool RuntimeSave() {
 }
 
 void RuntimeSaveDebounced() {
+  if (g_ephemeral.load()) {
+    g_runtimeDirty.store(false);
+    return;
+  }
   if (!g_runtimeDirty.load()) {
     return;
   }
   const ULONGLONG now = GetTickCount64();
   const ULONGLONG last = g_runtimeLastFlushMs.load();
+  // Leading-edge 1s coalesce. Callers that write multiple keys atomically must use
+  // RuntimeSetInt + RuntimeSave() (see PersistIslandDragOffsets). Shutdown flushes dirty.
   if (now - last < 1000) {
     return;
   }
@@ -581,6 +760,32 @@ bool SettingsStoreSelfTestJson() {
   }
   if (round[L"Themes.BackdropMaterial"] != L"acrylic") {
     LUX_LOGE(L"JSON self-test: string value failed");
+    return false;
+  }
+  const std::string bomJson = std::string("\xEF\xBB\xBF") + json;
+  std::map<std::wstring, std::wstring> bomRound;
+  if (!ParseFlatJsonObject(bomJson, &bomRound) ||
+      bomRound[L"Themes.BackdropMaterial"] != L"acrylic") {
+    LUX_LOGE(L"JSON self-test: UTF-8 BOM parse failed");
+    return false;
+  }
+  const std::string unicodeJson = "{\"Themes.FontFamily\":\"\\u0410\\u0431\"}";
+  std::map<std::wstring, std::wstring> unicodeRound;
+  if (!ParseFlatJsonObject(unicodeJson, &unicodeRound) ||
+      unicodeRound[L"Themes.FontFamily"] != L"\x0410\x0431") {
+    LUX_LOGE(L"JSON self-test: \\u escape parse failed");
+    return false;
+  }
+  // U+1F600 😀 as UTF-16 surrogate pair in JSON.
+  const std::string emojiJson = "{\"Themes.FontFamily\":\"\\uD83D\\uDE00\"}";
+  std::map<std::wstring, std::wstring> emojiRound;
+  if (!ParseFlatJsonObject(emojiJson, &emojiRound) ||
+      emojiRound[L"Themes.FontFamily"] != L"\xD83D\xDE00") {
+    LUX_LOGE(L"JSON self-test: surrogate pair \\u parse failed");
+    return false;
+  }
+  if (ParseFlatJsonObject("{\"k\":\"\\uD800\"}", &emojiRound)) {
+    LUX_LOGE(L"JSON self-test: lone high surrogate should fail");
     return false;
   }
   LUX_LOGI(L"JSON self-test PASS");

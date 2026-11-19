@@ -45,7 +45,7 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 | `--no-tray` | Skip tray icon |
 | `--no-autostart` | Do not refresh HKCU Run on this launch |
 | `--ephemeral` | No settings/log file I/O |
-| `--backdrop=none\|blur\|acrylic` | Override backdrop for this run |
+| `--backdrop=none\|blur\|acrylic` | Override backdrop for this run (`Appearance=auto` + `Themes=…`) |
 | `--smoke-timeout-ms=N` | Smoke wait (default 10000) |
 | `--log-level=error\|warn\|info\|debug` | Min log level |
 
@@ -59,7 +59,8 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 | 3 | Smoke frame failure |
 | 4 | `--test-json` failed |
 
-`--backdrop=` відсутній → схема `Themes.BackdropMaterial` (`none`). Лог: `backdrop: source=schema|flag value=…`.
+`--backdrop=` відсутній → схема: `Appearance.BackdropMaterial=auto`, `Themes.BackdropMaterial=acrylic` (ефективно acrylic).  
+Лог: `backdrop: source=schema|flag appearance=… themes=… effective=…`.
 
 `app.version` у `settings.json` оновлюється **лише якщо змінився** (не перезаписує файл щосесії).
 
@@ -67,36 +68,37 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 
 - **`SetWindowCompositionAttribute` (WCA)** — недокументований API. На майбутніх збірках Win11 accent може зникнути без попередження. Fallback = backdrop `none`, не crash (Warn у лозі).
 - **LL-хуки** (`WH_KEYBOARD_LL` / `WH_MOUSE_LL`) можуть блокуватись антивірусом/EDR — Caps/Num і mouse-wake тоді мовчать; решта острова працює. Quick Lookup hotkey = `RegisterHotKey` (не LL).
-- **Autostart** (`HKCU\…\Run` + `StartupApproved\Run`) — Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) може зробити toggle no-op; Task Manager Disable знімається повторним enable у Settings.
+- **Autostart** (`HKCU\…\Run` + `StartupApproved\Run`) — Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) може зробити toggle no-op. Disable у Task Manager зберігається: наступний старт знімає `General.LaunchAtStartup` у JSON і не форсить Run знову.
 - **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
 - **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
-## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.5**)
+## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.6**)
 
 ### Автоматичні (`app\build.bat`)
 
 - [ ] `--smoke-test --no-workers` → exit 0
-- [ ] `--smoke-test` → exit 0, `backdrop: source=schema value=none`
+- [ ] `--smoke-test` → exit 0, лог `source=schema` / `appearance=auto` / `themes=acrylic` / `effective=acrylic`
 - [ ] `--smoke-test --backdrop=blur` → exit 0
 - [ ] `--smoke-test --backdrop=acrylic` → exit 0
-- [ ] `--test-json` → exit 0
+- [ ] `--test-json` → exit 0 (включно UTF-8 BOM і `\u` escapes)
 - [ ] Дві послідовні `--smoke-test` → друга не падає на mutex
 
 ### Холодний старт (CI не покриває — обовʼязково перед тегом)
 
 1. **Чистий старт:** видалити `%AppData%\DynamicIslandLux\` → запуск без аргументів → пігулка; `settings.json` + `runtime.json` валідні; без `.tmp`; лог без Error.
 2. **Зміна + рестарт:** змінити Backdrop / QuickLookup / Language → OK → exit з трею ≤1 s (`worker … stopped`) → знову запуск → зміни на місці; `LastWriteTime` не стрибає без змін.
-3. **Cancel:** діалог → змінити → Cancel → `settings.json` незмінний, острів без reload.
-4. **Пошкоджений JSON:** обрізати `settings.json` → запуск → Warn, файл → `settings.json.bad`, новий валідний з дефолтами, без крашу.
-5. **Read-only (опційно):** `attrib +R settings.json` → OK у діалозі → Warn, зміни в памʼяті, без крашу.
-6. **Другий екземпляр:** повторний `.exe` → ≤1.5 s exit, без другого трею.
-7. **`--settings` після Task Manager kill** → новий primary + діалог.
+3. **Cancel:** діалог → змінити → Cancel → UI до baseline (відкриття або після Apply) і закриття; диск лишає вже застосоване Apply/OK. Escape теж не відкочує Apply.
+4. **Reset defaults:** Settings → Reset → Yes → схема + drag offsets 0; автозапуск вимкнено.
+5. **Пошкоджений JSON:** обрізати `settings.json` → запуск → Warn, файл → `settings.json.bad`, новий валідний з дефолтами, без крашу. UTF-8 BOM (Блокнот) **не** вважається corrupt.
+6. **Read-only (опційно):** `attrib +R settings.json` → OK у діалозі → Warn, зміни в памʼяті, без крашу.
+7. **Другий екземпляр:** повторний `.exe` → ≤1.5 s exit, без другого трею.
+8. **`--settings` після Task Manager kill** → новий primary + діалог.
 
 Release: Info-лог за замовчуванням; Debug лише з `--log-level=debug`.
 
 ### Ручні (~10 хв)
 
-Див. попередній чекліст: пігулка, media, weather, lookup, backdrop+DPI, file tray, game overlay, мови, settings OK/Cancel, autostart, `--settings` IPC, чистий exit, лог без зайвих Error.
+Див. попередній чекліст: пігулка, media, weather, lookup, backdrop+DPI, file tray, game overlay, мови, settings OK/Apply/Cancel/Reset, autostart + Task Manager Disable, `--settings` IPC, чистий exit, лог без зайвих Error.
 
 ### Тег (жорсткий порядок)
 
@@ -109,15 +111,16 @@ scripts\release.bat
 1. `app\build.bat` — Release + smoke (exit ≠ 0 → стоп)
 2. Cold-start чекліст вище (corrupt JSON обовʼязково)
 3. `scripts\make-release-assets.bat` — копіює **той самий** `.exe`, SHA256, VERSIONINFO≠`@PROJECT_VERSION@` (exit ≠ 0 → стоп)
-4. `git tag -a v1.0.5 -m "Dynamic Island Lux standalone v1.0.5"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
+4. `git tag -a v1.0.6 -m "Dynamic Island Lux standalone v1.0.6"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
 
-Assets: `dist\v1.0.5\` (папка = `scripts\_version.cmd`).
+Assets: `dist\v1.0.6\` (папка = `scripts\_version.cmd`).
 
 ## Архітектурні інваріанти
 
 - Hotkey / PeekMessage / Unregister — **render-thread**
 - Island layered; DwmBackdrop non-layered + WCA; Show → EnsureBehind; accent після SetWindowPos
-- Settings OK → store reload (main) + `WM_APP_RELOAD_SETTINGS` (render); Cancel = no write / no reload
+- Settings Apply/OK → `SettingsStoreSaveUser` + reload (main) + `WM_APP_RELOAD_SETTINGS` (render); dirty `runtime.json` скидається на диск **перед** reload, щоб не затерти drag/pin
+- Cancel без Apply = no write / no reload; Cancel після Apply лишає вже записане
 - Custom settings dialog (не PROPSHEET)
 - Schema (`settings_schema.h`) = єдине джерело ключів — див. `/CONTRIBUTING.md`
 

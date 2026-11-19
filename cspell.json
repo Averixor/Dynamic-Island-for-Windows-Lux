@@ -93,7 +93,12 @@
     "BHID",
     "pidl",
     "PIDL",
-    "SIGDN"
+    "SIGDN",
+    "IDXGI",
+    "Anims",
+    "wtsapi",
+    "dbch",
+    "lfanew"
   ],
   "ignorePaths": [
     "LICENSE",

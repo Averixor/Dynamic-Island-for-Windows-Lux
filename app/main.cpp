@@ -53,7 +53,11 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     return 0;
   }
   case WM_APP_OPEN_SETTINGS:
-    OpenSettingsDialog(hwnd);
+    if (IsWindow(app.settingsHwnd)) {
+      SetForegroundWindow(app.settingsHwnd);
+    } else {
+      OpenSettingsDialog(hwnd);
+    }
     return 0;
   case WM_APP_SHOW_ISLAND:
     LuxOverlay_ShowIsland();
@@ -66,7 +70,7 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     return 0;
   case WM_COPYDATA: {
     const COPYDATASTRUCT* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
-    if (!cds || cds->cbData != sizeof(CopyDataPayload) || !cds->lpData) {
+    if (!cds || cds->dwData != 1 || cds->cbData != sizeof(CopyDataPayload) || !cds->lpData) {
       return FALSE;
     }
     const CopyDataPayload* payload = static_cast<const CopyDataPayload*>(cds->lpData);
@@ -83,13 +87,15 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case CopyDataCommand::Quit:
       PostMessageW(hwnd, WM_CLOSE, 0, 0);
       break;
+    default:
+      return FALSE;
     }
     return TRUE;
   }
   case WM_COMMAND:
     switch (LOWORD(wParam)) {
     case IDM_TRAY_SETTINGS:
-      OpenSettingsDialog(hwnd);
+      PostMessageW(hwnd, WM_APP_OPEN_SETTINGS, 0, 0);
       break;
     case IDM_TRAY_SHOW:
       PostMessageW(hwnd, WM_APP_TOGGLE_ISLAND, 0, 0);
@@ -103,6 +109,7 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
   case WM_DESTROY:
+    UnregisterTrayIcon(app);
     app.running = false;
     PostQuitMessage(0);
     return 0;
@@ -207,9 +214,13 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
     }
   }
 
+  // Host is a hidden top-level WS_POPUP; also try HWND_MESSAGE for older builds.
   HWND hwnd = nullptr;
   for (int i = 0; i < kPollAttempts; ++i) {
     hwnd = FindWindowW(kHostClassName, nullptr);
+    if (!hwnd) {
+      hwnd = FindWindowExW(HWND_MESSAGE, nullptr, kHostClassName, nullptr);
+    }
     if (hwnd) {
       break;
     }
@@ -225,12 +236,18 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
   cds.dwData = 1;
   cds.cbData = sizeof(payload);
   cds.lpData = &payload;
-  // Short timeout so a hung primary instance cannot freeze the second process.
-  DWORD_PTR sendResult = 0;
-  const LRESULT ok =
-      SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
-                          2000, &sendResult);
-  return ok != 0 && sendResult != FALSE;
+  // Retry while primary may be blocked in StartThreads (no pump yet). Bounded total wait.
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    DWORD_PTR sendResult = 0;
+    const LRESULT ok =
+        SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
+                            2000, &sendResult);
+    if (ok != 0 && sendResult != FALSE) {
+      return true;
+    }
+    Sleep(250);
+  }
+  return false;
 }
 
 void RegisterTrayIcon(AppState& app) {
@@ -267,6 +284,10 @@ void ShowTrayMenu(AppState& app, POINT screenPt) {
   MenuTheme::PreparePopup();
   const SettingsUiLoc::Lang lang = SettingsUiLoc::ResolveLang();
   HMENU menu = CreatePopupMenu();
+  if (!menu) {
+    LUX_LOGE(L"ShowTrayMenu: CreatePopupMenu failed");
+    return;
+  }
   AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, SettingsUiLoc::TraySettings(lang));
   AppendMenuW(menu, MF_STRING, IDM_TRAY_SHOW, SettingsUiLoc::TrayShow(lang));
   AppendMenuW(menu, MF_STRING, IDM_TRAY_RELOAD, SettingsUiLoc::TrayReload(lang));
@@ -338,6 +359,11 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   if (!AcquireSingleInstance(g_app)) {
+    if (options.smokeTest || options.testJson) {
+      LUX_LOGE(L"smoke/test-json: another instance holds Local\\DynamicIslandLux — abort");
+      LuxLogShutdown();
+      return static_cast<int>(LuxExitCode::InitFailure);
+    }
     const CopyDataCommand cmd =
         options.openSettings ? CopyDataCommand::OpenSettings : CopyDataCommand::ShowIsland;
     // If the peer exited mid-wait (e.g. smoke), Notify fails — retry mutex and become primary.
@@ -356,13 +382,23 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     }
   }
 
-  SettingsStoreInit();
+  SettingsStoreInit(ephemeral);
   LUX_LOGI(L"Dynamic Island Lux %s starting", LUX_APP_VERSION_STRING);
 
-  // Keep HKCU Run in sync with the setting (refresh exe path / --startup after move/update).
-  if (!ephemeral && !options.noAutostart &&
-      SettingsGetBool(L"General.LaunchAtStartup", false)) {
-    AutostartSetEnabled(true);
+  // Sync HKCU Run with JSON, but honor Task Manager "Disabled" (StartupApproved).
+  // Never force-enable from JSON alone — that undoes the user's Task Manager toggle.
+  if (!ephemeral && !options.noAutostart) {
+    const bool want = SettingsGetBool(L"General.LaunchAtStartup", false);
+    const bool live = AutostartIsEnabled();
+    if (want && live) {
+      AutostartSetEnabled(true);  // refresh quoted exe path after move/update
+    } else if (want && !live) {
+      SettingsSetBool(L"General.LaunchAtStartup", false);
+      SettingsStoreSaveUser();
+      LUX_LOGI(L"Autostart: OS disabled — cleared General.LaunchAtStartup");
+    } else if (!want && live) {
+      AutostartSetEnabled(false);
+    }
   }
 
   if (options.testJson) {
@@ -383,9 +419,11 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   hostWc.lpszClassName = kHostClassName;
   RegisterClassExW(&hostWc);
 
-  g_app.hostHwnd =
-      CreateWindowExW(0, kHostClassName, L"DynamicIslandLuxHost", WS_OVERLAPPED, 0, 0, 0, 0,
-                      HWND_MESSAGE, nullptr, instance, nullptr);
+  // Hidden top-level (not HWND_MESSAGE): receives TaskbarCreated broadcasts for tray
+  // recreate after Explorer restart, and is findable via FindWindowW / FindWindowExW.
+  g_app.hostHwnd = CreateWindowExW(
+      WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kHostClassName, L"DynamicIslandLuxHost", WS_POPUP, 0, 0,
+      0, 0, nullptr, nullptr, instance, nullptr);
   if (!g_app.hostHwnd) {
     LUX_LOGE(L"Host window failed");
     SettingsStoreShutdown();
@@ -405,10 +443,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   if (!options.noTray && !ephemeral) {
     RegisterTrayIcon(g_app);
   }
-
-  // Ready AFTER host HWND (+ scaffold if any) exist; BEFORE workers.
-  // Settings dialog reads settings.json only — safe while workers init.
-  SignalAppReady(g_app);
 
   if (options.fromStartup && !ephemeral) {
     if (options.startMinimized) {
@@ -449,15 +483,22 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     // Optional: start workers after frame proof, then require clean Uninit.
     // Criterion stays scaffold frame only — never waits on media/weather/network.
     if (frameOk && LuxShouldStartWorkers()) {
-      // Without --backdrop=, keep Themes.BackdropMaterial from schema/store (default: none).
-      // CI must pass --backdrop=blur and --backdrop=acrylic explicitly to cover both paths.
+      // LoadSettings prefers Appearance.BackdropMaterial unless it is empty/auto,
+      // then Themes.BackdropMaterial. Smoke must set both so --backdrop=blur|acrylic stick.
+      // Without --backdrop=, leave store/schema as-is.
       const bool fromFlag = options.smokeBackdrop[0] != L'\0';
       if (fromFlag) {
+        SettingsSetString(L"Appearance.BackdropMaterial", L"auto");
         SettingsSetString(L"Themes.BackdropMaterial", options.smokeBackdrop);
       }
+      const std::wstring appearance =
+          SettingsGetString(L"Appearance.BackdropMaterial", L"auto");
+      const std::wstring themes = SettingsGetString(L"Themes.BackdropMaterial", L"acrylic");
       const std::wstring requested =
-          SettingsGetString(L"Themes.BackdropMaterial", L"none");
-      LUX_LOGI(L"backdrop: source=%s value=%s", fromFlag ? L"flag" : L"schema",
+          (!appearance.empty() && _wcsicmp(appearance.c_str(), L"auto") != 0) ? appearance
+                                                                              : themes;
+      LUX_LOGI(L"backdrop: source=%s appearance=%s themes=%s effective=%s",
+               fromFlag ? L"flag" : L"schema", appearance.c_str(), themes.c_str(),
                requested.c_str());
       if (!LuxOverlay_StartWorkers(g_app)) {
         LUX_LOGE(L"smoke-test: WhTool_ModInit failed");
@@ -493,6 +534,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     LuxLogShutdown();
     return static_cast<int>(LuxExitCode::InitFailure);
   }
+
+  // Ready only once workers started and this thread is about to pump — second-instance
+  // IPC uses SendMessageTimeout and would fail during the StartThreads wait.
+  SignalAppReady(g_app);
 
   MSG msg = {};
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

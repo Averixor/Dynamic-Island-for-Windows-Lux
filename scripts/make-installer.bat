@@ -52,9 +52,35 @@ if not exist "%OUT%" (
   exit /b 1
 )
 
-REM Keep this as one cmd line: bare "|" inside caret-continued powershell splits the
-REM batch command and Windows then tries to "Open with" the leftover "Write-Host".
-powershell -NoProfile -Command "$setup='%~dp0..\dist\v%VER%\DynamicIslandLux-Setup-%VER%.exe'; $sums='%~dp0..\dist\v%VER%\SHA256SUMS.txt'; $h=(Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash.ToLowerInvariant(); $line=$h + '  DynamicIslandLux-Setup-%VER%.exe'; if (Test-Path -LiteralPath $sums) { $kept=@(); foreach ($row in Get-Content -LiteralPath $sums) { if ($row -notmatch 'DynamicIslandLux-Setup-') { $kept += $row } }; Set-Content -Encoding ascii -LiteralPath $sums -Value ($kept + $line) } else { Set-Content -Encoding ascii -LiteralPath $sums -Value $line }; Write-Output $line"
+REM Hash via .NET SHA256 (Get-FileHash is missing in some PowerShell hosts).
+call "%~dp0_sha256.cmd" "%OUT%"
+if errorlevel 1 (
+  echo FAILED: SHA256 of Setup exe
+  exit /b 1
+)
+set "SUMS=dist\v%VER%\SHA256SUMS.txt"
+set "SETUP_LINE=%SHA256_HEX%  DynamicIslandLux-Setup-%VER%.exe"
+REM Rewrite sums: keep non-Setup lines, append fresh Setup hash.
+set "SUMS_TMP=%SUMS%.tmp"
+if exist "%SUMS_TMP%" del "%SUMS_TMP%"
+if exist "%SUMS%" (
+  for /f "usebackq delims=" %%L in ("%SUMS%") do (
+    echo %%L| findstr /I /C:"DynamicIslandLux-Setup-" >nul
+    if errorlevel 1 >>"%SUMS_TMP%" echo %%L
+  )
+)
+>>"%SUMS_TMP%" echo %SETUP_LINE%
+move /Y "%SUMS_TMP%" "%SUMS%" >nul
+if errorlevel 1 (
+  echo FAILED: could not write SHA256SUMS.txt for Setup
+  exit /b 1
+)
+echo %SETUP_LINE%
+findstr /I /C:"DynamicIslandLux-Setup-%VER%.exe" "%SUMS%" >nul
+if errorlevel 1 (
+  echo FAILED: Setup line missing from SHA256SUMS.txt
+  exit /b 1
+)
 
 echo.
 echo OK - installer: %OUT%

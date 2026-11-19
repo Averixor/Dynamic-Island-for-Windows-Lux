@@ -3,10 +3,15 @@
   "cSpell.language": "en,uk,ru",
   "cSpell.allowCompoundWords": true,
   "files.associations": {
+    "*.wh.cpp": "cpp",
     "*.rc.in": "rc",
     "*.manifest.in": "xml",
     "*.iss": "innosetup",
-    "LICENSE": "plaintext"
+    "CMakeLists.txt": "cmake",
+    "*.cmake": "cmake",
+    ".clang-format": "yaml",
+    "LICENSE": "plaintext",
+    "INSTALL.txt": "plaintext"
   },
   "markdownlint.configFile": ".markdownlint-cli2.jsonc",
   "markdownlint.lintWorkspaceGlobs": [
@@ -24,11 +29,61 @@
   ],
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
+  "files.eol": "\n",
+  "editor.formatOnSave": false,
+  "clang-format.style": "file",
+  "clang-format.fallbackStyle": "LLVM",
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "editor.maxTokenizationLineLength": 7500
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false
+  },
+  "[cmake]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "files.eol": "\n"
+  },
+  "[json]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "[jsonc]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "[markdown]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.wordWrap": "on"
+  },
   "[bat]": {
-    "files.eol": "\r\n"
+    "files.eol": "\r\n",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
   },
-  "[cmd]": {
-    "files.eol": "\r\n"
+  "[innosetup]": {
+    "files.eol": "\r\n",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
   },
-  "editor.formatOnSave": false
+  "[xml]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "[yaml]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "[plaintext]": {
+    "editor.wordWrap": "on"
+  },
+  "cmake.sourceDirectory": "D:/Projects/Dynamic-Island-for-Windows-Lux-main/app"
 }

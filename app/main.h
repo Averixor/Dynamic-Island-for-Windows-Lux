@@ -67,6 +67,7 @@ struct AppState {
   HINSTANCE instance = nullptr;
   HWND hostHwnd = nullptr;
   HWND overlayHwnd = nullptr;
+  HWND settingsHwnd = nullptr;  // modal settings dialog while open (reentrancy guard)
   HANDLE singleInstanceMutex = nullptr;
   HANDLE readyEvent = nullptr;
   NOTIFYICONDATAW tray = {};

@@ -14,7 +14,7 @@
 // STANDALONE NOTE: This file is also linked into app/ (LUX_STANDALONE). Keep it —
 // it is the island implementation TU, not leftover junk. Windhawk @version stays
 // 1.9.1 for the mod channel; the exe product version is CMake project(VERSION)
-// (see app/version.rc.in → 1.0.5 for the current standalone release).
+// (see app/version.rc.in → 1.0.6 for the current standalone release).
 //
 // ==WindhawkModReadme==
 /*
@@ -129,9 +129,13 @@
   - UnhideOnHover: true
     $name: Показати при наведенні
     $description: Якщо острів сховано, показує його при наведенні миші на зону дока
-  - ExpandOnHover: true
-    $name: Розгортати при наведенні
-    $description: Розгортає острів при наведенні миші (інакше — кліком)
+  - ExpandMode: both
+    $name: Розкриття
+    $description: "Наведенням — як раніше. Кліком — клік відкриває і тримає, клік мимо згортає. Наведенням і кліком — обидва способи"
+    $options:
+    - hover: Наведенням
+    - click: Кліком
+    - both: Наведенням і кліком
   - AutoHideFullscreen: true
     $name: Ховати в повноекранних додатках
     $description: Тимчасово ховає острів, коли відкрито повноекранне вікно
@@ -936,6 +940,7 @@ struct Settings {
     bool unhideOnHover = true;
     bool alwaysOnTop = true;
     bool expandOnHover = true;
+    bool expandOnClick = true;
     bool allowDragMove = true;
     bool autoDpiScale = true;
     bool w11Style = false;
@@ -3118,6 +3123,7 @@ D2D1_COLOR_F GetSystemAccentColor() {
     return D2D1::ColorF(0x4cc9f0);
 }
 void ApplyHideShowHotkey();
+void ClampIslandDragOffsets(const Settings& settings, int* offsetX, int* offsetY);
 void ApplyBackdropMaterial(HWND);
 void NotifyKeyboardThreadSettingChanged();
 void ApplyLookupHotkey();
@@ -3553,8 +3559,14 @@ void LoadSettings() {
     next.autoHideIdleSeconds = hideSec.empty() ? 0 : _wtoi(hideSec.c_str());
     next.unhideOnHover = Wh_GetIntSetting(L"Behavior.UnhideOnHover") != 0;
     next.alwaysOnTop = Wh_GetIntSetting(L"Behavior.AlwaysOnTop") != 0;
-    const int localExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1);
-    next.expandOnHover = localExpandOnHover >= 0 ? (localExpandOnHover != 0) : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
+    {
+        const std::wstring expandMode = GetStringSettingCopy(L"Behavior.ExpandMode");
+        const bool modeHover = EqualsNoCase(expandMode, L"hover");
+        const bool modeClick = EqualsNoCase(expandMode, L"click");
+        const bool modeBoth = EqualsNoCase(expandMode, L"both") || (!modeHover && !modeClick);
+        next.expandOnHover = modeHover || modeBoth;
+        next.expandOnClick = modeClick || modeBoth;
+    }
     next.collapsedLyrics = Wh_GetIntSetting(L"Modules.CollapsedLyrics") != 0 ||
                            Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
     next.lyricsPinnedFirst = Wh_GetIntSetting(L"Modules.LyricsPinnedFirst") != 0 ||
@@ -3695,6 +3707,17 @@ void LoadSettings() {
         next.pillOpacity = 0.88f;
     }
     next.borderMergedMode = Wh_GetIntSetting(L"Appearance.BorderMergedMode") != 0;
+    if (!g_islandDragging.load(std::memory_order_relaxed)) {
+        const int rawX = next.offsetX;
+        const int rawY = next.offsetY;
+        ClampIslandDragOffsets(next, &next.offsetX, &next.offsetY);
+        if (next.offsetX != rawX || next.offsetY != rawY) {
+            const int baseX = Wh_GetIntSetting(L"Appearance.OffsetX");
+            const int baseY = Wh_GetIntSetting(L"Appearance.OffsetY");
+            Wh_SetIntValue(L"DragOffsetX", next.offsetX - baseX);
+            Wh_SetIntValue(L"DragOffsetY", next.offsetY - baseY);
+        }
+    }
     next.autoHideFullscreen = Wh_GetIntSetting(L"Behavior.AutoHideFullscreen") != 0;
     {
         next.splitWheelAction = SplitWheelAction::Off;
@@ -3733,27 +3756,23 @@ void LoadSettings() {
         next.contourBorderMode = next.contourBorderEnabled ? ContourBorderMode::Default : ContourBorderMode::Borderless;
     }
     next.clockAccentGlow = Wh_GetIntSetting(L"Themes.ClockAccentGlow") != 0;
-    bool settingsChangedWhileHidden = (g_autoHiddenParked.load() || g_manuallyHidden.load());
-    const bool prevUnhideOnHover = GetSettingsCopy().unhideOnHover;
-    bool unhideRequested = (next.autoHideIdleSeconds == 0) ||
-                           (next.unhideOnHover && !prevUnhideOnHover);
-    if (unhideRequested || (settingsChangedWhileHidden && next.autoHideIdleSeconds == 0)) {
-        g_autoHiddenParked = false;
-        g_manuallyHidden = false;
-        Wh_SetIntValue(L"ManuallyHidden", 0);
-        g_hotkeyUnhideUntil.store(NowSeconds() + (next.autoHideIdleSeconds > 0 ? next.autoHideIdleSeconds : 6.0));
-        if (g_hwnd) {
-            ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
-            PostMessageW(g_hwnd, WM_APP_NEW_EVENT, 0, 0);
-        }
-    } else if (settingsChangedWhileHidden && next.unhideOnHover) {
-        g_autoHiddenParked = false;
-        g_manuallyHidden = false;
-        Wh_SetIntValue(L"ManuallyHidden", 0);
-        g_hotkeyUnhideUntil.store(NowSeconds() + (next.autoHideIdleSeconds > 0 ? next.autoHideIdleSeconds : 6.0));
-        if (g_hwnd) {
-            ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
-            PostMessageW(g_hwnd, WM_APP_NEW_EVENT, 0, 0);
+    // Policy changes only clear auto-park — never an explicit user hide.
+    {
+        const Settings prevFrame = GetSettingsCopy();
+        const bool wasAutoParked = g_autoHiddenParked.load(std::memory_order_relaxed);
+        const bool idleBecameNever =
+            next.autoHideIdleSeconds == 0 && prevFrame.autoHideIdleSeconds != 0;
+        const bool hoverUnhideEnabled =
+            next.unhideOnHover && !prevFrame.unhideOnHover;
+        if (wasAutoParked && (idleBecameNever || hoverUnhideEnabled) &&
+            !g_manuallyHidden.load(std::memory_order_relaxed)) {
+            g_autoHiddenParked = false;
+            g_hotkeyUnhideUntil.store(
+                NowSeconds() + (next.autoHideIdleSeconds > 0 ? next.autoHideIdleSeconds : 6.0));
+            if (g_hwnd) {
+                ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+                PostMessageW(g_hwnd, WM_APP_NEW_EVENT, 0, 0);
+            }
         }
     }
     next.privacyDots = Wh_GetIntSetting(L"Indicators.PrivacyDots") != 0;
@@ -3824,6 +3843,7 @@ void LoadSettings() {
         next.unhideOnHover = defaults.unhideOnHover;
         next.alwaysOnTop = defaults.alwaysOnTop;
         next.expandOnHover = defaults.expandOnHover;
+        next.expandOnClick = defaults.expandOnClick;
         next.allowDragMove = defaults.allowDragMove;
         next.autoHideFullscreen = defaults.autoHideFullscreen;
         next.autoHideIdleSeconds = defaults.autoHideIdleSeconds;
@@ -4410,10 +4430,43 @@ void ClampIslandDragOffsets(const Settings& settings, int* offsetX, int* offsetY
         return;
     }
     const RECT work = GetAnchorWorkRectFor(settings.targetMonitor);
+    const int margin = 12;
+    const float scale = std::max(0.05f, settings.sizeScale);
+    const int pillW = std::max(48, static_cast<int>(std::lround(160.0f * scale)));
+    const int pillH = std::max(36, static_cast<int>(std::lround(44.0f * scale)));
+    const bool flushTop = settings.notchStyle || settings.borderMergedMode;
     const int workW = std::max(1, static_cast<int>(work.right - work.left));
     const int workH = std::max(1, static_cast<int>(work.bottom - work.top));
-    *offsetX = ClampInt(*offsetX, -(workW - 48), workW - 48);
-    *offsetY = ClampInt(*offsetY, -(workH - 48), workH - 48);
+    int baseLeft = (workW - pillW) / 2;
+    int baseTop = (flushTop ? 0 : 8) + (flushTop ? 0 : static_cast<int>(kRenderPadY));
+    switch (settings.position) {
+    case Position::TopLeft:
+        baseLeft = 16;
+        break;
+    case Position::TopRight:
+        baseLeft = workW - 16 - pillW;
+        break;
+    case Position::BottomCenter:
+        baseTop = workH - 40 - pillH;
+        break;
+    case Position::BottomLeft:
+        baseLeft = 16;
+        baseTop = workH - 40 - pillH;
+        break;
+    case Position::BottomRight:
+        baseLeft = workW - 16 - pillW;
+        baseTop = workH - 40 - pillH;
+        break;
+    case Position::TopCenter:
+    default:
+        break;
+    }
+    const int minX = margin - baseLeft;
+    const int maxX = workW - margin - pillW - baseLeft;
+    const int minY = margin - baseTop;
+    const int maxY = workH - margin - pillH - baseTop;
+    *offsetX = ClampInt(*offsetX, std::min(minX, maxX), std::max(minX, maxX));
+    *offsetY = ClampInt(*offsetY, std::min(minY, maxY), std::max(minY, maxY));
 }
 void ApplyLiveIslandOffsets(int offsetX, int offsetY) {
     {
@@ -4428,8 +4481,15 @@ void ApplyLiveIslandOffsets(int offsetX, int offsetY) {
 void PersistIslandDragOffsets(int offsetX, int offsetY) {
     const int baseX = Wh_GetIntSetting(L"Appearance.OffsetX");
     const int baseY = Wh_GetIntSetting(L"Appearance.OffsetY");
+#ifdef LUX_STANDALONE
+    // Set both keys then force one flush — debounced Wh_SetIntValue would drop Y.
+    RuntimeSetInt(L"DragOffsetX", offsetX - baseX);
+    RuntimeSetInt(L"DragOffsetY", offsetY - baseY);
+    RuntimeSave();
+#else
     Wh_SetIntValue(L"DragOffsetX", offsetX - baseX);
     Wh_SetIntValue(L"DragOffsetY", offsetY - baseY);
+#endif
 }
 void EndIslandDrag(bool persist) {
     if (!g_islandDragging.exchange(false) && !g_dragPending) {
@@ -4442,8 +4502,14 @@ void EndIslandDrag(bool persist) {
     }
 }
 void ResetIslandDragOffsets() {
+#ifdef LUX_STANDALONE
+    RuntimeSetInt(L"DragOffsetX", 0);
+    RuntimeSetInt(L"DragOffsetY", 0);
+    RuntimeSave();
+#else
     Wh_SetIntValue(L"DragOffsetX", 0);
     Wh_SetIntValue(L"DragOffsetY", 0);
+#endif
     g_dragPending = false;
     g_islandDragging = false;
     const int baseX = Wh_GetIntSetting(L"Appearance.OffsetX");
@@ -6059,6 +6125,7 @@ DWORD WINAPI MediaThreadProc(void*) {
         HANDLE mediaWaits[2] = {g_stopEvent, g_mediaRefreshEvent};
         WaitForMultipleObjects(g_mediaRefreshEvent ? 2 : 1, mediaWaits, FALSE, 1500);
     }
+    manager = nullptr;
     winrt::uninit_apartment();
     return 0;
 }
@@ -6630,8 +6697,9 @@ DWORD WINAPI BluetoothThreadProc(void*) {
     using winrt::Windows::Devices::Bluetooth::BluetoothDevice;
     using winrt::Windows::Devices::Bluetooth::BluetoothLEDevice;
     using winrt::Windows::Devices::Bluetooth::BluetoothConnectionStatus;
-    std::unordered_map<std::wstring, BluetoothTrackedDevice> deviceCache;
-    std::mutex cacheMutex;
+    // Shared so Added/Removed handlers cannot outlive stack locals after Stop().
+    auto deviceCache = std::make_shared<std::unordered_map<std::wstring, BluetoothTrackedDevice>>();
+    auto cacheMutex = std::make_shared<std::mutex>();
     std::vector<DeviceWatcher> watchers;
     auto startWatcher = [&](winrt::hstring const& selector, const wchar_t* label) {
         try {
@@ -6641,22 +6709,22 @@ DWORD WINAPI BluetoothThreadProc(void*) {
                 [enumDone](DeviceWatcher const&, winrt::Windows::Foundation::IInspectable const&) {
                     *enumDone = true;
                 });
-            watcher.Added([&deviceCache, &cacheMutex, enumDone](
+            watcher.Added([deviceCache, cacheMutex, enumDone](
                               DeviceWatcher const&, DeviceInformation const& info) {
                 if (!*enumDone) {
                     std::wstring name = info.Name().c_str();
                     if (!name.empty()) {
-                        std::lock_guard lock(cacheMutex);
-                        deviceCache[std::wstring(info.Id().c_str())] =
+                        std::lock_guard lock(*cacheMutex);
+                        (*deviceCache)[std::wstring(info.Id().c_str())] =
                             BluetoothTrackedDevice{name, ClassifyBluetoothDevice(info)};
                     }
                     return;
                 }
-                HandleBluetoothConnected(info, deviceCache, cacheMutex);
+                HandleBluetoothConnected(info, *deviceCache, *cacheMutex);
             });
-            watcher.Removed([&deviceCache, &cacheMutex](
+            watcher.Removed([deviceCache, cacheMutex](
                                 DeviceWatcher const&, DeviceInformationUpdate const& update) {
-                HandleBluetoothDisconnected(update.Id(), deviceCache, cacheMutex);
+                HandleBluetoothDisconnected(update.Id(), *deviceCache, *cacheMutex);
             });
             watcher.Start();
             watchers.push_back(watcher);
@@ -6679,6 +6747,9 @@ DWORD WINAPI BluetoothThreadProc(void*) {
         } catch (...) {
         }
     }
+    watchers.clear();
+    deviceCache.reset();
+    cacheMutex.reset();
     winrt::uninit_apartment();
     return 0;
 }
@@ -12459,8 +12530,15 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     case 1:
 #ifdef LUX_STANDALONE
         {
-            HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
-            if (host) {
+            // Prefer live AppState host (top-level or message-only); FindWindow* is fallback only.
+            HWND host = GetApp().hostHwnd;
+            if (!IsWindow(host)) {
+                host = FindWindowW(L"DynamicIslandLux.Host", nullptr);
+            }
+            if (!IsWindow(host)) {
+                host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
+            }
+            if (IsWindow(host)) {
                 PostMessageW(host, WM_CLOSE, 0, 0);
             } else if (g_hwnd) {
                 PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
@@ -12475,8 +12553,14 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         break;
     case 9: {
 #ifdef LUX_STANDALONE
-        HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
-        if (host) {
+        HWND host = GetApp().hostHwnd;
+        if (!IsWindow(host)) {
+            host = FindWindowW(L"DynamicIslandLux.Host", nullptr);
+        }
+        if (!IsWindow(host)) {
+            host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
+        }
+        if (IsWindow(host)) {
             PostMessageW(host, WM_APP_OPEN_SETTINGS, 0, 0);
         } else {
             Wh_Log(L"Standalone settings: DynamicIslandLux.Host not found");
@@ -12509,13 +12593,11 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         break;
     }
     case 40: {
-        const bool nowHidden = !g_manuallyHidden.load();
-        g_manuallyHidden = nowHidden;
-        Wh_SetIntValue(L"ManuallyHidden", nowHidden ? 1 : 0);
-        if (nowHidden) {
-            g_hotkeyUnhideUntil.store(0.0);
+        if (g_manuallyHidden.load()) {
+            RequestShowIsland();
+        } else {
+            RequestHideIsland();
         }
-        g_layoutDirty = true;
         break;
     }
     case 44:
@@ -19468,7 +19550,12 @@ private:
             }
         }
         if (p < 0.0f) {
-            DrawAlbumArt(media, rect, now, radius, drawBadge);
+            if (pillCoverAnim_) {
+                TickVinyl(now, media.playing);
+                DrawVinylCover(media, rect, now, radius, drawBadge);
+            } else {
+                DrawAlbumArt(media, rect, now, radius, drawBadge);
+            }
             return;
         }
         g_layoutDirty = true;
@@ -19513,39 +19600,44 @@ private:
                                               (rect.top + rect.bottom) * 0.5f);
         D2D1_MATRIX_3X2_F base;
         target_->GetTransform(&base);
-        const D2D1_MATRIX_3X2_F scaled = D2D1::Matrix3x2F::Scale(scale, scale, c) * base;
-        target_->SetTransform(scaled);
         ComPtr<ID2D1RoundedRectangleGeometry> mask;
-        ComPtr<ID2D1Layer> layer;
-        const bool clipped =
+        const bool haveMask =
             SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
                 D2D1::RoundedRect(rect, radius, radius), &mask)) &&
-            SUCCEEDED(target_->CreateLayer(nullptr, &layer)) && mask && layer;
-        if (clipped) {
-            target_->PushLayer(D2D1::LayerParameters(rect, mask.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                     D2D1::IdentityMatrix(), Clamp(alpha, 0.0f, 1.0f)),
-                               layer.Get());
-        } else {
-            target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        }
+            mask;
         const float speed = std::min(std::fabs(lag) / 16.0f, 1.0f);
         const int ghosts = (bitmap && speed > 0.05f) ? 3 : 0;
-        for (int k = 0; k <= ghosts; ++k) {
+        for (int k = ghosts; k >= 0; --k) {
             const float a = (k == 0) ? 1.0f : 0.30f * speed * (1.0f - 0.30f * static_cast<float>(k - 1));
-            target_->SetTransform(
-                D2D1::Matrix3x2F::Rotation(angle - lag * static_cast<float>(k), c) * scaled);
+            const float opacity = Clamp(alpha * a, 0.0f, 1.0f);
+            if (opacity <= 0.004f)
+                continue;
+            // Rotation must be current before PushLayer. A geometric mask ignores
+            // SetTransform made after the layer is pushed, so the cover stayed still.
+            target_->SetTransform(D2D1::Matrix3x2F::Rotation(angle - lag * static_cast<float>(k), c) *
+                                  D2D1::Matrix3x2F::Scale(scale, scale, c) * base);
+            ComPtr<ID2D1Layer> layer;
+            const bool clipped = haveMask && SUCCEEDED(target_->CreateLayer(nullptr, &layer)) && layer;
+            if (clipped) {
+                target_->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), mask.Get(),
+                                                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                         D2D1::IdentityMatrix(), opacity),
+                                   layer.Get());
+            } else {
+                target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            }
             if (bitmap) {
-                target_->DrawBitmap(bitmap, rect, a, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                target_->DrawBitmap(bitmap, rect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
             } else {
                 accentBrush_->SetOpacity(0.24f);
                 target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush_.Get());
                 accentBrush_->SetOpacity(1.0f);
             }
-        }
-        if (clipped) {
-            target_->PopLayer();
-        } else {
-            target_->PopAxisAlignedClip();
+            if (clipped) {
+                target_->PopLayer();
+            } else {
+                target_->PopAxisAlignedClip();
+            }
         }
         target_->SetTransform(base);
     }
@@ -19609,7 +19701,9 @@ private:
             g_layoutDirty = true;
         }
     }
-    void DrawVinylCover(const MediaSnapshot& media, D2D1_RECT_F rect, double now, float radius) {
+    void DrawVinylCover(const MediaSnapshot& media, D2D1_RECT_F rect, double now, float radius,
+                        bool drawBadge = false) {
+        (void)now;
         EnsureArtBitmap(media);
         ID2D1Bitmap* bitmap = media.art ? artBitmap_.Get() : nullptr;
         const float lag = vinylSpeed_ * 0.012f;
@@ -19617,12 +19711,24 @@ private:
         const D2D1_POINT_2F c = D2D1::Point2F((rect.left + rect.right) * 0.5f,
                                               (rect.top + rect.bottom) * 0.5f);
         const float r = std::min(rect.right - rect.left, rect.bottom - rect.top) * 0.5f;
+        const auto paintBadge = [&]() {
+            if (!drawBadge || !media.sourceIcon || artBadgeAlpha_ <= 0.01f)
+                return;
+            D2D1_RECT_F badge = D2D1::RectF(rect.right - 24, rect.bottom - 22, rect.right - 3, rect.bottom - 3);
+            DrawCircularBitmapPixels(*media.sourceIcon,
+                                     D2D1::Point2F((badge.left + badge.right) * 0.5f,
+                                                   (badge.top + badge.bottom) * 0.5f),
+                                     9.5f, mediaSourceIconBitmap_, mediaSourceIconGeneration_,
+                                     0.98f * artBadgeAlpha_);
+        };
         if (r < 4.0f) {
+            paintBadge();
             return;
         }
         ComPtr<ID2D1SolidColorBrush> ink;
         if (FAILED(target_->CreateSolidColorBrush(D2D1::ColorF(0.04f, 0.04f, 0.05f, 0.55f), &ink)) ||
             !ink) {
+            paintBadge();
             return;
         }
         target_->DrawEllipse(D2D1::Ellipse(c, r - 0.55f, r - 0.55f), ink.Get(), 1.15f);
@@ -19645,6 +19751,7 @@ private:
             hole) {
             target_->FillEllipse(D2D1::Ellipse(c, r * 0.028f, r * 0.028f), hole.Get());
         }
+        paintBadge();
     }
     void DrawAlbumArtDrop(const MediaSnapshot& media, D2D1_RECT_F rect, double now, float radius) {
         constexpr double kFullDur = 0.95;
@@ -19709,7 +19816,9 @@ private:
                 p = -1.0f;
             }
         }
-        TickVinyl(now, media.playing);
+        if (pillCoverAnim_) {
+            TickVinyl(now, media.playing);
+        }
         if (p < 0.0f) {
             DrawVinylCover(media, rect, now, radius);
         } else {
@@ -22203,7 +22312,7 @@ DWORD WINAPI KeyboardThreadProc(void*) {
     ULONGLONG lastHookFailLog = 0;
     bool prevCapsOn = (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
     bool prevNumOn = (GetAsyncKeyState(VK_NUMLOCK) & 0x0001) != 0;
-    bool lockStateSeeded = true;
+    bool lockStateSeeded = false;
     while (!quit && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         const bool wanted = CapsLockHookWanted();
         if (wanted && !g_keyboardHook) {
@@ -22221,6 +22330,7 @@ DWORD WINAPI KeyboardThreadProc(void*) {
         } else if (!wanted && g_keyboardHook) {
             UnhookWindowsHookEx(g_keyboardHook);
             g_keyboardHook = nullptr;
+            lockStateSeeded = false;
             Wh_Log(L"worker keyboard LL hook stopped");
         }
         if (wanted) {
@@ -23069,6 +23179,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_APP_CAPSLOCK: {
         if (!settings.capsLock)
             return 0;
+        // Do not clear an explicit user hide (--minimized / tray / hotkey).
+        if (g_manuallyHidden.load(std::memory_order_relaxed)) {
+            return 0;
+        }
         const bool isNum = (wParam == VK_NUMLOCK);
         const bool capsOn = (lParam & 1) != 0;
         const bool numOn = (lParam & 2) != 0;
@@ -23080,7 +23194,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_state.capsLock.isNumEvent = isNum;
             g_state.capsLock.expiresAt = NowSeconds() + 3.0;
         }
-        g_manuallyHidden = false;
         g_autoHiddenParked = false;
         g_layoutDirty = true;
         TriggerNudge();
@@ -23707,6 +23820,19 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         const bool gameMetricsPresent =
             !kinds.empty() && kinds[0] == IslandKind::Idle &&
             (settings.gameOverlay || g_gameOverlayPinned.load());
+        if (settings.expandOnClick && !gameMetricsPresent &&
+            (onPrimaryPill || onSecondaryPill)) {
+            const bool wasExpanded =
+                g_pinnedExpanded.load(std::memory_order_relaxed) ||
+                g_clickExpanded.load(std::memory_order_relaxed);
+            if (!g_clickExpanded.exchange(true)) {
+                g_layoutDirty = true;
+            }
+            // Click-only: the first click opens and stays. It must not also hit a control.
+            if (!settings.expandOnHover && !wasExpanded) {
+                return 0;
+            }
+        }
         const int currentTab = NormalizedTabIndex(settings);
         const bool onMediaTab = currentTab == MediaTabIndex(settings);
         const MediaContentPoint cpEarly = MediaContentFromClient(xPos, yPos);
@@ -23839,7 +23965,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (MediaScrubFractionFromContent(cp) >= 0.0f) {
                 return 0;
             }
-            // Empty expanded area: collapse (unpin / click-expand), do not steal volume.
+            // Empty expanded area. Click-open stays up until a click outside the island.
+            if (settings.expandOnClick) {
+                return 0;
+            }
             if (g_pinnedExpanded.exchange(false) || g_clickExpanded.exchange(false)) {
                 Wh_SetIntValue(L"PinnedExpanded", 0);
                 g_layoutDirty = true;
@@ -23862,7 +23991,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         if (height > 50.0f) {
             if (onMediaTab && mediaActive) {
-                if (g_pinnedExpanded.exchange(false) || g_clickExpanded.exchange(false)) {
+                if (!settings.expandOnClick &&
+                    (g_pinnedExpanded.exchange(false) || g_clickExpanded.exchange(false))) {
                     Wh_SetIntValue(L"PinnedExpanded", 0);
                     g_layoutDirty = true;
                     return 0;
@@ -24094,21 +24224,21 @@ DWORD WINAPI RenderThreadProc(void*) {
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         kWindowClass, L"Dynamic Island for Windows Lux", WS_POPUP, 0, 0, 520, 140,
         nullptr, nullptr, wc.hInstance, nullptr);
-    if (!hwnd) {
-        Wh_Log(L"Failed to create Dynamic Island overlay window.");
+    auto signalRenderReady = [](bool started) {
+        g_renderStarted.store(started, std::memory_order_release);
         if (g_renderReadyEvent) {
             SetEvent(g_renderReadyEvent);
         }
+    };
+    if (!hwnd) {
+        Wh_Log(L"Failed to create Dynamic Island overlay window.");
+        signalRenderReady(false);
         if (SUCCEEDED(hrCo)) {
             CoUninitialize();
         }
         return 0;
     }
     g_hwnd = hwnd;
-    g_renderStarted.store(true, std::memory_order_release);
-    if (g_renderReadyEvent) {
-        SetEvent(g_renderReadyEvent);
-    }
     if (g_shellHookMessage == 0)
         g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
     if (g_taskbarCreatedMessage == 0)
@@ -24136,7 +24266,17 @@ DWORD WINAPI RenderThreadProc(void*) {
     PrepareIslandWindowChrome(hwnd);
     ApplyBackdropMaterial(hwnd);
     // Show island FIRST, then stack backdrop under it (never reverse — first-frame z-order).
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    // Honor ManuallyHidden set by host before workers (--minimized / HideIsland).
+    // Do not clear a deliberate hide; only clear a leftover flag when starting visible.
+    const bool startHidden = Wh_GetIntValue(L"ManuallyHidden", 0) != 0;
+    g_manuallyHidden.store(startHidden, std::memory_order_relaxed);
+    g_autoHiddenParked.store(false, std::memory_order_relaxed);
+    if (startHidden) {
+        ShowWindow(hwnd, SW_HIDE);
+    } else {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        Wh_SetIntValue(L"ManuallyHidden", 0);
+    }
     DwmBackdrop::EnsureBehind(hwnd);
     // Hotkeys: RegisterHotKey on THIS thread; PeekMessage below dispatches WM_HOTKEY → OverlayWndProc.
     ApplyHideShowHotkey();
@@ -24148,24 +24288,24 @@ DWORD WINAPI RenderThreadProc(void*) {
         Wh_Log(L"backdrop: requested=%s actual=%s (DwmBackdrop available=%d)", name, name,
                DwmBackdrop::Available() ? 1 : 0);
     }
-    // Fresh Lux start: never boot into a stuck hidden state from a leftover flag.
-    g_manuallyHidden = false;
-    Wh_SetIntValue(L"ManuallyHidden", 0);
-    g_autoHiddenParked = false;
-    if (frame.alwaysOnTop) {
+    if (frame.alwaysOnTop && !startHidden) {
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         DwmBackdrop::EnsureBehind(hwnd);
     }
     Renderer renderer;
     if (!renderer.Initialize(hwnd)) {
+        Wh_Log(L"Renderer::Initialize failed — overlay will not start.");
         DestroyWindow(hwnd);
         g_hwnd = nullptr;
+        signalRenderReady(false);
         if (SUCCEEDED(hrCo)) {
             CoUninitialize();
         }
         return 0;
     }
+    // Only now report success to StartThreads (hwnd alone is not enough).
+    signalRenderReady(true);
     LoadFileTray();
     bool highResTimer = false;
     constexpr double kHighResTimerHoldSec = 0.5;
@@ -24202,6 +24342,8 @@ DWORD WINAPI RenderThreadProc(void*) {
     bool wasAutoHiddenParked = false;
     bool parkedForFullscreen = false;
     static double lastInteractionTime = NowSeconds();
+    static bool isFullscreen = false;
+    static double lastFullscreenCheck = -1.0;
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         frame = GetSettingsCopy();
         GetIslandDockRect(frame);
@@ -24251,8 +24393,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 setHighResTimer(false);
                 if (parkedForFullscreen) {
                     MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, 1500, QS_ALLINPUT);
+                    // Must match the park predicate (blacklist OR real fullscreen).
                     const bool stillFullscreen =
-                        frame.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+                        IsAppBlacklistActive(frame) ||
+                        (frame.autoHideFullscreen && IsForegroundFullscreen(hwnd));
+                    isFullscreen = stillFullscreen;
+                    lastFullscreenCheck = NowSeconds();
                     g_isFullscreen.store(stillFullscreen, std::memory_order_relaxed);
                     if (!stillFullscreen) {
                         g_fullscreenOverrideVisible = false;
@@ -24447,7 +24593,18 @@ DWORD WINAPI RenderThreadProc(void*) {
             hover = true;
         }
         bool needsRender = false;
-        if (!hover && g_clickExpanded.load()) {
+        {
+            static bool s_prevPrimaryDown = false;
+            const bool primaryDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            if (frame.expandOnClick && g_clickExpanded.load(std::memory_order_relaxed) &&
+                primaryDown && !s_prevPrimaryDown && !hover &&
+                !g_islandDragging.load(std::memory_order_relaxed) && !g_dragPending) {
+                g_clickExpanded = false;
+                needsRender = true;
+            }
+            s_prevPrimaryDown = primaryDown;
+        }
+        if (!hover && g_clickExpanded.load() && !frame.expandOnClick) {
             g_clickExpanded = false;
             needsRender = true;
         }
@@ -24455,7 +24612,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_hoveredMediaButton = -1;
             needsRender = true;
         }
-        bool isHoverExpanded = frame.expandOnHover ? hover : (hover && g_clickExpanded.load());
+        const bool clickHeld = frame.expandOnClick && g_clickExpanded.load(std::memory_order_relaxed);
+        bool isHoverExpanded = clickHeld || (frame.expandOnHover && hover);
         // Island stays primary; toast rides as a side pill instead of replacing the dashboard.
         StabilizeIslandActivities(kinds, pinned || isHoverExpanded, mediaAvailable);
         Activity primary = ActivityForKind(kinds[0], frame, snapshot);
@@ -24524,8 +24682,6 @@ DWORD WINAPI RenderThreadProc(void*) {
                 }
             }
         }
-        static bool isFullscreen = false;
-        static double lastFullscreenCheck = -1.0;
         if (now - lastFullscreenCheck > 0.5) {
             const bool blacklistSleep = IsAppBlacklistActive(frame);
             const bool newFullscreen =
@@ -25103,17 +25259,15 @@ void StopThreads() {
         }
     }
 
-    // Normal runs wait forever (cooperative exit). Smoke uses LuxSmokeTimeoutMs
-    // so CI cannot hang forever if a worker ignores g_stopEvent.
+    // Standalone never waits forever — a stuck worker would pin Local\DynamicIslandLux.
+    // Windhawk tool-mod keeps INFINITE (host process owns lifetime differently).
     const wchar_t* threadNames[] = {
         L"render", L"media", L"audio", L"weather", L"lyrics", L"notification",
         L"keyboard", L"mouse", L"bluetooth",
     };
     DWORD waitMs = INFINITE;
 #ifdef LUX_STANDALONE
-    if (LuxSmokeTestFlag() && LuxSmokeTimeoutMs() > 0) {
-        waitMs = LuxSmokeTimeoutMs();
-    }
+    waitMs = (LuxSmokeTimeoutMs() > 0) ? LuxSmokeTimeoutMs() : 15000u;
 #endif
     if (!activeThreads.empty()) {
         const DWORD waitResult = WaitForMultipleObjects(
@@ -25128,23 +25282,20 @@ void StopThreads() {
                     Wh_Log(L"worker %s did not stop within %lu ms", threadNames[i], waitMs);
                 }
             }
-            Wh_Log(L"StopThreads: smoke timeout — continuing Uninit after stuck-worker report");
+            Wh_Log(L"StopThreads: timeout — continuing Uninit after stuck-worker report");
         } else if (waitResult == WAIT_FAILED) {
             Wh_Log(L"WaitForMultipleObjects failed during shutdown (error %lu); "
                    L"waiting for threads individually.",
                    GetLastError());
             for (HANDLE handle : activeThreads) {
 #ifdef LUX_STANDALONE
-                if (LuxSmokeTestFlag() && LuxSmokeTimeoutMs() > 0) {
-                    if (WaitForSingleObject(handle, LuxSmokeTimeoutMs()) == WAIT_TIMEOUT) {
-                        LuxWorkersStuckOnExit() = true;
-                        Wh_Log(L"worker handle %p still alive after individual wait", handle);
-                    }
-                } else
-#endif
-                {
-                    WaitForSingleObject(handle, INFINITE);
+                if (WaitForSingleObject(handle, waitMs) == WAIT_TIMEOUT) {
+                    LuxWorkersStuckOnExit() = true;
+                    Wh_Log(L"worker handle %p still alive after individual wait", handle);
                 }
+#else
+                WaitForSingleObject(handle, INFINITE);
+#endif
             }
         }
     }
@@ -25225,9 +25376,7 @@ void WhTool_ModSettingsChanged() {
 }
 void WhTool_ModUninit() {
     Wh_Log(L"WhTool_ModUninit: stopping workers");
-    if (g_hwnd) {
-        PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
-    }
+    // StopThreads signals g_stopEvent first, then posts WM_CLOSE — do not reverse that order.
     StopThreads();
     Wh_Log(L"WhTool_ModUninit: workers stopped");
 }

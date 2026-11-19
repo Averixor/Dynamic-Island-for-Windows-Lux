@@ -60,7 +60,26 @@ inline const wchar_t* Ok(Lang lang) {
 }
 
 inline const wchar_t* Cancel(Lang lang) {
-  return Pick(lang, L"Cancel", L"Скасувати", L"Отмена");
+  return Pick(lang, L"Cancel", L"Скасувати", L"Отменить");
+}
+
+inline const wchar_t* Apply(Lang lang) {
+  return Pick(lang, L"Apply", L"Застосувати", L"Применить");
+}
+
+inline const wchar_t* ResetDefaults(Lang lang) {
+  return Pick(lang, L"Reset to defaults", L"Скинути до заводських", L"Сбросить к заводским");
+}
+
+inline const wchar_t* ResetDefaultsConfirm(Lang lang) {
+  return Pick(lang,
+              L"Reset all settings to factory defaults?\nDrag position will also be cleared.",
+              L"Скинути всі налаштування до заводських?\nЗсув перетягування також буде скинуто.",
+              L"Сбросить все настройки к заводским?\nСмещение перетаскивания тоже будет сброшено.");
+}
+
+inline const wchar_t* ResetDefaultsTitle(Lang lang) {
+  return Pick(lang, L"Reset settings", L"Скидання налаштувань", L"Сброс настроек");
 }
 
 inline const wchar_t* Autostart(Lang lang) {
@@ -167,8 +186,8 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
                 L"Автоприховування (секунди; 0 = ніколи, -1 = наведення/події)",
                 L"Автоскрытие (секунды; 0 = никогда, -1 = наведение/события)");
   }
-  if (wcscmp(key, L"Behavior.ExpandOnHover") == 0) {
-    return Pick(lang, L"Expand on hover", L"Розгортати наведенням", L"Раскрывать наведением");
+  if (wcscmp(key, L"Behavior.ExpandMode") == 0) {
+    return Pick(lang, L"Open on", L"Розкриття", L"Раскрытие");
   }
   if (wcscmp(key, L"Behavior.UnhideOnHover") == 0) {
     return Pick(lang, L"Unhide on hover", L"Показати при наведенні", L"Показать при наведении");
@@ -621,6 +640,39 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   }
   if (wcscmp(def.key, L"Themes.ThemePreset") == 0) {
     return def.enums[index].label;
+  }
+  if (wcscmp(def.key, L"Appearance.Position") == 0) {
+    const wchar_t* v = def.enums[index].value;
+    if (_wcsicmp(v, L"top-center") == 0) {
+      return Pick(lang, L"Top center", L"Зверху по центру", L"Сверху по центру");
+    }
+    if (_wcsicmp(v, L"top-left") == 0) {
+      return Pick(lang, L"Top left", L"Зверху зліва", L"Сверху слева");
+    }
+    if (_wcsicmp(v, L"top-right") == 0) {
+      return Pick(lang, L"Top right", L"Зверху справа", L"Сверху справа");
+    }
+    if (_wcsicmp(v, L"bottom-center") == 0) {
+      return Pick(lang, L"Bottom center", L"Знизу по центру", L"Снизу по центру");
+    }
+    if (_wcsicmp(v, L"bottom-left") == 0) {
+      return Pick(lang, L"Bottom left", L"Знизу зліва", L"Снизу слева");
+    }
+    if (_wcsicmp(v, L"bottom-right") == 0) {
+      return Pick(lang, L"Bottom right", L"Знизу справа", L"Снизу справа");
+    }
+  }
+  if (wcscmp(def.key, L"Behavior.ExpandMode") == 0) {
+    const wchar_t* v = def.enums[index].value;
+    if (_wcsicmp(v, L"hover") == 0) {
+      return Pick(lang, L"Hover", L"Наведенням", L"Наведением");
+    }
+    if (_wcsicmp(v, L"click") == 0) {
+      return Pick(lang, L"Click", L"Кліком", L"Кликом");
+    }
+    if (_wcsicmp(v, L"both") == 0) {
+      return Pick(lang, L"Hover and click", L"Наведенням і кліком", L"Наведением и кликом");
+    }
   }
   if (wcscmp(def.key, L"Behavior.ClickThroughModifier") == 0) {
     return ClickThroughModifierLabel(lang, def.enums[index].value);

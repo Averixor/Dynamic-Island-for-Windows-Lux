@@ -1,19 +1,18 @@
-# Dynamic Island for Windows Lux — v1.0.5
+# Dynamic Island for Windows Lux — v1.0.6
 
 Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.5`
-- **Commit:** _(set at tag time — `scripts\release.bat` prints the hash)_
+- **Tag:** `v1.0.6`
+- **Commit:** _(filled after release commit)_
 - **Date:** 2026-11-19
 
-## Highlights since v1.0.4
+## Highlights since v1.0.5
 
-- Author / copyright attribution unified to **Averixor** (LICENSE, VERSIONINFO, Windhawk metadata, docs)
-- Settings dialog: **OK** commits / **Cancel** discards; store dirty-aware; schema fills missing keys
-- Autostart: HKCU Run + `StartupApproved\Run` sync; logon uses `--minimized`
-- Notification toast content-fit (≤ island) and layout flicker fixes
-- Single version source: `app/CMakeLists.txt` → `scripts/_version.cmd` (release + installer)
-- Resources via `*.in` only (`version.rc.in`, `resources.rc.in`, `DynamicIslandLux.manifest.in`, multi-res `app.ico`)
+- Host IPC: top-level host HWND + `FindWindowW` first; `SignalAppReady` after workers; COPYDATA send retries
+- Settings store: refuse overwrite when `settings.json` is locked/unreadable; validated Int JSON emit; UTF-8 `\u` surrogates; trailing commas tolerated
+- Settings UI: Cancel after Apply keeps Apply; unknown enums preserved; Appearance backdrop `none`/`blur`; Tab stops; combo no longer deadens Apply/OK
+- Island: honor `--minimized` / manual hide; Caps Lock does not force-unhide; blacklist park no longer 1.5s flicker; render ready only after `Renderer::Initialize`; standalone `StopThreads` bounded; Bluetooth WinRT lifetime hardened
+- Packaging: SHA256 via `_sha256.ps1` (no `Get-FileHash` dependency)
 
 ## Origin
 
@@ -54,7 +53,7 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.5.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.6.exe` (Inno Setup, per-user, no admin)
 - `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `INSTALL.txt`
@@ -70,7 +69,6 @@ Or step-by-step:
 ```bat
 app\build.bat
 scripts\make-release-assets.bat
-scripts\make-installer.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.5.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.6.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

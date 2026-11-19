@@ -13,7 +13,7 @@ Any new key must:
 
 If the dialog and `LoadSettings` disagree, the schema was skipped.
 
-Settings dialog: **OK** writes store + reload; **Cancel** discards edits (no disk write, no island reload).
+Settings dialog: **Apply** / **OK** write store + reload (dirty `runtime.json` is flushed first so drag/pin survive). **Apply** refreshes the dialog baseline. **Cancel** restores UI to that baseline and closes (keeps already-applied disk). Escape / title-bar close also leave applied settings. **Reset to defaults** restores every schema key, clears drag offsets, and disables autostart.
 
 ## Workers / smoke
 

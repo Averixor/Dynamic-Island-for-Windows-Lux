@@ -10,12 +10,19 @@
 // actually changes; SettingsStoreSaveUser is a no-op when clean so LastWriteTime
 // does not jump on OK-without-edits / Cancel.
 
-bool SettingsStoreInit();
+// ephemeral=true: load into memory for the session, never write settings.json /
+// runtime.json (smoke / --test-json / --ephemeral must not mutate user prefs).
+bool SettingsStoreInit(bool ephemeral = false);
 void SettingsStoreShutdown();
 void SettingsStoreReload();
 // Persist g_user when dirty. Returns true if disk matches memory (including
-// already-clean). False only when a needed write failed.
+// already-clean / ephemeral). False only when a needed write failed.
 bool SettingsStoreSaveUser();
+
+// Restore every schema key to its default, keep app.version / one-shot migrate
+// stamps, clear drag offsets in runtime, and write both files. Returns false if
+// a needed write failed.
+bool SettingsStoreResetToDefaults();
 
 int SettingsGetInt(const wchar_t* key, int fallback);
 bool SettingsGetBool(const wchar_t* key, bool fallback);

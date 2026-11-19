@@ -4,7 +4,7 @@
 
 #ifndef LUX_APP_VERSION_STR
 // Fallback when not compiling via CMake (CMake overrides with project VERSION).
-#define LUX_APP_VERSION_STR "1.0.5"
+#define LUX_APP_VERSION_STR "1.0.6"
 #endif
 #define LUX_WIDEN_HELPER(x) L##x
 #define LUX_WIDEN(x) LUX_WIDEN_HELPER(x)
@@ -54,6 +54,8 @@ inline constexpr SettingEnumOption kBackdropMaterialEnums[] = {
 };
 
 inline constexpr SettingEnumOption kAppearanceBackdropEnums[] = {
+    {L"none", L"None"},
+    {L"blur", L"Blur"},
     {L"acrylic", L"Acrylic"},
     {L"mica", L"Mica"},
     {L"solid", L"Solid"},
@@ -81,6 +83,21 @@ inline constexpr SettingEnumOption kTargetMonitorEnums[] = {
 inline constexpr SettingEnumOption kBlacklistModeEnums[] = {
     {L"foreground", L"Foreground"},
     {L"running", L"Running"},
+};
+
+inline constexpr SettingEnumOption kExpandModeEnums[] = {
+    {L"hover", L"Hover"},
+    {L"click", L"Click"},
+    {L"both", L"Hover and click"},
+};
+
+inline constexpr SettingEnumOption kPositionEnums[] = {
+    {L"top-center", L"Top center"},
+    {L"top-left", L"Top left"},
+    {L"top-right", L"Top right"},
+    {L"bottom-center", L"Bottom center"},
+    {L"bottom-left", L"Bottom left"},
+    {L"bottom-right", L"Bottom right"},
 };
 
 inline constexpr SettingEnumOption kSpectrumStyleEnums[] = {
@@ -206,8 +223,8 @@ inline constexpr SettingEnumOption kDateFormatEnums[] = {
 // Single source of truth for defaults. LoadSettings must read via SettingsStore
 // so every Wh_Get* key used by the island has a schema row (missing → fallback 0).
 inline constexpr SettingDef kSettingSchema[] = {
-    {L"Appearance.Position", SettingType::String, SettingGroup::Appearance, L"top-center", 0, 0,
-     nullptr, 0},
+    {L"Appearance.Position", SettingType::Enum, SettingGroup::Appearance, L"top-center", 0, 0,
+     kPositionEnums, sizeof(kPositionEnums) / sizeof(kPositionEnums[0])},
     {L"Appearance.SizeScale", SettingType::String, SettingGroup::Appearance, L"1.0", 0, 0, nullptr,
      0},
     {L"Appearance.AutoDpiScale", SettingType::Bool, SettingGroup::Appearance, L"1", 0, 1, nullptr, 0},
@@ -225,7 +242,8 @@ inline constexpr SettingDef kSettingSchema[] = {
      kSpectrumStyleEnums, sizeof(kSpectrumStyleEnums) / sizeof(kSpectrumStyleEnums[0])},
     {L"Appearance.ProgressStyle", SettingType::Enum, SettingGroup::Appearance, L"slim", 0, 0,
      kProgressStyleEnums, sizeof(kProgressStyleEnums) / sizeof(kProgressStyleEnums[0])},
-    {L"Appearance.BackdropMaterial", SettingType::Enum, SettingGroup::Appearance, L"acrylic", 0, 0,
+    // Prefer Themes when Appearance is auto so one Themes row drives blur/acrylic/none.
+    {L"Appearance.BackdropMaterial", SettingType::Enum, SettingGroup::Appearance, L"auto", 0, 0,
      kAppearanceBackdropEnums, sizeof(kAppearanceBackdropEnums) / sizeof(kAppearanceBackdropEnums[0])},
     {L"Appearance.UseDirectComposition", SettingType::Bool, SettingGroup::Appearance, L"0", 0, 1,
      nullptr, 0},
@@ -236,7 +254,8 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Behavior.AlwaysOnTop", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideIdleSeconds", SettingType::Int, SettingGroup::Behavior, L"0", -1, 3600,
      nullptr, 0},
-    {L"Behavior.ExpandOnHover", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
+    {L"Behavior.ExpandMode", SettingType::Enum, SettingGroup::Behavior, L"both", 0, 0,
+     kExpandModeEnums, sizeof(kExpandModeEnums) / sizeof(kExpandModeEnums[0])},
     {L"Behavior.UnhideOnHover", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AllowDragMove", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideFullscreen", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr,
@@ -258,7 +277,7 @@ inline constexpr SettingDef kSettingSchema[] = {
      kAnimationStyleEnums, sizeof(kAnimationStyleEnums) / sizeof(kAnimationStyleEnums[0])},
     {L"Animations.AnimationSpeed", SettingType::Enum, SettingGroup::Animations, L"normal", 0, 0,
      kAnimationSpeedEnums, sizeof(kAnimationSpeedEnums) / sizeof(kAnimationSpeedEnums[0])},
-    {L"Themes.BackdropMaterial", SettingType::Enum, SettingGroup::Themes, L"none", 0, 0,
+    {L"Themes.BackdropMaterial", SettingType::Enum, SettingGroup::Themes, L"acrylic", 0, 0,
      kBackdropMaterialEnums, sizeof(kBackdropMaterialEnums) / sizeof(kBackdropMaterialEnums[0])},
     {L"Themes.BackdropTint", SettingType::Int, SettingGroup::Themes, L"55", 0, 100, nullptr, 0},
     {L"Themes.BackdropFillOpacity", SettingType::Int, SettingGroup::Themes, L"45", 0, 100, nullptr,

@@ -10,6 +10,10 @@
 //
 // Modal DialogBox on the *main* (host) thread — OK because the island renders on
 // RenderThreadProc. DialogBox runs its own IsDialogMessage loop (Tab/Enter work).
-// No Apply button. Edits stay in the dialog until OK (save + OnSettingsChanged).
-// Cancel closes without writing the store and without OnSettingsChanged.
+// Apply writes settings, reloads the island, and refreshes the baseline.
+// Cancel restores the UI to the last baseline and closes (keeps applied disk).
+// OK writes settings, updates the island, and closes.
+// Reset to defaults asks for confirmation, writes schema defaults (+ clears drag
+// offsets), refreshes the controls, and updates the island without closing.
+// Enter in a field does not press OK. Escape closes without writing new edits.
 void OpenSettingsDialog(HWND owner);

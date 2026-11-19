@@ -93,7 +93,13 @@ inline BOOL Wh_GetModStoragePath(PWSTR buffer, size_t bufferChars) {
   }
   std::wstring path = base;
   path += L"\\DynamicIslandLux\\modstorage";
-  SHCreateDirectoryExW(nullptr, path.c_str(), nullptr);
+  const int created = SHCreateDirectoryExW(nullptr, path.c_str(), nullptr);
+  if (created != ERROR_SUCCESS && created != ERROR_ALREADY_EXISTS &&
+      created != ERROR_FILE_EXISTS) {
+    LuxLog(LuxLogLevel::Warn, L"Wh_GetModStoragePath: create failed (%d) for %s", created,
+           path.c_str());
+    return FALSE;
+  }
   if (path.size() + 1 > bufferChars) {
     return FALSE;
   }
