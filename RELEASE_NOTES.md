@@ -1,4 +1,4 @@
-# Dynamic Island for Windows Lux ó v1.0.3
+# Dynamic Island for Windows Lux ‚Äî v1.0.3
 
 Standalone release (no Windhawk required).
 
@@ -10,22 +10,22 @@ Standalone release (no Windhawk required).
 
 - Inline media volume scale (digits while adjusting) and queue-mode control; external volume pill removed
 - Lyrics button moved left of queue mode (no longer overlaps volume > 100%)
-- Weather click opens Bing Weather or wttr.in ó no Store `ms-weather` stub dialog
+- Weather click opens Bing Weather or wttr.in ‚Äî no Store `ms-weather` stub dialog
 - System monitor network Mbps via `GetIfTable2` (works on localized Windows)
 - Fixed red privacy dots with Camera / Microphone labels when expanded
 - Settings schema cleanup: brightness / split-wheel / hex privacy colors removed; shape & theme presets added
 - Slimmer context menu (Hide / Reset / Exit / Settings)
 - Autostart checkbox remembers correctly (StartupApproved `0x02`/`0x03` read was inverted)
-- Release `.bat` scripts no longer trip Windows ìOpen with Write-Hostî via bare `|` pipes
+- Release `.bat` scripts no longer trip Windows ‚ÄúOpen with Write-Host‚Äù via bare `|` pipes
 
 ## Origin
 
 Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Himanshu (Averixor)**, MIT license.
 
 The original single-file mod body remains at the repo root as  
-`Dynamic Island for Windows Lux.wh.cpp` ó intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
+`Dynamic Island for Windows Lux.wh.cpp` ‚Äî intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
 
-## Whatís included
+## What‚Äôs included
 
 - Dynamic island overlay (media, volume, clipboard, battery, weather, calendar, system monitor, Bluetooth, DND, focus timer, lyrics)
 - Quick Lookup (dictionary / Wikipedia)
@@ -35,7 +35,7 @@ The original single-file mod body remains at the repo root as
 - Multi-language UI via `General.Language`
 - Tray icon, custom settings dialog, HKCU autostart
 - Flat JSON settings + separate `runtime.json`, rotating logs
-- `--smoke-test` / `--test-json` / `--log-level=` / exit codes 0ñ4
+- `--smoke-test` / `--test-json` / `--log-level=` / exit codes 0‚Äì4
 
 ## What changed vs Windhawk
 
@@ -44,7 +44,7 @@ The original single-file mod body remains at the repo root as
 | Injected / tool-mod process | Own Win32 exe + tray |
 | Windhawk YAML settings | Flat `settings.json` + schema-driven dialog |
 | Windhawk storage API | `%AppData%\DynamicIslandLux\` |
-| No CI hook | `--smoke-test`, `--test-json`, exit codes 0ñ4 |
+| No CI hook | `--smoke-test`, `--test-json`, exit codes 0‚Äì4 |
 
 ## Minimum OS
 
