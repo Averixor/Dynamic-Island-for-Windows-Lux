@@ -1,18 +1,20 @@
-﻿# Dynamic Island for Windows Lux — v1.0.2
+﻿# Dynamic Island for Windows Lux — v1.0.3
 
 Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.2`
-- **Commit:** `19c07015611ee4cef2584cb8a353295a7354d8ef`
-- **Date:** 2026-11-04
+- **Tag:** `v1.0.3`
+- **Commit:** *(tag on release commit)*
+- **Date:** 2026-11-19
 
-## Highlights since v1.0.1
+## Highlights since v1.0.2
 
-- Settings dialog and context/tray menus follow the OS light/dark theme
-- Schema defaults for AlwaysOnTop, media, modules, aura, clock/date
-- Locale-aware island menu + settings UI (EN/UK/RU)
-- Scrollable fixed-size settings dialog without paint tearing
-- Standalone **Exit** closes the app; Close no longer only collapses the island
+- Inline media volume scale (digits while adjusting) and queue-mode control; external volume pill removed
+- Lyrics button moved left of queue mode (no longer overlaps volume → 100%)
+- Weather click opens Bing Weather or wttr.in — no Store `ms-weather` stub dialog
+- System monitor network Mbps via `GetIfTable2` (works on localized Windows)
+- Fixed red privacy dots with Camera / Microphone labels when expanded
+- Settings schema cleanup: brightness / split-wheel / hex privacy colors removed; shape & theme presets added
+- Slimmer context menu (Hide / Reset / Exit / Settings)
 
 ## Origin
 
@@ -23,7 +25,7 @@ The original single-file mod body remains at the repo root as
 
 ## What’s included
 
-- Dynamic island overlay (media, volume, brightness, clipboard, battery, weather, calendar, system monitor, Bluetooth, DND, focus timer, lyrics)
+- Dynamic island overlay (media, volume, clipboard, battery, weather, calendar, system monitor, Bluetooth, DND, focus timer, lyrics)
 - Quick Lookup (dictionary / Wikipedia)
 - DWM blur / acrylic backdrop (separate non-layered windows via WCA)
 - File tray (OLE drop + atomic persist; corrupt JSON → `.bad` + defaults)
@@ -53,7 +55,7 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.2.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.3.exe` (Inno Setup, per-user, no admin)
 - `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `INSTALL.txt`
@@ -66,4 +68,4 @@ scripts\make-installer.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.2**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.3**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

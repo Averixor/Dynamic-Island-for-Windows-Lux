@@ -2,7 +2,7 @@
 ; Build: scripts\make-installer.bat  (requires Inno Setup 6+)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.2"
+  #define MyAppVersion "1.0.3"
 #endif
 
 #define MyAppName "Dynamic Island for Windows Lux"
