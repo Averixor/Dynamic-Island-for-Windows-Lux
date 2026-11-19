@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0\.."
 
 REM Must run AFTER a successful app\build.bat so SHA256 matches the smoked exe.
-set VER=1.0.4
+set VER=1.0.5
 set EXE=build\Release\DynamicIslandLux.exe
 if not exist "%EXE%" (
   echo Build Release first: app\build.bat

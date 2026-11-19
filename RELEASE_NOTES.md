@@ -1,20 +1,18 @@
-# Dynamic Island for Windows Lux — v1.0.4
+# Dynamic Island for Windows Lux — v1.0.5
 
 Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.4`
-- **Commit:** b5ee93c2e2f9c1094734681aec1c23159813f54d
+- **Tag:** `v1.0.5`
+- **Commit:** *(filled after tag commit)*
 - **Date:** 2026-11-19
 
-## Highlights since v1.0.3
+## Highlights since v1.0.4
 
-- Root [README.md](README.md): install, features, controls, build, and release links
-- `.gitattributes` forces CRLF for `.bat` / `.cmd` / `.iss` (cmd.exe LF bug)
-- Same product fixes as v1.0.3 (media volume, weather, network Mbps, privacy dots, autostart)
+- Author / copyright attribution unified to **Averixor** (LICENSE, VERSIONINFO, Windhawk metadata, docs)
 
 ## Origin
 
-Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Himanshu (Averixor)**, MIT license.
+Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Averixor**, MIT license.
 
 The original single-file mod body remains at the repo root as  
 `Dynamic Island for Windows Lux.wh.cpp` — intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
@@ -51,7 +49,7 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.4.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.5.exe` (Inno Setup, per-user, no admin)
 - `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `INSTALL.txt`
@@ -64,4 +62,4 @@ scripts\make-installer.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.4**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.5**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

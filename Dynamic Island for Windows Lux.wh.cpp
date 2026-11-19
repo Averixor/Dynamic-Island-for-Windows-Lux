@@ -4,7 +4,7 @@
 // @name Dynamic Island for Windows Lux
 // @description A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
 // @version 1.9.1
-// @author Himanshu
+// @author Averixor
 // @github https://github.com/Averixor
 // @include windhawk.exe
 // @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -ld3d11 -ldxgi -ldcomp -ldxva2 -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lpropsys -lwbemuuid -liphlpapi -lws2_32
@@ -14,7 +14,7 @@
 // STANDALONE NOTE: This file is also linked into app/ (LUX_STANDALONE). Keep it —
 // it is the island implementation TU, not leftover junk. Windhawk @version stays
 // 1.9.1 for the mod channel; the exe product version is CMake project(VERSION)
-// (see app/version.rc.in → 1.0.4 for the current standalone release).
+// (see app/version.rc.in → 1.0.5 for the current standalone release).
 //
 // ==WindhawkModReadme==
 /*
@@ -24,7 +24,7 @@
 
 **Весь мод — цей один файл.** Вставте його цілком у Windhawk. Окремих `.cpp` / `.h` немає: код, YAML-настройки, рядки інтерфейсу і ця інструкція живуть тут.
 
-Автор: Himanshu ([Averixor](https://github.com/Averixor)). Ліцензія: MIT. Windows 10 / 11.
+Автор: [Averixor](https://github.com/Averixor). Ліцензія: MIT. Windows 10 / 11.
 
 ## Встановлення
 

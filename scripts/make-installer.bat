@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0\.."
 
-set VER=1.0.4
+set VER=1.0.5
 set EXE=build\Release\DynamicIslandLux.exe
 set ISS=installer\DynamicIslandLux.iss
 set OUT=dist\v%VER%\DynamicIslandLux-Setup-%VER%.exe

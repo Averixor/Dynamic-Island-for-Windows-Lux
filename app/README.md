@@ -2,7 +2,7 @@
 
 Окремий Win32-застосунок для Windows 10/11. **Windhawk не потрібен.**
 
-Ported from the Windhawk mod by **Himanshu ([Averixor](https://github.com/Averixor))** — license **MIT** (see `/LICENSE`).  
+Ported from the Windhawk mod by **[Averixor](https://github.com/Averixor)** — license **MIT** (see `/LICENSE`).  
 Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive** of the original single-file mod and the TU linked into this app — do not delete it as “junk”.
 
 ## Збірка

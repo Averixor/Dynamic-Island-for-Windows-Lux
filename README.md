@@ -3,8 +3,8 @@
 Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island.  
 **Standalone app** — Windhawk is not required.
 
-**Current release:** [v1.0.4](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/tag/v1.0.4)  
-**Author:** Himanshu ([Averixor](https://github.com/Averixor)) · **License:** [MIT](LICENSE)
+**Current release:** [v1.0.5](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/tag/v1.0.5)  
+**Author:** [Averixor](https://github.com/Averixor) · **License:** [MIT](LICENSE)
 
 ---
 
@@ -12,7 +12,7 @@ Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island.
 
 ### Recommended (installer)
 
-1. Download `DynamicIslandLux-Setup-1.0.4.exe` from the [latest release](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/latest).
+1. Download `DynamicIslandLux-Setup-1.0.5.exe` from the [latest release](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/latest).
 2. Run the wizard (per-user install to `%LOCALAPPDATA%\DynamicIslandLux\`, no admin).
 3. Optional: enable **Start with Windows** in the wizard or later in Settings.
 4. Tray icon appears — right-click for **Settings…** / **Show island**.

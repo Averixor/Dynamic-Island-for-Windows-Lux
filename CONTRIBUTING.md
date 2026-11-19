@@ -24,4 +24,4 @@ Threads created outside `StartThreads` are invisible to `--smoke-test` Uninit wa
 
 ## License
 
-MIT — see `LICENSE`. Original Windhawk mod author: Himanshu (Averixor).
+MIT — see `LICENSE`. Original Windhawk mod author: Averixor.
