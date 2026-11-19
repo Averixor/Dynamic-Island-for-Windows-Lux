@@ -12,6 +12,7 @@
 #include "settings_ui_loc.h"
 
 #include <shellapi.h>
+#include <sddl.h>
 
 #include <string>
 #include <vector>
@@ -25,6 +26,109 @@
 
 namespace {
 AppState g_app;
+std::wstring g_mutexName = L"Local\\DynamicIslandLux";
+std::wstring g_readyEventName = L"Local\\DynamicIslandLux.Ready";
+
+std::wstring CurrentUserSid() {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return {};
+  }
+  DWORD length = 0;
+  GetTokenInformation(token, TokenUser, nullptr, 0, &length);
+  std::vector<BYTE> buffer(length);
+  if (length == 0 ||
+      !GetTokenInformation(token, TokenUser, buffer.data(), length, &length)) {
+    CloseHandle(token);
+    return {};
+  }
+  CloseHandle(token);
+  LPWSTR sid = nullptr;
+  auto* user = reinterpret_cast<TOKEN_USER*>(buffer.data());
+  if (!ConvertSidToStringSidW(user->User.Sid, &sid) || !sid) {
+    return {};
+  }
+  std::wstring result = sid;
+  LocalFree(sid);
+  return result;
+}
+
+void InitInstanceObjectNames() {
+  const std::wstring sid = CurrentUserSid();
+  if (sid.empty()) {
+    g_mutexName = kAppMutexName;
+    g_readyEventName = kAppReadyEventName;
+    return;
+  }
+  g_mutexName = L"Local\\DynamicIslandLux-" + sid;
+  g_readyEventName = L"Local\\DynamicIslandLux.Ready-" + sid;
+}
+
+bool SecurityForCurrentUser(PSECURITY_DESCRIPTOR* descriptor) {
+  *descriptor = nullptr;
+  const std::wstring sid = CurrentUserSid();
+  if (sid.empty()) {
+    return false;
+  }
+  const std::wstring sddl = L"D:P(A;;GA;;;" + sid + L")";
+  return ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
+                                                              descriptor, nullptr) == TRUE;
+}
+
+bool IsTrustedCopyDataSender(HWND sender) {
+  if (!IsWindow(sender)) {
+    return false;
+  }
+  DWORD pid = 0;
+  GetWindowThreadProcessId(sender, &pid);
+  if (pid == 0) {
+    return false;
+  }
+  if (pid == GetCurrentProcessId()) {
+    return true;
+  }
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) {
+    return false;
+  }
+  std::wstring senderPath(1024, L'\0');
+  for (;;) {
+    DWORD size = static_cast<DWORD>(senderPath.size());
+    if (QueryFullProcessImageNameW(process, 0, senderPath.data(), &size)) {
+      senderPath.resize(size);
+      break;
+    }
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || senderPath.size() > 32768) {
+      CloseHandle(process);
+      return false;
+    }
+    senderPath.resize(senderPath.size() * 2);
+  }
+  CloseHandle(process);
+  std::wstring selfPath(1024, L'\0');
+  for (;;) {
+    const DWORD n =
+        GetModuleFileNameW(nullptr, selfPath.data(), static_cast<DWORD>(selfPath.size()));
+    if (n == 0) {
+      return false;
+    }
+    if (n < selfPath.size()) {
+      selfPath.resize(n);
+      break;
+    }
+    selfPath.resize(selfPath.size() * 2);
+  }
+  return _wcsicmp(senderPath.c_str(), selfPath.c_str()) == 0;
+}
+
+void BringSettingsForward(HWND settings) {
+  if (!IsWindow(settings)) {
+    return;
+  }
+  ShowWindow(settings, SW_SHOW);
+  SetForegroundWindow(settings);
+  BringWindowToTop(settings);
+}
 
 LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   AppState& app = GetApp();
@@ -38,6 +142,10 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
   switch (msg) {
   case WM_APP_TRAY: {
+    if (IsWindow(app.settingsHwnd)) {
+      BringSettingsForward(app.settingsHwnd);
+      return 0;
+    }
     // NOTIFYICON_VERSION_4: event is LOWORD(lParam). Also accept legacy full lParam.
     const UINT trayEvent = LOWORD(lParam);
     if (trayEvent == WM_RBUTTONUP || trayEvent == WM_CONTEXTMENU || lParam == WM_RBUTTONUP ||
@@ -66,9 +174,17 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     LuxOverlay_ToggleIsland();
     return 0;
   case WM_APP_RELOAD:
+    if (IsWindow(app.settingsHwnd)) {
+      BringSettingsForward(app.settingsHwnd);
+      return 0;
+    }
     LuxOverlay_Reload();
     return 0;
   case WM_COPYDATA: {
+    if (!IsTrustedCopyDataSender(reinterpret_cast<HWND>(wParam))) {
+      LUX_LOGW(L"WM_COPYDATA rejected: sender is not this executable");
+      return FALSE;
+    }
     const COPYDATASTRUCT* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
     if (!cds || cds->dwData != 1 || cds->cbData != sizeof(CopyDataPayload) || !cds->lpData) {
       return FALSE;
@@ -108,6 +224,24 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       break;
     }
     return 0;
+  case WM_QUERYENDSESSION:
+    return TRUE;
+  case WM_ENDSESSION:
+    if (wParam) {
+      if (IsWindow(app.settingsHwnd)) {
+        EndDialog(app.settingsHwnd, IDCANCEL);
+      }
+      SettingsStoreShutdown();
+    }
+    return 0;
+  case WM_CLOSE:
+    if (IsWindow(app.settingsHwnd)) {
+      EndDialog(app.settingsHwnd, IDCANCEL);
+      PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      return 0;
+    }
+    DestroyWindow(hwnd);
+    return 0;
   case WM_DESTROY:
     UnregisterTrayIcon(app);
     app.running = false;
@@ -124,31 +258,35 @@ AppState& GetApp() {
 
 AppOptions ParseCommandLine(int argc, wchar_t** argv) {
   AppOptions opt;
+  bool sawNoTray = false;
+  bool sawMinimized = false;
+  bool forceNoTray = false;
   for (int i = 1; i < argc; ++i) {
     if (_wcsicmp(argv[i], L"--smoke-test") == 0) {
       opt.smokeTest = true;
       opt.ephemeral = true;
-      opt.noTray = true;
+      forceNoTray = true;
       opt.noAutostart = true;
     } else if (_wcsicmp(argv[i], L"--test-json") == 0) {
       opt.testJson = true;
       opt.ephemeral = true;
-      opt.noTray = true;
+      forceNoTray = true;
       opt.noAutostart = true;
     } else if (_wcsicmp(argv[i], L"--no-tray") == 0) {
-      opt.noTray = true;
+      sawNoTray = true;
     } else if (_wcsicmp(argv[i], L"--no-autostart") == 0) {
       opt.noAutostart = true;
     } else if (_wcsicmp(argv[i], L"--minimized") == 0 || _wcsicmp(argv[i], L"--startup") == 0) {
-      // OS logon via HKCU Run: tray immediately; island stays hidden until tray click.
-      opt.fromStartup = true;
-      opt.startMinimized = true;
-      opt.noTray = false;
+      sawMinimized = true;
+    } else if (_wcsicmp(argv[i], L"--quit") == 0) {
+      opt.quit = true;
+    } else if (_wcsicmp(argv[i], L"--enable-autostart") == 0) {
+      opt.enableAutostart = true;
     } else if (_wcsicmp(argv[i], L"--no-workers") == 0) {
       LuxNoWorkersFlag() = true;
     } else if (_wcsicmp(argv[i], L"--ephemeral") == 0) {
       opt.ephemeral = true;
-      opt.noTray = true;
+      forceNoTray = true;
       opt.noAutostart = true;
     } else if (_wcsicmp(argv[i], L"--settings") == 0) {
       opt.openSettings = true;
@@ -163,12 +301,34 @@ AppOptions ParseCommandLine(int argc, wchar_t** argv) {
       wcsncpy_s(opt.logLevel, argv[i] + 12, _TRUNCATE);
     }
   }
+  // Flags are order-independent. Hidden + no tray has no way to exit, so keep the island visible.
+  if (sawMinimized) {
+    opt.fromStartup = true;
+    opt.startMinimized = true;
+  }
+  opt.noTray = forceNoTray || sawNoTray;
+  if (opt.noTray && opt.startMinimized && !opt.ephemeral && !opt.smokeTest && !opt.testJson) {
+    opt.startMinimized = false;
+    opt.fromStartup = false;
+  }
   return opt;
 }
 
 bool AcquireSingleInstance(AppState& app) {
   SetLastError(0);
-  app.singleInstanceMutex = CreateMutexW(nullptr, TRUE, kAppMutexName);
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  SECURITY_ATTRIBUTES security = {};
+  SECURITY_ATTRIBUTES* securityPtr = nullptr;
+  if (SecurityForCurrentUser(&descriptor)) {
+    security.nLength = sizeof(security);
+    security.lpSecurityDescriptor = descriptor;
+    security.bInheritHandle = FALSE;
+    securityPtr = &security;
+  }
+  app.singleInstanceMutex = CreateMutexW(securityPtr, TRUE, g_mutexName.c_str());
+  if (descriptor) {
+    LocalFree(descriptor);
+  }
   if (!app.singleInstanceMutex) {
     return false;
   }
@@ -177,7 +337,19 @@ bool AcquireSingleInstance(AppState& app) {
     app.singleInstanceMutex = nullptr;
     return false;
   }
-  app.readyEvent = CreateEventW(nullptr, TRUE, FALSE, kAppReadyEventName);
+  PSECURITY_DESCRIPTOR eventDescriptor = nullptr;
+  SECURITY_ATTRIBUTES eventSecurity = {};
+  SECURITY_ATTRIBUTES* eventSecurityPtr = nullptr;
+  if (SecurityForCurrentUser(&eventDescriptor)) {
+    eventSecurity.nLength = sizeof(eventSecurity);
+    eventSecurity.lpSecurityDescriptor = eventDescriptor;
+    eventSecurity.bInheritHandle = FALSE;
+    eventSecurityPtr = &eventSecurity;
+  }
+  app.readyEvent = CreateEventW(eventSecurityPtr, TRUE, FALSE, g_readyEventName.c_str());
+  if (eventDescriptor) {
+    LocalFree(eventDescriptor);
+  }
   if (!app.readyEvent) {
     CloseHandle(app.singleInstanceMutex);
     app.singleInstanceMutex = nullptr;
@@ -193,40 +365,58 @@ void SignalAppReady(AppState& app) {
 }
 
 bool NotifyRunningInstance(CopyDataCommand cmd) {
-  // Bounded wait — double-click on shortcut must never hang forever.
-  constexpr DWORD kReadyWaitMs = 1500;
-  constexpr int kPollAttempts = 15;
-  constexpr DWORD kPollSleepMs = 100;
+  // One budget for ready-event, window lookup, and COPYDATA retries.
+  constexpr ULONGLONG kBudgetMs = 3000;
+  const ULONGLONG deadline = GetTickCount64() + kBudgetMs;
+  auto remaining = [&]() -> DWORD {
+    const ULONGLONG now = GetTickCount64();
+    if (now >= deadline) {
+      return 0;
+    }
+    return static_cast<DWORD>(deadline - now);
+  };
+  auto sleepSlice = [&](DWORD cap) {
+    const DWORD left = remaining();
+    if (left == 0) {
+      return;
+    }
+    Sleep(left < cap ? left : cap);
+  };
 
-  HANDLE ready = OpenEventW(SYNCHRONIZE, FALSE, kAppReadyEventName);
+  HANDLE ready = OpenEventW(SYNCHRONIZE, FALSE, g_readyEventName.c_str());
   if (ready) {
-    WaitForSingleObject(ready, kReadyWaitMs);
+    WaitForSingleObject(ready, remaining());
     CloseHandle(ready);
   } else {
-    for (int i = 0; i < kPollAttempts; ++i) {
-      Sleep(kPollSleepMs);
-      ready = OpenEventW(SYNCHRONIZE, FALSE, kAppReadyEventName);
+    while (remaining() > 0) {
+      sleepSlice(100);
+      ready = OpenEventW(SYNCHRONIZE, FALSE, g_readyEventName.c_str());
       if (ready) {
-        WaitForSingleObject(ready, 300);
+        WaitForSingleObject(ready, remaining());
         CloseHandle(ready);
         break;
       }
     }
   }
 
-  // Host is a hidden top-level WS_POPUP; also try HWND_MESSAGE for older builds.
   HWND hwnd = nullptr;
-  for (int i = 0; i < kPollAttempts; ++i) {
+  while (remaining() > 0 && !hwnd) {
     hwnd = FindWindowW(kHostClassName, nullptr);
     if (!hwnd) {
       hwnd = FindWindowExW(HWND_MESSAGE, nullptr, kHostClassName, nullptr);
     }
-    if (hwnd) {
-      break;
+    if (!hwnd) {
+      sleepSlice(100);
     }
-    Sleep(kPollSleepMs);
   }
   if (!hwnd) {
+    return false;
+  }
+
+  // A real HWND is the COPYDATA sender so the primary can check the image path.
+  HWND sender = CreateWindowExW(0, L"Static", L"DynamicIslandLux.Ipc", 0, 0, 0, 0, 0, HWND_MESSAGE,
+                                nullptr, nullptr, nullptr);
+  if (!sender) {
     return false;
   }
   CopyDataPayload payload = {};
@@ -236,18 +426,24 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
   cds.dwData = 1;
   cds.cbData = sizeof(payload);
   cds.lpData = &payload;
-  // Retry while primary may be blocked in StartThreads (no pump yet). Bounded total wait.
-  for (int attempt = 0; attempt < 8; ++attempt) {
+  bool delivered = false;
+  while (remaining() > 0) {
+    const DWORD slice = remaining() < 400 ? remaining() : 400;
+    if (slice == 0) {
+      break;
+    }
     DWORD_PTR sendResult = 0;
     const LRESULT ok =
-        SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
-                            2000, &sendResult);
+        SendMessageTimeoutW(hwnd, WM_COPYDATA, reinterpret_cast<WPARAM>(sender),
+                            reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG, slice, &sendResult);
     if (ok != 0 && sendResult != FALSE) {
-      return true;
+      delivered = true;
+      break;
     }
-    Sleep(250);
+    sleepSlice(50);
   }
-  return false;
+  DestroyWindow(sender);
+  return delivered;
 }
 
 void RegisterTrayIcon(AppState& app) {
@@ -293,11 +489,33 @@ void ShowTrayMenu(AppState& app, POINT screenPt) {
   AppendMenuW(menu, MF_STRING, IDM_TRAY_RELOAD, SettingsUiLoc::TrayReload(lang));
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, SettingsUiLoc::TrayExit(lang));
+  // WS_EX_NOACTIVATE blocks the foreground trick, so the menu would stay open on an outside click.
+  const LONG_PTR previousEx = GetWindowLongPtrW(app.hostHwnd, GWL_EXSTYLE);
+  if (previousEx & WS_EX_NOACTIVATE) {
+    SetWindowLongPtrW(app.hostHwnd, GWL_EXSTYLE, previousEx & ~static_cast<LONG_PTR>(WS_EX_NOACTIVATE));
+  }
   SetForegroundWindow(app.hostHwnd);
   TrackPopupMenuEx(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN, screenPt.x, screenPt.y,
                    app.hostHwnd, nullptr);
+  if (previousEx & WS_EX_NOACTIVATE) {
+    SetWindowLongPtrW(app.hostHwnd, GWL_EXSTYLE, previousEx);
+  }
   DestroyMenu(menu);
   PostMessageW(app.hostHwnd, WM_NULL, 0, 0);
+}
+
+void NotifyTrayBalloon(const wchar_t* title, const wchar_t* text) {
+  AppState& app = GetApp();
+  if (!app.trayRegistered || !title || !text) {
+    LUX_LOGW(L"%s", text ? text : L"");
+    return;
+  }
+  NOTIFYICONDATAW nid = app.tray;
+  nid.uFlags = NIF_INFO;
+  nid.dwInfoFlags = NIIF_WARNING;
+  wcsncpy_s(nid.szInfoTitle, title, _TRUNCATE);
+  wcsncpy_s(nid.szInfo, text, _TRUNCATE);
+  Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 namespace {
@@ -315,6 +533,9 @@ void CleanupProcessHandles(AppState& app) {
 }  // namespace
 
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
+  InitInstanceObjectNames();
+  // Prefer System32 for later LoadLibrary calls. The exe is per-user; do not search the cwd.
+  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
   // Startup order (documented contract):
   //   1) parse argv + LuxLogInit
   //   2) mutex (single instance) / WM_COPYDATA handoff
@@ -358,9 +579,21 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     }
   }
 
+  if (options.quit) {
+    if (!AcquireSingleInstance(g_app)) {
+      const bool stopped = NotifyRunningInstance(CopyDataCommand::Quit);
+      LuxLogShutdown();
+      return stopped ? static_cast<int>(LuxExitCode::Ok)
+                     : static_cast<int>(LuxExitCode::InitFailure);
+    }
+    CleanupProcessHandles(g_app);
+    LuxLogShutdown();
+    return static_cast<int>(LuxExitCode::Ok);
+  }
+
   if (!AcquireSingleInstance(g_app)) {
     if (options.smokeTest || options.testJson) {
-      LUX_LOGE(L"smoke/test-json: another instance holds Local\\DynamicIslandLux — abort");
+      LUX_LOGE(L"smoke/test-json: another instance holds the session mutex — abort");
       LuxLogShutdown();
       return static_cast<int>(LuxExitCode::InitFailure);
     }
@@ -371,8 +604,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
       LuxLogShutdown();
       return static_cast<int>(LuxExitCode::Ok);
     }
-    LUX_LOGW(L"Peer gone during --settings handoff; retrying as primary instance");
+    LUX_LOGW(L"Peer gone during handoff; retrying as primary instance");
     if (!AcquireSingleInstance(g_app)) {
+      MessageBoxW(nullptr,
+                  L"Dynamic Island Lux is already running, but it did not respond.\n"
+                  L"Use the tray icon of the running copy, or end that process and start again.",
+                  L"Dynamic Island Lux", MB_OK | MB_ICONWARNING);
       LuxLogShutdown();
       return static_cast<int>(LuxExitCode::InitFailure);
     }
@@ -387,17 +624,62 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
 
   // Sync HKCU Run with JSON, but honor Task Manager "Disabled" (StartupApproved).
   // Never force-enable from JSON alone — that undoes the user's Task Manager toggle.
+  // Installer Run uses --enable-autostart. A first launch with no settings.json also
+  // adopts an existing Run value so the wizard checkbox survives startup.
   if (!ephemeral && !options.noAutostart) {
-    const bool want = SettingsGetBool(L"General.LaunchAtStartup", false);
-    const bool live = AutostartIsEnabled();
-    if (want && live) {
-      AutostartSetEnabled(true);  // refresh quoted exe path after move/update
-    } else if (want && !live) {
-      SettingsSetBool(L"General.LaunchAtStartup", false);
+    if (options.enableAutostart) {
+      SettingsSetBool(L"General.LaunchAtStartup", true);
       SettingsStoreSaveUser();
-      LUX_LOGI(L"Autostart: OS disabled — cleared General.LaunchAtStartup");
-    } else if (!want && live) {
-      AutostartSetEnabled(false);
+      if (!AutostartSetEnabled(true)) {
+        LUX_LOGE(L"Autostart: --enable-autostart could not write HKCU Run");
+      }
+    } else {
+      const AutostartState state = AutostartQuery();
+      bool want = SettingsGetBool(L"General.LaunchAtStartup", false);
+      if (!want && SettingsStoreUserFileWasMissing() &&
+          (state == AutostartState::On || state == AutostartState::StalePath)) {
+        want = true;
+        SettingsSetBool(L"General.LaunchAtStartup", true);
+        SettingsStoreSaveUser();
+        LUX_LOGI(L"Autostart: adopted existing HKCU Run value on first launch");
+      }
+      switch (state) {
+      case AutostartState::On:
+        if (want) {
+          AutostartSetEnabled(true);
+        } else {
+          AutostartSetEnabled(false);
+        }
+        break;
+      case AutostartState::StalePath:
+        if (want) {
+          if (!AutostartSetEnabled(true)) {
+            LUX_LOGE(L"Autostart: failed to rewrite a stale Run path");
+          }
+        } else {
+          AutostartSetEnabled(false);
+        }
+        break;
+      case AutostartState::DisabledByUser:
+        if (want) {
+          SettingsSetBool(L"General.LaunchAtStartup", false);
+          SettingsStoreSaveUser();
+          LUX_LOGI(L"Autostart: OS disabled — cleared General.LaunchAtStartup");
+        }
+        break;
+      case AutostartState::Off:
+        if (want) {
+          SettingsSetBool(L"General.LaunchAtStartup", false);
+          SettingsStoreSaveUser();
+          LUX_LOGI(L"Autostart: Run value missing — cleared General.LaunchAtStartup");
+        }
+        break;
+      }
+      // New AutostartState values must be handled above (C4062).
+      static_assert(static_cast<int>(AutostartState::Off) == 0, "AutostartState::Off");
+      static_assert(static_cast<int>(AutostartState::On) == 1, "AutostartState::On");
+      static_assert(static_cast<int>(AutostartState::DisabledByUser) == 2, "AutostartState::DisabledByUser");
+      static_assert(static_cast<int>(AutostartState::StalePath) == 3, "AutostartState::StalePath");
     }
   }
 

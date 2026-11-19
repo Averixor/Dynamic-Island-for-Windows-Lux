@@ -13,7 +13,7 @@ Any new key must:
 
 If the dialog and `LoadSettings` disagree, the schema was skipped.
 
-Settings dialog: **Apply** / **OK** write store + reload (dirty `runtime.json` is flushed first so drag/pin survive). **Apply** refreshes the dialog baseline. **Cancel** restores UI to that baseline and closes (keeps already-applied disk). Escape / title-bar close also leave applied settings. **Reset to defaults** restores every schema key, clears drag offsets, and disables autostart.
+Settings dialog: **Apply** / **OK** write store + reload (dirty `runtime.json` is flushed first so drag/pin survive). **Apply** refreshes the dialog baseline. **Cancel** restores UI to that baseline and closes (keeps already-applied disk). Escape / title-bar close also leave applied settings. **Reset to defaults** rebuilds settings from the schema, clears runtime.json, and disables autostart.
 
 ## Workers / smoke
 
@@ -30,7 +30,7 @@ Smoke flags and exit codes: [app/README.md](app/README.md).
 ## Version & resources
 
 - App version: `project(DynamicIslandLux VERSION …)` in `app/CMakeLists.txt` only. Packaging/installer read it via `scripts/_version.cmd`.
-- Do not hand-edit `version.gen.rc` / `resources.gen.rc` / committed `DynamicIslandLux.manifest` as the source of truth — edit `*.in` templates (`version.rc.in`, `resources.rc.in`, `DynamicIslandLux.manifest.in`) and `app.ico`.
+- Do not hand-edit `version.gen.rc` / `resources.gen.rc`. The manifest embedded in the exe is generated from `DynamicIslandLux.manifest.in` (there is no checked-in manifest). Edit the `*.in` templates (`version.rc.in`, `resources.rc.in`, `DynamicIslandLux.manifest.in`) and `app.ico`.
 
 ## Spellcheck
 
@@ -42,4 +42,4 @@ UI / loc tokens live in `dictionaries/lux-ui.txt` (cspell). After adding visible
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright: Averixor and contributors. Original Windhawk mod author: Averixor.
+MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright: (c) 2026 devcode90 and Averixor and contributors. Lux derives from Dynamic Island for Windows by Himanshu (devcode90).

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        # No -G: CMake 4.2+ picks the newest Visual Studio it finds.
+        # windows-latest is VS 2026 (generator "Visual Studio 18 2026");
+        # windows-2022 is still VS 2022. -A x64 selects the platform either way.
+        run: cmake -S app -B build -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release
+
+      - name: JSON self-test
+        run: .\build\Release\DynamicIslandLux.exe --test-json
+
+      - name: Smoke without workers
+        run: .\build\Release\DynamicIslandLux.exe --smoke-test --no-workers

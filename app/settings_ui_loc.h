@@ -73,9 +73,21 @@ inline const wchar_t* ResetDefaults(Lang lang) {
 
 inline const wchar_t* ResetDefaultsConfirm(Lang lang) {
   return Pick(lang,
-              L"Reset all settings to factory defaults?\nDrag position will also be cleared.",
-              L"Скинути всі налаштування до заводських?\nЗсув перетягування також буде скинуто.",
-              L"Сбросить все настройки к заводским?\nСмещение перетаскивания тоже будет сброшено.");
+              L"Reset all settings to factory defaults?\nDrag position, pin, and hidden state will also be cleared.",
+              L"Скинути всі налаштування до заводських?\nЗсув, закріплення і прихований стан також буде скинуто.",
+              L"Сбросить все настройки к заводским?\nСмещение, закрепление и скрытое состояние тоже будут сброшены.");
+}
+
+inline const wchar_t* AutostartWriteFailed(Lang lang) {
+  return Pick(lang, L"Could not update the Windows startup entry.",
+              L"Не вдалося оновити запис автозапуску Windows.",
+              L"Не удалось обновить запись автозапуска Windows.");
+}
+
+inline const wchar_t* HotkeyCollision(Lang lang) {
+  return Pick(lang, L"Lookup and Hide/Show use the same shortcut. Choose a different key or modifiers.",
+              L"Пошук і сховати/показати мають однакове поєднання. Оберіть іншу клавішу або модифікатори.",
+              L"Поиск и скрыть/показать используют одно сочетание. Выберите другую клавишу или модификаторы.");
 }
 
 inline const wchar_t* ResetDefaultsTitle(Lang lang) {
@@ -344,7 +356,9 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
                 L"Учитывать «Не беспокоить»");
   }
   if (wcscmp(key, L"Modules.WeatherCity") == 0) {
-    return Pick(lang, L"Weather city", L"Місто для погоди", L"Город для погоды");
+    return Pick(lang, L"Weather city (blank uses your IP)",
+                L"Місто для погоди (порожнє — за IP)",
+                L"Город для погоды (пусто — по IP)");
   }
   if (wcscmp(key, L"Modules.FirstDayOfWeek") == 0) {
     return Pick(lang, L"First day of week", L"Перший день тижня", L"Первый день недели");

@@ -3,8 +3,9 @@
 Standalone release (no Windhawk required).
 
 - **Tag:** `v1.0.6`
-- **Commit:** `8cc5e9eb6c3c0315b599f50b055397c0dcc45a2c`
 - **Date:** 2026-11-19
+
+The git tag is the source of truth for the release commit. Do not paste a commit hash here — editing the notes after the tag moves HEAD off the tag.
 
 ## Highlights since v1.0.5
 
@@ -16,7 +17,7 @@ Standalone release (no Windhawk required).
 
 ## Origin
 
-Ported from the Windhawk mod **Dynamic Island for Windows Lux** by **Averixor**, MIT license.
+Ported from the Windhawk mod **Dynamic Island for Windows** by **Himanshu (devcode90)**, MIT license, and maintained as Lux by **Averixor**. See `NOTICE`.
 
 The original single-file mod body remains at the repo root as  
 `Dynamic Island for Windows Lux.wh.cpp` — intentional archive **and** the translation unit linked into the exe. It is not a leftover file.
@@ -40,7 +41,7 @@ The original single-file mod body remains at the repo root as
 | Injected / tool-mod process | Own Win32 exe + tray |
 | Windhawk YAML settings | Flat `settings.json` + schema-driven dialog |
 | Windhawk storage API | `%AppData%\DynamicIslandLux\` |
-| No CI hook | `--smoke-test`, `--test-json`, exit codes 0–4 |
+| No CI hook | GitHub Actions: Release build, `--test-json`, `--smoke-test --no-workers` |
 
 ## Minimum OS
 

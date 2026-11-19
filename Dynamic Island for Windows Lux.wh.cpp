@@ -6,6 +6,8 @@
 // @version 1.9.1
 // @author Averixor
 // @github https://github.com/Averixor
+// Upstream: Dynamic Island for Windows, Copyright (c) 2026 devcode90
+// https://github.com/devcode90/Dynamic-Island-for-Windows (MIT). See NOTICE.
 // @include windhawk.exe
 // @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -ld3d11 -ldxgi -ldcomp -ldxva2 -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lpropsys -lwbemuuid -liphlpapi -lws2_32
 // @license MIT
@@ -14,7 +16,9 @@
 // STANDALONE NOTE: This file is also linked into app/ (LUX_STANDALONE). Keep it —
 // it is the island implementation TU, not leftover junk. Windhawk @version stays
 // 1.9.1 for the mod channel; the exe product version is CMake project(VERSION)
-// (see app/version.rc.in → 1.0.6 for the current standalone release).
+// (see app/version.rc.in). Do not treat the @version line as the standalone version.
+// The YAML block below is the Windhawk settings UI. Standalone settings come from
+// app/settings_schema.h — keep both, do not delete the YAML as a duplicate.
 //
 // ==WindhawkModReadme==
 /*
@@ -65,7 +69,7 @@
 
 - Наведення розгортає острів; у налаштуваннях можна змінити на клік.
 - Перетягування за порожню зону пігулки. Зсув пишеться в **Зсув по X / Y**.
-- Правий клік — меню: сховати, скинути позицію, таймер, джерело медіа, файловий лоток, закріпити, ігровий оверлей, Quick Lookup, форма (пігулка / виліт Win11 / виріз), прозорість, тема, ореол, фон DWM, налаштування Windhawk.
+- Правий клік — меню: сховати або показати, скинути позицію, вихід, налаштування. Усе інше — у діалозі налаштувань.
 - Повноекранне вікно ховає острів.
 - **Автоприховування**: `0` ніколи, `-1` лише наведення або подія, додатне число — секунди простою.
 
@@ -1382,6 +1386,27 @@ struct BackgroundTask {
 std::vector<BackgroundTask> g_backgroundTasks;
 bool g_acceptBackgroundTasks = true;
 
+struct WinRtMta {
+    bool armed = false;
+    WinRtMta() {
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            armed = true;
+        } catch (...) {
+        }
+    }
+    ~WinRtMta() {
+        if (!armed) {
+            return;
+        }
+        try {
+            winrt::uninit_apartment();
+        } catch (...) {
+        }
+    }
+    WinRtMta(const WinRtMta&) = delete;
+    WinRtMta& operator=(const WinRtMta&) = delete;
+};
 void LaunchBackgroundTask(std::function<void()> task) {
     std::lock_guard<std::mutex> lock(g_backgroundTasksMutex);
     if (!g_acceptBackgroundTasks) {
@@ -1424,9 +1449,25 @@ void StopBackgroundTasks() {
     }
 
     for (BackgroundTask& task : tasks) {
-        if (task.thread.joinable()) {
-            task.thread.join();
+        if (!task.thread.joinable()) {
+            continue;
         }
+#ifdef LUX_STANDALONE
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!task.finished->load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) {
+            Sleep(20);
+        }
+        if (task.finished->load(std::memory_order_acquire)) {
+            task.thread.join();
+        } else {
+            LuxWorkersStuckOnExit() = true;
+            task.thread.detach();
+            Wh_Log(L"StopBackgroundTasks: detached a task that did not finish in 2s");
+        }
+#else
+        task.thread.join();
+#endif
     }
 }
 std::atomic<int> g_idleTab = 0;
@@ -1520,6 +1561,7 @@ bool g_brightnessInitialized = false;
 int g_lastBrightness = -1;
 BYTE g_brightnessPowerSource = 255;
 std::atomic<double> g_lastNudgeTime = 0.0;
+std::atomic<bool> g_nudgePending{false};
 std::atomic<double> g_lastLyricsViewTime = 0.0;
 std::mutex g_bluetoothBatteryCacheMutex;
 std::unordered_map<std::wstring, int> g_bluetoothBatteryCache;
@@ -1983,6 +2025,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"%s & %s using camera & mic", L"%s і %s використовують камеру і мікрофон"},
         {L"Looking up...", L"Пошук..."},
         {L"No result found", L"Нічого не знайдено"},
+        {L"Enter a word", L"Введіть слово"},
+        {L"Query is too long", L"Запит занадто довгий"},
         {L"Type a word or phrase, then press Enter", L"Введіть слово або фразу й натисніть Enter"},
         {L"Search a word or phrase", L"Пошук слова або фрази"},
         {L"Recent", L"Нещодавні"},
@@ -2125,6 +2169,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"%s & %s using camera & mic", L"%s и %s используют камеру и микрофон"},
         {L"Looking up...", L"Поиск..."},
         {L"No result found", L"Ничего не найдено"},
+        {L"Enter a word", L"Введите слово"},
+        {L"Query is too long", L"Запрос слишком длинный"},
         {L"Type a word or phrase, then press Enter", L"Введите слово или фразу и нажмите Enter"},
         {L"Search a word or phrase", L"Поиск слова или фразы"},
         {L"Recent", L"Недавние"},
@@ -3130,6 +3176,9 @@ void ApplyLookupHotkey();
 // Reads Windhawk YAML into Settings. Every key must exist in the header
 // YAML: a missing key comes back empty/zero and silently disables the feature.
 void LoadSettings() {
+#ifdef LUX_STANDALONE
+    SettingsSnapshotScope settingsSnapshot;
+#endif
     Settings next;
     const std::wstring position = GetStringSettingCopy(L"Appearance.Position");
     {
@@ -3242,14 +3291,8 @@ void LoadSettings() {
     } else {
         next.spectrumStyle = SpectrumStyle::Bars;
     }
-    const int adaptiveOverride = Wh_GetIntValue(L"AdaptiveThemeOverride", -1);
-    next.adaptiveTheme = adaptiveOverride >= 0
-                             ? adaptiveOverride != 0
-                             : (Wh_GetIntSetting(L"Themes.AdaptiveTheme") != 0);
-    const int auraOverride = Wh_GetIntValue(L"AuraStyleOverride", -1);
-    if (auraOverride >= 0 && auraOverride <= static_cast<int>(AuraStyle::Orbit)) {
-        next.auraStyle = static_cast<AuraStyle>(auraOverride);
-    } else {
+    next.adaptiveTheme = Wh_GetIntSetting(L"Themes.AdaptiveTheme") != 0;
+    {
         const std::wstring auraStr = GetStringSettingCopy(L"Themes.AuraStyle");
         if (EqualsNoCase(auraStr, L"off")) {
             next.auraStyle = AuraStyle::Off;
@@ -3363,14 +3406,6 @@ void LoadSettings() {
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
     next.notificationRespectDnD = Wh_GetIntSetting(L"Modules.NotificationRespectDnD") != 0;
     {
-        const int backdropOverride = Wh_GetIntValue(L"BackdropMaterialOverride", -1);
-        if (backdropOverride == 0) {
-            next.backdropMaterial = BackdropMaterial::None;
-        } else if (backdropOverride == 1) {
-            next.backdropMaterial = BackdropMaterial::Blur;
-        } else if (backdropOverride == 2) {
-            next.backdropMaterial = BackdropMaterial::Acrylic;
-        } else {
             const std::wstring appearanceBackdrop =
                 GetStringSettingCopy(L"Appearance.BackdropMaterial");
             const std::wstring themesBackdrop = GetStringSettingCopy(L"Themes.BackdropMaterial");
@@ -3389,7 +3424,6 @@ void LoadSettings() {
             } else {
                 next.backdropMaterial = BackdropMaterial::None;
             }
-        }
     }
     next.useDirectComposition = Wh_GetIntSetting(L"Appearance.UseDirectComposition") != 0;
     next.timerContourProgress = Wh_GetIntSetting(L"Modules.TimerContourProgress") != 0;
@@ -3523,8 +3557,9 @@ void LoadSettings() {
     next.gameOverlayCompact = Wh_GetIntSetting(L"Modules.GameOverlayCompact") != 0;
     next.tintOpacity = Clamp(Wh_GetIntSetting(L"Themes.TintIntensity") / 100.0f, 0.0f, 1.0f);
     const int settingOpacity = Wh_GetIntSetting(L"Themes.PillOpacity");
-    const int localOpacity = Wh_GetIntValue(L"PillOpacityOverride", -1);
-    const bool nextGameOverlayPinned = Wh_GetIntValue(L"GameOverlayPinned", 0) != 0;
+    // PillOpacityOverride / GameOverlayPinned had no writer and stuck across upgrades.
+    const int localOpacity = -1;
+    const bool nextGameOverlayPinned = false;
     next.pillOpacity = Clamp((localOpacity >= 0 ? localOpacity : settingOpacity) / 100.0f,
                              0.35f, 1.0f);
     next.gameOverlay = Wh_GetIntSetting(L"Modules.GameOverlay") != 0;
@@ -3567,21 +3602,9 @@ void LoadSettings() {
         next.expandOnHover = modeHover || modeBoth;
         next.expandOnClick = modeClick || modeBoth;
     }
-    next.collapsedLyrics = Wh_GetIntSetting(L"Modules.CollapsedLyrics") != 0 ||
-                           Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
-    next.lyricsPinnedFirst = Wh_GetIntSetting(L"Modules.LyricsPinnedFirst") != 0 ||
-                             Wh_GetIntValue(L"LyricsPinnedFirst", 0) != 0;
-    {
-        const int mediaTabLyricsSetting = Wh_GetIntSetting(L"Modules.MediaTabLyrics") != 0 ? 1 : 0;
-        int mediaTabLyricsOverride = Wh_GetIntValue(L"MediaTabLyricsOverride", -1);
-        if (mediaTabLyricsOverride >= 0 &&
-            Wh_GetIntValue(L"MediaTabLyricsOverrideBase", -1) != mediaTabLyricsSetting) {
-            Wh_SetIntValue(L"MediaTabLyricsOverride", -1);
-            mediaTabLyricsOverride = -1;
-        }
-        next.mediaTabLyrics = mediaTabLyricsOverride >= 0 ? (mediaTabLyricsOverride != 0)
-                                                          : (mediaTabLyricsSetting != 0);
-    }
+    next.collapsedLyrics = Wh_GetIntSetting(L"Modules.CollapsedLyrics") != 0;
+    next.lyricsPinnedFirst = Wh_GetIntSetting(L"Modules.LyricsPinnedFirst") != 0;
+    next.mediaTabLyrics = Wh_GetIntSetting(L"Modules.MediaTabLyrics") != 0;
     next.autoDpiScale = Wh_GetIntSetting(L"Appearance.AutoDpiScale") != 0;
     next.allowDragMove = Wh_GetIntSetting(L"Behavior.AllowDragMove") != 0;
     if (g_islandDragging.load(std::memory_order_relaxed)) {
@@ -3595,18 +3618,8 @@ void LoadSettings() {
     next.separateExpandedOffsetY = Wh_GetIntSetting(L"Appearance.SeparateExpandedOffsetY") != 0;
     next.offsetYExpanded = Wh_GetIntSetting(L"Appearance.OffsetYExpanded");
     std::wstring shapeStr = GetStringSettingCopy(L"Appearance.ShapeStyle");
-    static std::wstring s_lastConfiguredShape = L"";
-    if (!shapeStr.empty() && shapeStr != s_lastConfiguredShape) {
-        s_lastConfiguredShape = shapeStr;
-        Wh_SetIntValue(L"W11StyleOverride", -1);
-        Wh_SetIntValue(L"NotchStyleOverride", -1);
-    }
-    bool baseW11 = EqualsNoCase(shapeStr, L"w11");
-    bool baseNotch = EqualsNoCase(shapeStr, L"notch");
-    const int localW11Style = Wh_GetIntValue(L"W11StyleOverride", -1);
-    next.w11Style = localW11Style >= 0 ? (localW11Style != 0) : baseW11;
-    const int localNotchStyle = Wh_GetIntValue(L"NotchStyleOverride", -1);
-    next.notchStyle = localNotchStyle >= 0 ? (localNotchStyle != 0) : baseNotch;
+    next.w11Style = EqualsNoCase(shapeStr, L"w11");
+    next.notchStyle = EqualsNoCase(shapeStr, L"notch");
     if (IsBottomPosition(next.position)) {
         next.notchStyle = false;
     }
@@ -3870,7 +3883,6 @@ void LoadSettings() {
                                     next.spectrumStyle == SpectrumStyle::Plasma ||
                                     next.auraStyle != AuraStyle::Off,
                                 std::memory_order_relaxed);
-    Wh_SetIntValue(L"PinnedExpanded", 0);
     next.sizeScale = next.baseSizeScale;
     bool cityChanged = false;
     bool hotkeySettingChanged = false;
@@ -3898,7 +3910,7 @@ void LoadSettings() {
     }
     g_pillOpacityOverride.store(localOpacity, std::memory_order_relaxed);
     g_gameOverlayPinned.store(nextGameOverlayPinned, std::memory_order_relaxed);
-    g_pinnedExpanded.store(false, std::memory_order_relaxed);
+    g_pinnedExpanded.store(Wh_GetIntValue(L"PinnedExpanded", 0) != 0, std::memory_order_relaxed);
     g_capsLockEnabled.store(nextCapsLock, std::memory_order_relaxed);
     g_unhideOnHoverEnabled.store(nextUnhideOnHover, std::memory_order_relaxed);
     g_layoutDirty = true;
@@ -4413,6 +4425,10 @@ void ApplyHideShowHotkey() {
             g_hotkeyRegistered = true;
         } else {
             Wh_Log(L"Failed to register hide/show hotkey (error %lu).", GetLastError());
+#ifdef LUX_STANDALONE
+            NotifyTrayBalloon(L"Dynamic Island Lux",
+                              L"Could not register the hide/show hotkey. It may already be in use.");
+#endif
         }
     }
 }
@@ -4431,7 +4447,8 @@ void ClampIslandDragOffsets(const Settings& settings, int* offsetX, int* offsetY
     }
     const RECT work = GetAnchorWorkRectFor(settings.targetMonitor);
     const int margin = 12;
-    const float scale = std::max(0.05f, settings.sizeScale);
+    // Work rect is physical pixels. EffectiveSizeScale includes the monitor DPI factor.
+    const float scale = std::max(0.05f, EffectiveSizeScale(settings));
     const int pillW = std::max(48, static_cast<int>(std::lround(160.0f * scale)));
     const int pillH = std::max(36, static_cast<int>(std::lround(44.0f * scale)));
     const bool flushTop = settings.notchStyle || settings.borderMergedMode;
@@ -5577,11 +5594,17 @@ std::vector<uint8_t> ReadWinRtStreamBytes(
 void TriggerNudge() {
     const bool wasParked = g_autoHiddenParked.exchange(false, std::memory_order_relaxed);
     const double now = NowSeconds();
-    const double previous = g_lastNudgeTime.load();
-    if (!wasParked && now - previous < 0.45) {
-        return;
+    double previous = g_lastNudgeTime.load(std::memory_order_relaxed);
+    for (;;) {
+        if (!wasParked && now - previous < 0.45) {
+            g_nudgePending.store(true, std::memory_order_relaxed);
+            return;
+        }
+        if (g_lastNudgeTime.compare_exchange_weak(previous, now, std::memory_order_relaxed)) {
+            break;
+        }
     }
-    g_lastNudgeTime = now;
+    g_nudgePending.store(false, std::memory_order_relaxed);
     HWND hwnd = g_hwnd;
     if (hwnd) {
         PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
@@ -7021,46 +7044,6 @@ void PushAudioChunks(BYTE* data, UINT32 frames, WAVEFORMATEX* format) {
         PushWaveformSample(Clamp(static_cast<float>(std::sqrt(sum / samples) * 4.0), 0.0f, 1.0f));
     }
 }
-std::string HttpGet(const wchar_t* host, const wchar_t* path, bool https = true) {
-    std::string response;
-    HINTERNET hSession = WinHttpOpen(L"DynamicIsland/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) {
-        Wh_Log(L"Weather HttpGet: WinHttpOpen failed with error %lu", GetLastError());
-        return response;
-    }
-    HINTERNET hConnect = WinHttpConnect(hSession, host, https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT, 0);
-    if (hConnect) {
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
-        if (hRequest) {
-            if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-                WinHttpReceiveResponse(hRequest, nullptr)) {
-                DWORD size = 0;
-                DWORD downloaded = 0;
-                do {
-                    if (WinHttpQueryDataAvailable(hRequest, &size) && size > 0) {
-                        std::vector<char> buffer(size + 1);
-                        if (WinHttpReadData(hRequest, buffer.data(), size, &downloaded)) {
-                            buffer[downloaded] = '\0';
-                            response.append(buffer.data());
-                        } else {
-                            Wh_Log(L"Weather HttpGet: WinHttpReadData failed with error %lu", GetLastError());
-                        }
-                    }
-                } while (size > 0);
-            } else {
-                Wh_Log(L"Weather HttpGet: WinHttpSendRequest/ReceiveResponse failed with error %lu", GetLastError());
-            }
-            WinHttpCloseHandle(hRequest);
-        } else {
-            Wh_Log(L"Weather HttpGet: WinHttpOpenRequest failed with error %lu", GetLastError());
-        }
-        WinHttpCloseHandle(hConnect);
-    } else {
-        Wh_Log(L"Weather HttpGet: WinHttpConnect failed with error %lu", GetLastError());
-    }
-    WinHttpCloseHandle(hSession);
-    return response;
-}
 struct HttpResult {
     bool ok = false;
     DWORD status = 0;
@@ -7129,16 +7112,6 @@ HttpResult HttpGetEx(const wchar_t* host, const wchar_t* path, bool https, const
     return result;
 }
 std::wstring PercentEncodeUtf8(const std::wstring& text) {
-    auto looksPreEncoded = [](const std::wstring& value) {
-        const size_t pos = value.find(L'%');
-        if (pos == std::wstring::npos || pos + 2 >= value.size()) {
-            return false;
-        }
-        return iswxdigit(value[pos + 1]) && iswxdigit(value[pos + 2]);
-    };
-    if (looksPreEncoded(text)) {
-        return text;
-    }
     const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (bytes <= 1) {
         return std::wstring();
@@ -7162,6 +7135,77 @@ std::wstring PercentEncodeUtf8(const std::wstring& text) {
     }
     return out;
 }
+std::wstring WidenWeatherField(const std::string& value) {
+    std::string plain;
+    plain.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '\\' && i + 1 < value.size()) {
+            const char escaped = value[++i];
+            switch (escaped) {
+            case 'n': plain.push_back('\n'); break;
+            case 'r': plain.push_back('\r'); break;
+            case 't': plain.push_back('\t'); break;
+            case 'b': plain.push_back('\b'); break;
+            case 'f': plain.push_back('\f'); break;
+            default: plain.push_back(escaped); break;
+            }
+        } else {
+            plain.push_back(value[i]);
+        }
+    }
+    if (plain.empty()) {
+        return {};
+    }
+    const int chars = MultiByteToWideChar(CP_UTF8, 0, plain.data(), static_cast<int>(plain.size()),
+                                          nullptr, 0);
+    if (chars <= 0) {
+        return {};
+    }
+    std::wstring out(static_cast<size_t>(chars), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, plain.data(), static_cast<int>(plain.size()), out.data(), chars);
+    return out;
+}
+std::wstring WeatherLangQuery() {
+    std::wstring lang;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        lang = g_settings.language;
+    }
+    auto fromPrimary = [](WORD primary) -> const wchar_t* {
+        switch (primary) {
+        case LANG_UKRAINIAN: return L"uk";
+        case LANG_RUSSIAN: return L"ru";
+        case LANG_GERMAN: return L"de";
+        case LANG_FRENCH: return L"fr";
+        case LANG_ITALIAN: return L"it";
+        case LANG_POLISH: return L"pl";
+        case LANG_SPANISH: return L"es";
+        case LANG_PORTUGUESE: return L"pt";
+        case LANG_JAPANESE: return L"ja";
+        case LANG_KOREAN: return L"ko";
+        case LANG_CHINESE: return L"zh";
+        case LANG_TURKISH: return L"tr";
+        case LANG_HINDI: return L"hi";
+        case LANG_INDONESIAN: return L"id";
+        case LANG_ENGLISH: return L"en";
+        default: return L"en";
+        }
+    };
+    if (lang.empty() || EqualsNoCase(lang, L"auto")) {
+        return fromPrimary(PRIMARYLANGID(GetUserDefaultUILanguage()));
+    }
+    if (EqualsNoCase(lang, L"uk") || EqualsNoCase(lang, L"ru") || EqualsNoCase(lang, L"en") ||
+        EqualsNoCase(lang, L"de") || EqualsNoCase(lang, L"fr") || EqualsNoCase(lang, L"it") ||
+        EqualsNoCase(lang, L"pl") || EqualsNoCase(lang, L"es") || EqualsNoCase(lang, L"pt") ||
+        EqualsNoCase(lang, L"ja") || EqualsNoCase(lang, L"ko") || EqualsNoCase(lang, L"zh") ||
+        EqualsNoCase(lang, L"tr") || EqualsNoCase(lang, L"hi") || EqualsNoCase(lang, L"id")) {
+        for (wchar_t& ch : lang) {
+            ch = static_cast<wchar_t>(towlower(ch));
+        }
+        return lang;
+    }
+    return fromPrimary(PRIMARYLANGID(GetUserDefaultUILanguage()));
+}
 // wttr.in JSON. Failures keep the last good WeatherSnapshot.
 DWORD WINAPI WeatherThreadProc(void*) {
     WaitForSingleObject(g_stopEvent, 3000);
@@ -7179,15 +7223,27 @@ DWORD WINAPI WeatherThreadProc(void*) {
             WaitForSingleObject(g_stopEvent, 2000);
             continue;
         }
-        std::wstring url = L"/?format=j1&lang=uk";
+        const std::wstring weatherLang = WeatherLangQuery();
+        std::wstring url = L"/?format=j1&lang=" + weatherLang;
         if (!cityOverride.empty()) {
             const std::wstring encodedCity = PercentEncodeUtf8(cityOverride);
             if (!encodedCity.empty()) {
-                url = L"/" + encodedCity + L"?format=j1&lang=uk";
+                url = L"/" + encodedCity + L"?format=j1&lang=" + weatherLang;
             }
         }
-        Wh_Log(L"Weather: Requesting weather from wttr.in/host: wttr.in, path: %s", url.c_str());
-        std::string wRes = HttpGet(L"wttr.in", url.c_str(), true);
+#ifdef LUX_STANDALONE
+        LuxLog(LuxLogLevel::Debug, L"Weather: requesting wttr.in %s", url.c_str());
+#else
+        Wh_Log(L"Weather: Requesting weather from wttr.in path: %s", url.c_str());
+#endif
+        const HttpResult weatherHttp = HttpGetEx(L"wttr.in", url.c_str(), true, L"DynamicIsland/1.0");
+        std::string wRes;
+        if (weatherHttp.ok && weatherHttp.status == 200) {
+            wRes = weatherHttp.body;
+        } else {
+            Wh_Log(L"Weather: HttpGetEx failed (ok=%d status=%lu)", weatherHttp.ok ? 1 : 0,
+                   weatherHttp.status);
+        }
         bool weatherCommitted = false;
         if (!wRes.empty()) {
             Wh_Log(L"Weather: Received response from wttr.in (size: %zu bytes)", wRes.size());
@@ -7208,13 +7264,7 @@ DWORD WINAPI WeatherThreadProc(void*) {
                         valStr++;
                     const char* end = strchr(valStr, '\"');
                     if (end) {
-                        std::string cityA(valStr, end - valStr);
-                        int wchars_num = MultiByteToWideChar(CP_UTF8, 0, cityA.c_str(), -1, NULL, 0);
-                        if (wchars_num > 0) {
-                            std::vector<wchar_t> wstr(wchars_num);
-                            MultiByteToWideChar(CP_UTF8, 0, cityA.c_str(), -1, &wstr[0], wchars_num);
-                            cityLabel = wstr.data();
-                        }
+                        cityLabel = WidenWeatherField(std::string(valStr, end - valStr));
                     }
                 }
             }
@@ -7228,13 +7278,7 @@ DWORD WINAPI WeatherThreadProc(void*) {
                             kStr++;
                         const char* end = strchr(kStr, '\"');
                         if (end) {
-                            std::string valA(kStr, end - kStr);
-                            int wchars_num = MultiByteToWideChar(CP_UTF8, 0, valA.c_str(), -1, NULL, 0);
-                            if (wchars_num > 0) {
-                                std::vector<wchar_t> wstr(wchars_num);
-                                MultiByteToWideChar(CP_UTF8, 0, valA.c_str(), -1, &wstr[0], wchars_num);
-                                out = wstr.data();
-                            }
+                            out = WidenWeatherField(std::string(kStr, end - kStr));
                         }
                     }
                 };
@@ -7261,15 +7305,9 @@ DWORD WINAPI WeatherThreadProc(void*) {
                             valStr++;
                         const char* end = strchr(valStr, '\"');
                         if (end) {
-                            std::string valA(valStr, end - valStr);
-                            int wchars_num = MultiByteToWideChar(CP_UTF8, 0, valA.c_str(), -1, NULL, 0);
-                            if (wchars_num > 0) {
-                                std::vector<wchar_t> wstr(wchars_num);
-                                MultiByteToWideChar(CP_UTF8, 0, valA.c_str(), -1, &wstr[0], wchars_num);
-                                desc = wstr.data();
-                                while (!desc.empty() && desc.back() == L' ')
-                                    desc.pop_back();
-                            }
+                            desc = WidenWeatherField(std::string(valStr, end - valStr));
+                            while (!desc.empty() && desc.back() == L' ')
+                                desc.pop_back();
                         }
                     }
                 }
@@ -7280,8 +7318,13 @@ DWORD WINAPI WeatherThreadProc(void*) {
                 weatherCommitted = (code != 0) || !desc.empty();
                 std::wstring finalCity = cityOverride.empty() ? cityLabel : cityOverride;
                 if (weatherCommitted) {
-                    Wh_Log(L"Weather parsed success: city=%s, temp=%.1f, feelsLike=%s, humidity=%s%%, desc=%s",
+#ifdef LUX_STANDALONE
+                    LuxLog(LuxLogLevel::Debug,
+                           L"Weather parsed: city=%s temp=%.1f feels=%s humidity=%s desc=%s",
                            finalCity.c_str(), temp, feelsLike.c_str(), humidity.c_str(), desc.c_str());
+#else
+                    Wh_Log(L"Weather parsed success: city=%s, temp=%.1f", finalCity.c_str(), temp);
+#endif
                 } else {
                     Wh_Log(L"Weather: response had no usable reading, keeping previous data.");
                 }
@@ -8526,7 +8569,11 @@ DWORD WINAPI LyricsThreadProc(void*) {
         {
             LyricsSnapshot cached;
             if (LyricsCache::Lookup(cacheKeys, diskCacheOn, title, artist, &cached)) {
-                Wh_Log(L"Lyrics: cache hit for %s - %s", artist.c_str(), title.c_str());
+#ifdef LUX_STANDALONE
+                LuxLog(LuxLogLevel::Debug, L"Lyrics: cache hit");
+#else
+                Wh_Log(L"Lyrics: cache hit");
+#endif
                 std::lock_guard lock(g_stateMutex);
                 if (g_state.media.title == title && g_state.media.artist == artist) {
                     g_state.lyrics = std::move(cached);
@@ -8542,7 +8589,11 @@ DWORD WINAPI LyricsThreadProc(void*) {
             g_state.lyrics.matchedArtist = artist;
         }
         const int durationSec = endTicks > 0 ? static_cast<int>(endTicks / 10000000.0 + 0.5) : 0;
-        Wh_Log(L"Lyrics: requesting %s - %s (attempt %d)", artist.c_str(), title.c_str(), failCount + 1);
+#ifdef LUX_STANDALONE
+        LuxLog(LuxLogLevel::Debug, L"Lyrics: requesting (attempt %d)", failCount + 1);
+#else
+        Wh_Log(L"Lyrics: requesting (attempt %d)", failCount + 1);
+#endif
         LyricsPick pick;
         bool definitive = true;
         FetchLyricsFromLrclib(title, artist, album, durationSec, &pick, &definitive);
@@ -8558,7 +8609,11 @@ DWORD WINAPI LyricsThreadProc(void*) {
         } else if (definitive) {
             snap.notFound = true;
             failCount = 0;
-            Wh_Log(L"Lyrics: genuinely no lyrics for %s - %s", artist.c_str(), title.c_str());
+#ifdef LUX_STANDALONE
+            LuxLog(LuxLogLevel::Debug, L"Lyrics: no lyrics for the current track");
+#else
+            Wh_Log(L"Lyrics: genuinely no lyrics for the current track");
+#endif
         } else {
             ++failCount;
             static const double kBackoff[] = {4.0, 10.0, 30.0, 60.0};
@@ -10665,6 +10720,50 @@ namespace QuickLookup {
         *out = std::move(r);
         return Outcome::Found;
     }
+    const wchar_t* LookupHost(bool wiktionary) {
+        std::wstring lang = L"en";
+        {
+            std::lock_guard lock(g_settingsMutex);
+            if (!g_settings.language.empty()) {
+                lang = g_settings.language;
+            }
+        }
+        const wchar_t* code = L"en";
+        auto fromPrimary = [](WORD primary) -> const wchar_t* {
+            switch (primary) {
+            case LANG_UKRAINIAN: return L"uk";
+            case LANG_RUSSIAN: return L"ru";
+            case LANG_GERMAN: return L"de";
+            case LANG_FRENCH: return L"fr";
+            case LANG_ITALIAN: return L"it";
+            case LANG_POLISH: return L"pl";
+            case LANG_SPANISH: return L"es";
+            case LANG_PORTUGUESE: return L"pt";
+            case LANG_JAPANESE: return L"ja";
+            case LANG_KOREAN: return L"ko";
+            case LANG_CHINESE: return L"zh";
+            case LANG_TURKISH: return L"tr";
+            case LANG_HINDI: return L"hi";
+            case LANG_INDONESIAN: return L"id";
+            default: return L"en";
+            }
+        };
+        if (EqualsNoCase(lang, L"auto")) {
+            code = fromPrimary(PRIMARYLANGID(GetUserDefaultUILanguage()));
+        } else if (lang.size() == 2) {
+            static thread_local wchar_t buf[3];
+            buf[0] = static_cast<wchar_t>(towlower(lang[0]));
+            buf[1] = static_cast<wchar_t>(towlower(lang[1]));
+            buf[2] = 0;
+            code = buf;
+        } else {
+            code = fromPrimary(PRIMARYLANGID(GetUserDefaultUILanguage()));
+        }
+        static thread_local std::wstring host;
+        host.assign(code);
+        host += wiktionary ? L".wiktionary.org" : L".wikipedia.org";
+        return host.c_str();
+    }
     Outcome LookupWikipedia(const std::wstring& query, Result* out) {
         const std::wstring candidates[2] = {query, TitleCase(query)};
         Outcome outcome = Outcome::NotFound;
@@ -10676,7 +10775,7 @@ namespace QuickLookup {
             std::replace(title.begin(), title.end(), L' ', L'_');
             const std::wstring path =
                 L"/api/rest_v1/page/summary/" + AsciiToWide(UrlEncodeComponent(title));
-            const HttpResult res = HttpGetEx(L"en.wikipedia.org", path.c_str(), true, kLookupUserAgent);
+            const HttpResult res = HttpGetEx(LookupHost(false), path.c_str(), true, kLookupUserAgent);
             if (!res.IsDefinitive()) {
                 return Outcome::Failed;
             }
@@ -10869,7 +10968,7 @@ namespace QuickLookup {
             }
             const std::wstring path = L"/api/rest_v1/page/definition/" +
                                       AsciiToWide(UrlEncodeComponent(candidates[i]));
-            const HttpResult res = HttpGetEx(L"en.wiktionary.org", path.c_str(), true, kLookupUserAgent);
+            const HttpResult res = HttpGetEx(LookupHost(true), path.c_str(), true, kLookupUserAgent);
             if (!res.IsDefinitive()) {
                 return Outcome::Failed;
             }
@@ -10992,12 +11091,19 @@ std::vector<LookupRow> CurrentLookupRows(LookupStatus* status) {
     return BuildLookupRows(g_state.lookupRecent, g_lookupUi);
 }
 void ForceForeground(HWND hwnd) {
-    INPUT input{};
-    SendInput(1, &input, sizeof(INPUT));
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    const DWORD thisThread = GetCurrentThreadId();
+    const bool attached = foregroundThread && foregroundThread != thisThread &&
+                          AttachThreadInput(thisThread, foregroundThread, TRUE);
+    AllowSetForegroundWindow(ASFW_ANY);
     SetForegroundWindow(hwnd);
     BringWindowToTop(hwnd);
-    DwmBackdrop::EnsureBehind(hwnd);
     SetFocus(hwnd);
+    if (attached) {
+        AttachThreadInput(thisThread, foregroundThread, FALSE);
+    }
+    DwmBackdrop::EnsureBehind(hwnd);
 }
 void BeginLookupSession(HWND hwnd) {
     HWND previous = GetForegroundWindow();
@@ -11032,9 +11138,27 @@ void CloseLookupPanel(HWND hwnd) {
     g_layoutDirty = true;
     EndLookupSession(hwnd);
 }
+void ShowLookupNotice(const wchar_t* message) {
+    LookupSnapshot snap;
+    snap.active = true;
+    snap.status = LookupStatus::NoResult;
+    snap.title = Loc(message);
+    snap.expiresAt = NowSeconds() + QuickLookup::kMessageSeconds;
+    PublishNewLookup(snap, true);
+}
 void SubmitLookup(const std::wstring& rawText) {
+    const std::wstring collapsed = QuickLookup::CollapseWhitespace(rawText);
+    if (collapsed.empty()) {
+        ShowLookupNotice(L"Enter a word");
+        return;
+    }
+    if (collapsed.size() > QuickLookup::kMaxQueryChars) {
+        ShowLookupNotice(L"Query is too long");
+        return;
+    }
     const std::wstring query = QuickLookup::NormalizeQuery(rawText);
-    if (query.empty() || query.size() > QuickLookup::kMaxQueryChars) {
+    if (query.empty()) {
+        ShowLookupNotice(L"Enter a word");
         return;
     }
     const double now = NowSeconds();
@@ -11378,10 +11502,13 @@ void ApplyLookupHotkey() {
         g_lookupHotkeyRegistered = true;
         Wh_Log(L"Quick Lookup hotkey registered (mods=0x%X vk=0x%X)", settings.lookupModifiers,
                settings.lookupVk);
-    } else {
-        // CI / locked session: hotkey may fail — Warn only, island keeps running.
+        } else {
         Wh_Log(L"Quick Lookup hotkey failed (error %lu) — continuing without global shortcut.",
                GetLastError());
+#ifdef LUX_STANDALONE
+        NotifyTrayBalloon(L"Dynamic Island Lux",
+                          L"Could not register the Quick Lookup hotkey. It may already be in use.");
+#endif
     }
 }
 void SetClickThrough(HWND hwnd, bool clickThrough) {
@@ -11725,7 +11852,7 @@ void PublishVolumeHitLayout(const D2D1_RECT_F& rect, const D2D1_RECT_F& mute,
 }
 void SeekMediaToTicks(int64_t targetTicks) {
     LaunchBackgroundTask([targetTicks]() {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        WinRtMta apartment;
         try {
             using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
             auto manager = Manager::RequestAsync().get();
@@ -11774,7 +11901,7 @@ winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession Resolv
 }
 void SendMediaTransportCommand(int cmd) {
     LaunchBackgroundTask([cmd]() {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        WinRtMta apartment;
         bool sessionAttempted = false;
         bool reportedSuccess = false;
         try {
@@ -11814,7 +11941,7 @@ void SendMediaTransportCommand(int cmd) {
 }
 void CycleMediaQueueMode() {
     LaunchBackgroundTask([]() {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        WinRtMta apartment;
         try {
             auto session = ResolveMediaSession();
             if (!session) {
@@ -12482,13 +12609,36 @@ void ApplyMediaSourceMenuCommand(UINT cmd, const std::vector<MediaSourceMenuItem
         LockMediaSource(items[index].aumid);
     }
 }
+struct PopupActivationGuard {
+    HWND hwnd = nullptr;
+    LONG_PTR previous = 0;
+    bool changed = false;
+    explicit PopupActivationGuard(HWND window) : hwnd(window) {
+        if (!hwnd) {
+            return;
+        }
+        previous = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if (previous & WS_EX_NOACTIVATE) {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, previous & ~static_cast<LONG_PTR>(WS_EX_NOACTIVATE));
+            changed = true;
+        }
+        SetForegroundWindow(hwnd);
+    }
+    ~PopupActivationGuard() {
+        if (changed && IsWindow(hwnd)) {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, previous);
+        }
+    }
+    PopupActivationGuard(const PopupActivationGuard&) = delete;
+    PopupActivationGuard& operator=(const PopupActivationGuard&) = delete;
+};
 void ShowMediaSourcePopup(HWND hwnd, POINT screenPoint) {
 #ifdef LUX_STANDALONE
     MenuTheme::PreparePopup();
 #endif
     HMENU menu = CreatePopupMenu();
     const std::vector<MediaSourceMenuItem> items = AppendMediaSourceItems(menu);
-    SetForegroundWindow(hwnd);
+    PopupActivationGuard activation(hwnd);
     DwmBackdrop::EnsureBehind(hwnd);
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
                                     screenPoint.x, screenPoint.y, 0, hwnd, nullptr);
@@ -12518,7 +12668,7 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
 #ifdef LUX_STANDALONE
     MenuTheme::PreparePopup();
 #endif
-    SetForegroundWindow(hwnd);
+    PopupActivationGuard activation(hwnd);
     DwmBackdrop::EnsureBehind(hwnd);
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
                                     screenPoint.x, screenPoint.y, 0, hwnd, nullptr);
@@ -21523,6 +21673,7 @@ private:
         const float right = rect.right - LookupLayout::kPadX - 4.0f;
         const float y = rect.top + LookupLayout::kBelowField;
         const wchar_t* msg = lk.status == LookupStatus::Loading ? Loc(L"Looking up...")
+                             : !lk.title.empty()                ? lk.title.c_str()
                                                                 : Loc(L"No result found");
         DWRITE_TEXT_METRICS tm{};
         if (auto layout = MakeLineLayout(msg, textFormat_.Get(), right - left, &tm, true)) {
@@ -22276,25 +22427,6 @@ constexpr UINT WM_APP_CAPSLOCK = WM_APP + 0x444;
 HHOOK g_keyboardHook = nullptr;
 HANDLE g_keyboardThread = nullptr;
 DWORD g_keyboardThreadId = 0;
-LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION &&
-        (wParam == WM_KEYUP || wParam == WM_SYSKEYUP ||
-         wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
-        auto* kbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-        if (kbd && (kbd->vkCode == VK_CAPITAL || kbd->vkCode == VK_NUMLOCK) &&
-            (wParam == WM_KEYUP || wParam == WM_SYSKEYUP)) {
-            // GetKeyState is per-thread queue and stays stale on this hook thread.
-            // GetAsyncKeyState reports the real Caps/Num toggle latch.
-            const bool capsOn = (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
-            const bool numOn = (GetAsyncKeyState(VK_NUMLOCK) & 0x0001) != 0;
-            if (HWND hwnd = g_hwnd) {
-                const LPARAM state = (capsOn ? 1 : 0) | (numOn ? 2 : 0);
-                PostMessageW(hwnd, WM_APP_CAPSLOCK, kbd->vkCode, state);
-            }
-        }
-    }
-    return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-}
 static bool CapsLockHookWanted() {
     return g_capsLockEnabled.load(std::memory_order_relaxed);
 }
@@ -22304,34 +22436,18 @@ void NotifyKeyboardThreadSettingChanged() {
     }
 }
 DWORD WINAPI KeyboardThreadProc(void*) {
-    // Long-lived owner of WH_KEYBOARD_LL: lives until g_stopEvent / WM_QUIT from StopThreads.
-    // UnhookWindowsHookEx runs on this same thread before return — required for LL hooks.
+    // Caps/Num are polled with GetAsyncKeyState. WH_KEYBOARD_LL is not installed:
+    // the same thread already sees the toggle bits, and an LL hook trips AV heuristics.
     while (!g_hwnd && WaitForSingleObject(g_stopEvent, 10) == WAIT_TIMEOUT) {
     }
     bool quit = false;
-    ULONGLONG lastHookFailLog = 0;
     bool prevCapsOn = (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
     bool prevNumOn = (GetAsyncKeyState(VK_NUMLOCK) & 0x0001) != 0;
     bool lockStateSeeded = false;
     while (!quit && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         const bool wanted = CapsLockHookWanted();
-        if (wanted && !g_keyboardHook) {
-            g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, nullptr, 0);
-            if (!g_keyboardHook) {
-                const ULONGLONG nowTick = GetTickCount64();
-                if (nowTick - lastHookFailLog > 5000) {
-                    lastHookFailLog = nowTick;
-                    Wh_Log(L"Caps/Num Lock hook failed to install (error %lu).", GetLastError());
-                }
-            } else {
-                // Hook lives on this long-lived KeyboardThreadProc — not a temp thread.
-                Wh_Log(L"worker keyboard LL hook started");
-            }
-        } else if (!wanted && g_keyboardHook) {
-            UnhookWindowsHookEx(g_keyboardHook);
-            g_keyboardHook = nullptr;
+        if (!wanted) {
             lockStateSeeded = false;
-            Wh_Log(L"worker keyboard LL hook stopped");
         }
         if (wanted) {
             const bool capsOn = (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
@@ -23085,7 +23201,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             using WTSRegisterSessionNotification_t = BOOL(WINAPI*)(HWND, DWORD);
             HMODULE wts = GetModuleHandleW(L"wtsapi32.dll");
             if (!wts) {
-                wts = LoadLibraryW(L"wtsapi32.dll");
+                wts = LoadLibraryExW(L"wtsapi32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
             }
             const auto pWtsReg = wts ? reinterpret_cast<WTSRegisterSessionNotification_t>(
                                            GetProcAddress(wts, "WTSRegisterSessionNotification"))
@@ -23117,11 +23233,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         paths.reserve(count);
         for (UINT i = 0; i < count; ++i) {
-            wchar_t path[MAX_PATH] = {};
-            if (DragQueryFileW(drop, i, path, ARRAYSIZE(path)) == 0) {
+            const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+            if (len == 0) {
                 continue;
             }
-            paths.emplace_back(path);
+            std::wstring path(static_cast<size_t>(len) + 1, L'\0');
+            if (DragQueryFileW(drop, i, path.data(), len + 1) == 0) {
+                continue;
+            }
+            path.resize(len);
+            paths.emplace_back(std::move(path));
         }
         DragFinish(drop);
         if (!paths.empty()) {
@@ -24154,7 +24275,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         if (wParam == ID_HIDE_SHOW_HOTKEY) {
-            if (g_isFullscreen.load(std::memory_order_relaxed)) {
+            const bool fullscreenNow =
+                IsAppBlacklistActive(settings) ||
+                (settings.autoHideFullscreen && IsForegroundFullscreen(hwnd));
+            g_isFullscreen.store(fullscreenNow, std::memory_order_relaxed);
+            if (fullscreenNow) {
                 g_fullscreenOverrideVisible = !g_fullscreenOverrideVisible.load();
                 g_autoHiddenParked = false;
                 g_layoutDirty = true;
@@ -24359,6 +24484,18 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
             TranslateMessage(&message);
             DispatchMessageW(&message);  // WM_HOTKEY → OverlayWndProc on this thread
+        }
+        if (g_nudgePending.load(std::memory_order_relaxed)) {
+            const double nudgeNow = NowSeconds();
+            const double nudgePrev = g_lastNudgeTime.load(std::memory_order_relaxed);
+            if (nudgeNow - nudgePrev >= 0.45) {
+                g_nudgePending.store(false, std::memory_order_relaxed);
+                g_lastNudgeTime.store(nudgeNow, std::memory_order_relaxed);
+                nudgeSpring.value = -6.0f;
+                nudgeSpring.velocity = 0.0f;
+                nudgeSpring.target = 0.0f;
+                lastInteractionTime = nudgeNow;
+            }
         }
         BindVolumeEndpoint();
         bool justUnhidden = false;
@@ -25110,7 +25247,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 if (springsAnimating && targetFrameMs < 10.0) {
                     while (std::chrono::steady_clock::now() < nextFrameTarget &&
                            WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-                        std::this_thread::yield();
+                        Sleep(1);
                     }
                 }
             } else {
@@ -25282,7 +25419,7 @@ void StopThreads() {
                     Wh_Log(L"worker %s did not stop within %lu ms", threadNames[i], waitMs);
                 }
             }
-            Wh_Log(L"StopThreads: timeout — continuing Uninit after stuck-worker report");
+            Wh_Log(L"StopThreads: timeout — will not close live thread handles");
         } else if (waitResult == WAIT_FAILED) {
             Wh_Log(L"WaitForMultipleObjects failed during shutdown (error %lu); "
                    L"waiting for threads individually.",
@@ -25300,8 +25437,22 @@ void StopThreads() {
         }
     }
 
+#ifdef LUX_STANDALONE
+    if (LuxWorkersStuckOnExit()) {
+        // Closing handles of threads that are still running, then destroying
+        // globals, is undefined. Save and leave the process instead.
+        SettingsStoreShutdown();
+        ExitProcess(static_cast<UINT>(LuxExitCode::WorkersStuck));
+    }
+#endif
     // All producers are stopped; now join the short-lived tasks they created.
     StopBackgroundTasks();
+#ifdef LUX_STANDALONE
+    if (LuxWorkersStuckOnExit()) {
+        SettingsStoreShutdown();
+        ExitProcess(static_cast<UINT>(LuxExitCode::WorkersStuck));
+    }
+#endif
 
     for (HANDLE handle : activeThreads) {
         CloseHandle(handle);

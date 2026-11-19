@@ -36,8 +36,32 @@ bool AppsUseLightTheme() {
   return value != 0;
 }
 
+DWORD WindowsBuildNumber() {
+  using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (!ntdll) {
+    return 0;
+  }
+  auto rtl = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
+  if (!rtl) {
+    return 0;
+  }
+  OSVERSIONINFOW info = {};
+  info.dwOSVersionInfoSize = sizeof(info);
+  if (rtl(&info) != 0) {
+    return 0;
+  }
+  return info.dwBuildNumber;
+}
+
 void ResolveApis() {
   std::call_once(g_resolveOnce, [] {
+    // Ordinals 135/136 are undocumented. 1809 uses AllowDarkModeForApp; 1903+ adds
+    // SetPreferredAppMode + FlushMenuThemes. Skip them below the build that introduced them.
+    const DWORD build = WindowsBuildNumber();
+    if (build != 0 && build < 17763) {
+      return;
+    }
     HMODULE ux = GetModuleHandleW(L"uxtheme.dll");
     if (!ux) {
       ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -51,10 +75,10 @@ void ResolveApis() {
     auto* ord135 = GetProcAddress(ux, MAKEINTRESOURCEA(135));
     auto* ord136 = GetProcAddress(ux, MAKEINTRESOURCEA(136));
     g_flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(ord136);
-    if (ord136) {
+    if (ord136 && (build == 0 || build >= 18362)) {
       // FlushMenuThemes exists ⇒ 1903+ SetPreferredAppMode ABI.
       g_setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFn>(ord135);
-    } else {
+    } else if (build == 0 || build >= 17763) {
       g_allowDarkModeForApp = reinterpret_cast<AllowDarkModeForAppFn>(ord135);
     }
   });

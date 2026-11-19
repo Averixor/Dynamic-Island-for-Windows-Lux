@@ -20,8 +20,13 @@ Data (created on first launch):
 
 Uninstall:
   - Installed build: Settings → Apps → Dynamic Island for Windows Lux, or Start Menu uninstall
-  - Portable: exit from the tray, delete the exe folder
+    (also removes the HKCU Run and StartupApproved values, including ones created from Settings)
+  - Portable: exit from the tray, delete the exe folder, and delete the Run value "DynamicIslandLux" if you enabled autostart
   - Optional: delete %AppData%\DynamicIslandLux\ and %LocalAppData%\DynamicIslandLux\
+    (settings, runtime, file tray, logs — the uninstaller leaves them)
+
+Weather / lyrics / Quick Lookup contact wttr.in, lrclib.net, dictionaryapi.dev, Wikipedia, and Wiktionary.
+A blank weather city lets wttr.in guess a location from your IP address.
 
 Minimum OS: Windows 10 version 1809 (build 17763)+; Windows 11 recommended for acrylic backdrop.
 

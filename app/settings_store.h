@@ -19,10 +19,29 @@ void SettingsStoreReload();
 // already-clean / ephemeral). False only when a needed write failed.
 bool SettingsStoreSaveUser();
 
-// Restore every schema key to its default, keep app.version / one-shot migrate
-// stamps, clear drag offsets in runtime, and write both files. Returns false if
-// a needed write failed.
+// Rebuild the user map from the schema (unknown keys dropped), clear runtime.json
+// entirely, and write both files. Returns false if a needed write failed.
 bool SettingsStoreResetToDefaults();
+
+// True when settings.json was absent at the last SettingsStoreInit (first launch).
+bool SettingsStoreUserFileWasMissing();
+
+// Consistent read view for LoadSettings. Writes on this thread update the snapshot
+// so a reload cannot observe a torn mix of old and new keys.
+struct SettingsSnapshotToken;
+SettingsSnapshotToken* SettingsStoreAcquireSnapshot();
+void SettingsStoreReleaseSnapshot(SettingsSnapshotToken* token);
+
+class SettingsSnapshotScope {
+ public:
+  SettingsSnapshotScope() : token_(SettingsStoreAcquireSnapshot()) {}
+  ~SettingsSnapshotScope() { SettingsStoreReleaseSnapshot(token_); }
+  SettingsSnapshotScope(const SettingsSnapshotScope&) = delete;
+  SettingsSnapshotScope& operator=(const SettingsSnapshotScope&) = delete;
+
+ private:
+  SettingsSnapshotToken* token_;
+};
 
 int SettingsGetInt(const wchar_t* key, int fallback);
 bool SettingsGetBool(const wchar_t* key, bool fallback);
@@ -35,7 +54,7 @@ void SettingsSetString(const wchar_t* key, const wchar_t* value);
 int RuntimeGetInt(const wchar_t* key, int fallback);
 void RuntimeSetInt(const wchar_t* key, int value);
 bool RuntimeSave();
-void RuntimeSaveDebounced();  // at most ~1 write/sec; call from workers
+void RuntimeSaveDebounced();  // leading save, plus a trailing flush within ~1s
 
 // Self-check for escape/round-trip. Returns true on success.
 bool SettingsStoreSelfTestJson();

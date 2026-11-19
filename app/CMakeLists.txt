@@ -44,6 +44,9 @@ target_compile_definitions(DynamicIslandLux PRIVATE
   WIN32_LEAN_AND_MEAN
   NOMINMAX
   _CRT_SECURE_NO_WARNINGS
+  # MSVC 14.50+ (VS 2026) errors on <experimental/coroutine>, which C++/WinRT
+  # still includes when the project is C++17. The header names this macro.
+  _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
   LUX_APP_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
   LUX_APP_VERSION_MINOR=${PROJECT_VERSION_MINOR}
   LUX_APP_VERSION_PATCH=${PROJECT_VERSION_PATCH}
@@ -57,7 +60,10 @@ if(MSVC)
     /permissive-
     /W4
     /EHsc
+    /guard:cf
+    /sdl
     $<$<CONFIG:Release>:/O2>
+    $<$<CONFIG:Release>:/Zi>
   )
   # Legacy overlay TUs: keep /W3 until warning cleanup is complete.
   set_source_files_properties(
@@ -66,7 +72,13 @@ if(MSVC)
     PROPERTIES COMPILE_OPTIONS "/W3"
   )
   set_property(TARGET DynamicIslandLux PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-  target_link_options(DynamicIslandLux PRIVATE /MANIFEST:NO)
+  target_link_options(DynamicIslandLux PRIVATE
+    /MANIFEST:NO
+    /GUARD:CF
+    $<$<CONFIG:Release>:/DEBUG>
+    $<$<CONFIG:Release>:/OPT:REF>
+    $<$<CONFIG:Release>:/OPT:ICF>
+  )
 endif()
 
 target_link_libraries(DynamicIslandLux PRIVATE
