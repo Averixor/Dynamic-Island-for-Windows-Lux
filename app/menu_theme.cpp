@@ -2,6 +2,8 @@
 
 #include <windows.h>
 
+#include <mutex>
+
 namespace MenuTheme {
 namespace {
 
@@ -14,10 +16,13 @@ enum PreferredAppMode : int {
 
 using SetPreferredAppModeFn = PreferredAppMode(WINAPI*)(PreferredAppMode);
 using FlushMenuThemesFn = void(WINAPI*)();
+// Win10 1809 only: BOOL AllowDarkModeForApp(BOOL). Replaced by SetPreferredAppMode in 1903.
+using AllowDarkModeForAppFn = BOOL(WINAPI*)(BOOL);
 
 SetPreferredAppModeFn g_setPreferredAppMode = nullptr;
 FlushMenuThemesFn g_flushMenuThemes = nullptr;
-bool g_resolved = false;
+AllowDarkModeForAppFn g_allowDarkModeForApp = nullptr;
+std::once_flag g_resolveOnce;
 
 bool AppsUseLightTheme() {
   DWORD value = 1;
@@ -32,36 +37,48 @@ bool AppsUseLightTheme() {
 }
 
 void ResolveApis() {
-  if (g_resolved) {
-    return;
-  }
-  g_resolved = true;
-  HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-  if (!ux) {
-    return;
-  }
-  // Undocumented ordinals (Win10 1903+ / Win11): 135 SetPreferredAppMode, 136 FlushMenuThemes.
-  g_setPreferredAppMode =
-      reinterpret_cast<SetPreferredAppModeFn>(GetProcAddress(ux, MAKEINTRESOURCEA(135)));
-  g_flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(GetProcAddress(ux, MAKEINTRESOURCEA(136)));
+  std::call_once(g_resolveOnce, [] {
+    HMODULE ux = GetModuleHandleW(L"uxtheme.dll");
+    if (!ux) {
+      ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    }
+    if (!ux) {
+      return;
+    }
+    // Undocumented ordinals (Win10 1903+ / Win11):
+    //   135 SetPreferredAppMode, 136 FlushMenuThemes.
+    // On 1809 ordinal 135 is AllowDarkModeForApp(BOOL) — keep both paths.
+    auto* ord135 = GetProcAddress(ux, MAKEINTRESOURCEA(135));
+    auto* ord136 = GetProcAddress(ux, MAKEINTRESOURCEA(136));
+    g_flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(ord136);
+    if (ord136) {
+      // FlushMenuThemes exists ⇒ 1903+ SetPreferredAppMode ABI.
+      g_setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFn>(ord135);
+    } else {
+      g_allowDarkModeForApp = reinterpret_cast<AllowDarkModeForAppFn>(ord135);
+    }
+  });
 }
 
 void ApplyPreferredMode() {
   ResolveApis();
-  if (!g_setPreferredAppMode) {
+  const bool light = AppsUseLightTheme();
+  if (g_setPreferredAppMode) {
+    g_setPreferredAppMode(light ? kForceLight : kForceDark);
+    if (g_flushMenuThemes) {
+      g_flushMenuThemes();
+    }
     return;
   }
-  // ForceDark / ForceLight so classic popup menus match the OS app theme reliably.
-  g_setPreferredAppMode(AppsUseLightTheme() ? kForceLight : kForceDark);
-  if (g_flushMenuThemes) {
-    g_flushMenuThemes();
+  if (g_allowDarkModeForApp) {
+    g_allowDarkModeForApp(light ? FALSE : TRUE);
   }
 }
 
 }  // namespace
 
 void EnableSystemMenus() {
-  ApplyPreferredMode();
+  PreparePopup();
 }
 
 void PreparePopup() {

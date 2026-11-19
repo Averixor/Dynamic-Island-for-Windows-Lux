@@ -3,12 +3,17 @@
 Standalone release (no Windhawk required).
 
 - **Tag:** `v1.0.5`
-- **Commit:** d5f1b151a0c6b6a8df259da51c32d2623bbe626b
+- **Commit:** _(set at tag time — `scripts\release.bat` prints the hash)_
 - **Date:** 2026-11-19
 
 ## Highlights since v1.0.4
 
 - Author / copyright attribution unified to **Averixor** (LICENSE, VERSIONINFO, Windhawk metadata, docs)
+- Settings dialog: **OK** commits / **Cancel** discards; store dirty-aware; schema fills missing keys
+- Autostart: HKCU Run + `StartupApproved\Run` sync; logon uses `--minimized`
+- Notification toast content-fit (≤ island) and layout flicker fixes
+- Single version source: `app/CMakeLists.txt` → `scripts/_version.cmd` (release + installer)
+- Resources via `*.in` only (`version.rc.in`, `resources.rc.in`, `DynamicIslandLux.manifest.in`, multi-res `app.ico`)
 
 ## Origin
 
@@ -57,9 +62,15 @@ See `app/README.md` → **Known limitations**.
 - `SHA256SUMS.txt` (`sha256sum -c` compatible)
 
 ```bat
-app\build.bat
-scripts\make-installer.bat
-scripts\make-release-assets.bat
+scripts\release.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.5**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Or step-by-step:
+
+```bat
+app\build.bat
+scripts\make-release-assets.bat
+scripts\make-installer.bat
+```
+
+Verify Properties → Details on the exe shows **File version 1.0.5.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

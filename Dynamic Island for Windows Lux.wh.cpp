@@ -407,6 +407,7 @@
 #ifdef LUX_STANDALONE
 #include "windhawk_compat.h"
 #include "app_context.h"
+#include "main.h"
 #include "menu_theme.h"
 #include "resource.h"
 #endif
@@ -477,6 +478,7 @@
     __has_include(<winrt/Windows.UI.Notifications.h>)
 #define DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER 1
 #include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.Data.Xml.Dom.h>
 #include <winrt/Windows.UI.Notifications.h>
 #include <winrt/Windows.UI.Notifications.Management.h>
 #else
@@ -990,6 +992,10 @@ struct BitmapPixels {
     UINT height = 0;
     uint64_t generation = 0;
     D2D1_COLOR_F sampledAccent = D2D1::ColorF(0x4cc9f0);
+    // Vibrant accents from cover art (cycled per track / every 5 minutes).
+    static constexpr int kMaxPalette = 8;
+    D2D1_COLOR_F palette[kMaxPalette] = {};
+    int paletteCount = 0;
 };
 class PixelsRef {
 public:
@@ -2820,8 +2826,12 @@ D2D1_COLOR_F EnsureContrastAgainstBackground(D2D1_COLOR_F candidate, D2D1_COLOR_
 struct PillClientRect {
     float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
     bool valid = false;
+    bool Contains(float x, float y) const {
+        return valid && x >= left && x <= right && y >= top && y <= bottom;
+    }
 };
 extern PillClientRect g_pillClientRect;
+extern PillClientRect g_secondaryPillClientRect;
 bool SampleDesktopBackdrop(HWND hwnd, D2D1_COLOR_F* outColor) {
     if (!hwnd || !outColor || !g_pillClientRect.valid) {
         return false;
@@ -4502,6 +4512,7 @@ struct StageLayout {
     float pillTop = 0.0f;
 };
 PillClientRect g_pillClientRect;
+PillClientRect g_secondaryPillClientRect;
 inline bool UsesFixedStage(const Settings&) {
     return true;
 }
@@ -4780,36 +4791,44 @@ bool DecodeImageBytesToPixels(const std::vector<uint8_t>& bytes, BitmapPixels* o
     struct Candidate {
         const Bucket* b = nullptr;
         size_t idx = 0;
+        float vibrancy = 0.0f;
     };
-    Candidate top[3];
+    Candidate ranked[BitmapPixels::kMaxPalette] = {};
+    int rankedCount = 0;
     for (size_t i = 0; i < buckets.size(); ++i) {
         const Bucket& bk = buckets[i];
-        if (bk.count == 0)
+        if (bk.count < 8)
             continue;
-        for (int s = 0; s < 3; ++s) {
-            if (!top[s].b || bk.count > top[s].b->count) {
-                for (int t = 2; t > s; --t)
-                    top[t] = top[t - 1];
-                top[s] = {&bk, i};
+        const float vibrancy =
+            static_cast<float>(bk.satSum) / static_cast<float>(bk.count);
+        Candidate cand{&bk, i, vibrancy};
+        // Prefer saturated buckets; break ties by population.
+        const float score = vibrancy * 2.0f + static_cast<float>(bk.count) * 0.01f;
+        int insertAt = rankedCount;
+        for (int s = 0; s < rankedCount; ++s) {
+            const float other =
+                ranked[s].vibrancy * 2.0f + static_cast<float>(ranked[s].b->count) * 0.01f;
+            if (score > other) {
+                insertAt = s;
                 break;
             }
         }
-    }
-    const Bucket* best = nullptr;
-    size_t bestIdx = 0;
-    float bestVibrancy = -1.0f;
-    for (int s = 0; s < 3; ++s) {
-        if (!top[s].b)
-            break;
-        const float vibrancy = static_cast<float>(top[s].b->satSum) /
-                               static_cast<float>(top[s].b->count);
-        if (vibrancy > bestVibrancy) {
-            bestVibrancy = vibrancy;
-            best = top[s].b;
-            bestIdx = top[s].idx;
+        if (insertAt >= BitmapPixels::kMaxPalette) {
+            continue;
         }
+        if (rankedCount < BitmapPixels::kMaxPalette) {
+            ++rankedCount;
+        }
+        for (int t = rankedCount - 1; t > insertAt; --t) {
+            ranked[t] = ranked[t - 1];
+        }
+        ranked[insertAt] = cand;
     }
-    if (best && best->count > 0) {
+    D2D1_COLOR_F bgColor = GetSettingsCopy().pillBgColor;
+    if (bgColor.a <= 0.0f) {
+        bgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
+    }
+    auto colorFromBucket = [&](size_t bestIdx) -> D2D1_COLOR_F {
         uint64_t poolCount = 0;
         double poolR = 0, poolG = 0, poolB = 0;
         const int bi = static_cast<int>((bestIdx >> 8) & 0xF);
@@ -4834,18 +4853,56 @@ bool DecodeImageBytesToPixels(const std::vector<uint8_t>& bytes, BitmapPixels* o
                 }
             }
         }
-        if (poolCount > 0) {
-            const float invC = 1.0f / static_cast<float>(poolCount);
-            const float rawR = static_cast<float>(poolR * invC) / 255.0f;
-            const float rawG = static_cast<float>(poolG * invC) / 255.0f;
-            const float rawB = static_cast<float>(poolB * invC) / 255.0f;
-            D2D1_COLOR_F bgColor = GetSettingsCopy().pillBgColor;
-            if (bgColor.a <= 0.0f) {
-                bgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
+        if (poolCount == 0) {
+            return D2D1::ColorF(0x4cc9f0);
+        }
+        const float invC = 1.0f / static_cast<float>(poolCount);
+        return EnsureContrastAgainstBackground(
+            D2D1::ColorF(static_cast<float>(poolR * invC) / 255.0f,
+                         static_cast<float>(poolG * invC) / 255.0f,
+                         static_cast<float>(poolB * invC) / 255.0f, 1.0f),
+            bgColor);
+    };
+    pixels.paletteCount = 0;
+    for (int s = 0; s < rankedCount; ++s) {
+        D2D1_COLOR_F c = colorFromBucket(ranked[s].idx);
+        // Drop near-duplicates so the rotating palette stays distinct.
+        bool dup = false;
+        for (int p = 0; p < pixels.paletteCount; ++p) {
+            const float dr = c.r - pixels.palette[p].r;
+            const float dg = c.g - pixels.palette[p].g;
+            const float db = c.b - pixels.palette[p].b;
+            if (dr * dr + dg * dg + db * db < 0.04f) {
+                dup = true;
+                break;
             }
-            pixels.sampledAccent = EnsureContrastAgainstBackground(
-                D2D1::ColorF(rawR, rawG, rawB, 1.0f),
-                bgColor);
+        }
+        if (dup) {
+            continue;
+        }
+        pixels.palette[pixels.paletteCount++] = c;
+        if (pixels.paletteCount >= BitmapPixels::kMaxPalette) {
+            break;
+        }
+    }
+    if (pixels.paletteCount > 0) {
+        pixels.sampledAccent = pixels.palette[0];
+        // Expand thin palettes with complementary / analogous hues from the lead color.
+        if (pixels.paletteCount < 4) {
+            float h = 0, s = 0, l = 0;
+            RgbToHsl(pixels.sampledAccent.r, pixels.sampledAccent.g, pixels.sampledAccent.b, h, s,
+                     l);
+            const float shifts[] = {36.0f, -42.0f, 180.0f, 72.0f, -90.0f};
+            for (float shift : shifts) {
+                if (pixels.paletteCount >= BitmapPixels::kMaxPalette) {
+                    break;
+                }
+                D2D1_COLOR_F variant =
+                    EnsureContrastAgainstBackground(HslToRgb(h + shift, std::max(s, 0.45f),
+                                                             Clamp(l, 0.35f, 0.72f), 1.0f),
+                                                    bgColor);
+                pixels.palette[pixels.paletteCount++] = variant;
+            }
         }
     }
     pixels.generation = ++g_artGenerationCounter;
@@ -6098,7 +6155,11 @@ void UnsubscribeDndNotification() {
     }
     g_wnfDndSubscription = nullptr;
 }
+std::wstring NormalizeNotificationAumid(std::wstring id);
+bool IsNoiseNotificationAumid(const std::wstring& aumid);
+std::wstring ResolveNotificationAumidFromAppName(const std::wstring& appName);
 #if DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER
+std::wstring TryGetToastLaunchArgs(const std::wstring& aumid, const std::wstring& titleHint);
 DWORD WINAPI NotificationThreadProc(void*) {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     using winrt::Windows::UI::Notifications::KnownNotificationBindings;
@@ -6174,15 +6235,20 @@ DWORD WINAPI NotificationThreadProc(void*) {
                             }
                             NotificationSnapshot snapshot;
                             snapshot.active = true;
-                            snapshot.expiresAt = NowSeconds() + 4.0;
+                            snapshot.expiresAt = NowSeconds() + 8.0;
                             auto appInfo = userNotification.AppInfo();
                             // AppInfo.Id is the AUMID for toast sources (packaged + many classic).
                             try {
-                                snapshot.aumid = appInfo.Id().c_str();
+                                snapshot.aumid = NormalizeNotificationAumid(appInfo.Id().c_str());
                             } catch (...) {
+                            }
+                            if (IsNoiseNotificationAumid(snapshot.aumid)) {
+                                snapshot.aumid.clear();
                             }
                             auto displayInfo = appInfo.DisplayInfo();
                             snapshot.app = displayInfo.DisplayName().c_str();
+                            // Heavy AppsFolder / window resolve runs on click, not on the
+                            // notification poll thread (avoids MTA/COM stalls).
                             const std::wstring lowerApp = ToLowerCopy(snapshot.app);
                             if (lowerApp.find(L"powershell") != std::wstring::npos ||
                                 lowerApp.find(L"pwsh") != std::wstring::npos ||
@@ -6217,6 +6283,9 @@ DWORD WINAPI NotificationThreadProc(void*) {
                             if (snapshot.title.empty()) {
                                 snapshot.title = snapshot.app.empty() ? Loc(L"New notification") : snapshot.app;
                             }
+                            // Toast launch=... → open the exact screen/chat when the pill is tapped.
+                            snapshot.activationArgs =
+                                TryGetToastLaunchArgs(snapshot.aumid, snapshot.title);
                             if (!snapshot.body.empty()) {
                                 snapshot.title += L" - " + snapshot.body;
                             }
@@ -9541,6 +9610,238 @@ bool ReadClipboardImagePixels(HWND hwnd, BitmapPixels* outPixels, UINT maxDim) {
     CloseClipboard();
     return true;
 }
+bool IsNoiseNotificationAumid(const std::wstring& aumid) {
+    if (aumid.empty()) {
+        return true;
+    }
+    const std::wstring lower = ToLowerCopy(aumid);
+    auto has = [&](const wchar_t* needle) {
+        return lower.find(needle) != std::wstring::npos;
+    };
+    if (has(L"shellexperiencehost") || has(L"startmenuexperiencehost") ||
+        has(L"searchapp") || has(L"searchhost") || has(L"textinputhost")) {
+        return true;
+    }
+    if (has(L"sihost.exe") || has(L"\\explorer.exe") || lower == L"explorer.exe") {
+        return true;
+    }
+    if (has(L"systemsettings.exe") || has(L"applicationframehost")) {
+        return true;
+    }
+    return false;
+}
+bool IsGenericNotificationAppName(const std::wstring& appName) {
+    if (appName.empty()) {
+        return true;
+    }
+    const std::wstring lower = ToLowerCopy(appName);
+    return lower == L"notification" || lower == L"new notification" ||
+           lower == ToLowerCopy(Loc(L"Notification")) ||
+           lower == ToLowerCopy(Loc(L"New notification"));
+}
+struct ResolveNotifAppHunt {
+    std::wstring needleLower;
+    std::wstring bestAumid;
+    std::wstring bestExe;
+    HWND bestHwnd = nullptr;
+    int bestScore = 0;
+};
+BOOL CALLBACK ResolveNotifAppWindowProc(HWND hwnd, LPARAM lParam) {
+    auto* hunt = reinterpret_cast<ResolveNotifAppHunt*>(lParam);
+    if (!hwnd || hwnd == g_hwnd || !IsWindowVisible(hwnd) || WindowIsCloaked(hwnd)) {
+        return TRUE;
+    }
+    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    if (!(style & WS_VISIBLE) || (style & WS_CHILD)) {
+        return TRUE;
+    }
+    // Prefer full display-name match; first-token match only for longer tokens.
+    std::wstring token = hunt->needleLower;
+    const size_t space = token.find(L' ');
+    if (space != std::wstring::npos && space >= 4) {
+        token.resize(space);
+    } else {
+        token.clear();
+    }
+    auto matchesNeedle = [&](const std::wstring& hay) -> int {
+        if (hay.empty()) {
+            return 0;
+        }
+        if (hay == hunt->needleLower) {
+            return 80;
+        }
+        if (hay.find(hunt->needleLower) != std::wstring::npos) {
+            return 50;
+        }
+        if (token.size() >= 4 && hay.find(token) != std::wstring::npos) {
+            return 25;
+        }
+        return 0;
+    };
+    int score = 0;
+    wchar_t title[512] = {};
+    if (GetWindowTextW(hwnd, title, ARRAYSIZE(title)) > 0) {
+        score += matchesNeedle(ToLowerCopy(title));
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    std::wstring exePath;
+    if (pid && ProcessImageNameForPid(pid, &exePath)) {
+        const std::wstring exeLower = ToLowerCopy(exePath);
+        size_t slash = exeLower.find_last_of(L"\\/");
+        const std::wstring exeName =
+            slash == std::wstring::npos ? exeLower : exeLower.substr(slash + 1);
+        std::wstring exeStem = exeName;
+        if (exeStem.size() > 4 && EqualsNoCase(exeStem.substr(exeStem.size() - 4), L".exe")) {
+            exeStem.resize(exeStem.size() - 4);
+        }
+        const int exeScore = (std::max)(matchesNeedle(exeName), matchesNeedle(exeStem));
+        if (exeScore > 0) {
+            score += exeScore + 20;
+            if (hunt->bestExe.empty() || score > hunt->bestScore) {
+                hunt->bestExe = exePath;
+            }
+        }
+    }
+    if (score <= 0) {
+        return TRUE;
+    }
+    std::wstring aumid = QueryWindowAumid(hwnd);
+    if (!aumid.empty() && !IsNoiseNotificationAumid(aumid)) {
+        score += 40;
+    } else {
+        aumid.clear();
+    }
+    if (score > hunt->bestScore) {
+        hunt->bestScore = score;
+        hunt->bestHwnd = hwnd;
+        if (!aumid.empty()) {
+            hunt->bestAumid = std::move(aumid);
+        }
+    }
+    return TRUE;
+}
+std::mutex g_appsFolderCacheMutex;
+std::unordered_map<std::wstring, std::wstring> g_appsFolderByDisplay;
+std::unordered_map<std::wstring, std::wstring> g_appsFolderByParsingLower;
+bool g_appsFolderCacheReady = false;
+void EnsureAppsFolderCache() {
+    std::lock_guard lock(g_appsFolderCacheMutex);
+    if (g_appsFolderCacheReady) {
+        return;
+    }
+    ComPtr<IShellItem> appsFolder;
+    if (FAILED(SHCreateItemFromParsingName(L"shell:AppsFolder", nullptr,
+                                           IID_PPV_ARGS(&appsFolder))) ||
+        !appsFolder) {
+        return;
+    }
+    ComPtr<IEnumShellItems> enumer;
+    if (FAILED(appsFolder->BindToHandler(nullptr, BHID_EnumItems,
+                                         IID_PPV_ARGS(&enumer))) ||
+        !enumer) {
+        return;
+    }
+    ComPtr<IShellItem> item;
+    while (enumer->Next(1, &item, nullptr) == S_OK && item) {
+        PWSTR displayRaw = nullptr;
+        PWSTR parseRaw = nullptr;
+        if (SUCCEEDED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &displayRaw)) && displayRaw &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_PARENTRELATIVEPARSING, &parseRaw)) &&
+            parseRaw) {
+            const std::wstring displayLower = ToLowerCopy(displayRaw);
+            const std::wstring parsing = parseRaw;
+            if (!displayLower.empty() && !parsing.empty() &&
+                !IsNoiseNotificationAumid(parsing)) {
+                if (g_appsFolderByDisplay.find(displayLower) == g_appsFolderByDisplay.end()) {
+                    g_appsFolderByDisplay.emplace(displayLower, parsing);
+                }
+                g_appsFolderByParsingLower[ToLowerCopy(parsing)] = parsing;
+            }
+        }
+        if (displayRaw) {
+            CoTaskMemFree(displayRaw);
+        }
+        if (parseRaw) {
+            CoTaskMemFree(parseRaw);
+        }
+        item.Reset();
+    }
+    g_appsFolderCacheReady = true;
+}
+std::wstring ResolveAppsFolderParsingName(const std::wstring& appName) {
+    if (IsGenericNotificationAppName(appName)) {
+        return {};
+    }
+    EnsureAppsFolderCache();
+    const std::wstring needle = ToLowerCopy(appName);
+    std::lock_guard lock(g_appsFolderCacheMutex);
+    auto exact = g_appsFolderByDisplay.find(needle);
+    if (exact != g_appsFolderByDisplay.end()) {
+        return exact->second;
+    }
+    std::wstring bestStartsWith;
+    std::wstring bestContains;
+    size_t bestContainsLen = SIZE_MAX;
+    for (const auto& entry : g_appsFolderByDisplay) {
+        if (entry.first.rfind(needle, 0) == 0 && bestStartsWith.empty()) {
+            bestStartsWith = entry.second;
+        }
+        if (entry.first.find(needle) != std::wstring::npos &&
+            entry.first.size() < bestContainsLen) {
+            bestContains = entry.second;
+            bestContainsLen = entry.first.size();
+        }
+    }
+    if (!bestStartsWith.empty()) {
+        return bestStartsWith;
+    }
+    return bestContains;
+}
+bool ActivateShellAppsFolderItem(const std::wstring& parsingOrAumid) {
+    if (parsingOrAumid.empty() || IsNoiseNotificationAumid(parsingOrAumid)) {
+        return false;
+    }
+    const std::wstring path = L"shell:AppsFolder\\" + parsingOrAumid;
+    ComPtr<IShellItem> item;
+    if (FAILED(SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&item))) ||
+        !item) {
+        return false;
+    }
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHGetIDListFromObject(item.Get(), &pidl)) || !pidl) {
+        return false;
+    }
+    SHELLEXECUTEINFOW sei = {sizeof(sei)};
+    sei.fMask = SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI;
+    sei.lpIDList = pidl;
+    sei.nShow = SW_SHOWNORMAL;
+    sei.lpVerb = L"open";
+    const BOOL ok = ShellExecuteExW(&sei);
+    CoTaskMemFree(pidl);
+    return ok != FALSE;
+}
+std::wstring ResolveNotificationAumidFromAppName(const std::wstring& appName) {
+    if (IsGenericNotificationAppName(appName)) {
+        return {};
+    }
+    ResolveNotifAppHunt hunt;
+    hunt.needleLower = ToLowerCopy(appName);
+    EnumWindows(ResolveNotifAppWindowProc, reinterpret_cast<LPARAM>(&hunt));
+    // Strong window hits only — weak title matches cause wrong-app focus.
+    if (!hunt.bestAumid.empty() && hunt.bestScore >= 70) {
+        return NormalizeNotificationAumid(hunt.bestAumid);
+    }
+    if (!hunt.bestExe.empty() && hunt.bestScore >= 70 &&
+        !IsNoiseNotificationAumid(hunt.bestExe)) {
+        return hunt.bestExe;
+    }
+    std::wstring fromApps = ResolveAppsFolderParsingName(appName);
+    if (!fromApps.empty()) {
+        return NormalizeNotificationAumid(std::move(fromApps));
+    }
+    return {};
+}
 bool IsLikelyToastWindow(HWND hwnd, const wchar_t* className, const wchar_t* title) {
     if (hwnd == g_hwnd || !hwnd) {
         return false;
@@ -9591,7 +9892,7 @@ void CaptureShellNotification(HWND hwnd) {
     notification.active = true;
     notification.app = Loc(L"Notification");
     notification.title = title;
-    notification.expiresAt = NowSeconds() + 4.0;
+    notification.expiresAt = NowSeconds() + 8.0;
     notification.aumid = QueryWindowAumid(hwnd);
     if (notification.aumid.empty()) {
         DWORD toastPid = 0;
@@ -9603,6 +9904,10 @@ void CaptureShellNotification(HWND hwnd) {
                 notification.aumid = std::move(exePath);
             }
         }
+    }
+    // Toast HWNDs belong to ShellExperienceHost — never treat that as the source app.
+    if (IsNoiseNotificationAumid(notification.aumid)) {
+        notification.aumid.clear();
     }
     notification.icon = GetWindowIconPixels(hwnd, 64);
     if (notification.title.size() > 96) {
@@ -9675,6 +9980,11 @@ void CaptureShellNotification(HWND hwnd) {
                                     appName != L"Notification") {
                                     resolvedIcon = FindAppIconByName(appName, 64);
                                 }
+                                std::wstring resolvedAumid;
+                                if (!appName.empty() && appName != Loc(L"Notification") &&
+                                    appName != L"Notification") {
+                                    resolvedAumid = ResolveNotificationAumidFromAppName(appName);
+                                }
                                 std::lock_guard lock(g_stateMutex);
                                 if (g_state.notification.active) {
                                     if (!appName.empty()) {
@@ -9682,6 +9992,11 @@ void CaptureShellNotification(HWND hwnd) {
                                         if (resolvedIcon) {
                                             g_state.notification.icon = std::move(resolvedIcon);
                                         }
+                                    }
+                                    if (!resolvedAumid.empty() &&
+                                        (g_state.notification.aumid.empty() ||
+                                         IsNoiseNotificationAumid(g_state.notification.aumid))) {
+                                        g_state.notification.aumid = std::move(resolvedAumid);
                                     }
                                     g_state.notification.title = fullText;
                                 }
@@ -11015,6 +11330,15 @@ void SetClickThrough(HWND hwnd, bool clickThrough) {
 void OpenRelevantApp();
 void OpenWeatherApp();
 bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments = nullptr);
+std::wstring NormalizeNotificationAumid(std::wstring id);
+bool IsNoiseNotificationAumid(const std::wstring& aumid);
+std::wstring ResolveNotificationAumidFromAppName(const std::wstring& appName);
+bool ActivateShellAppsFolderItem(const std::wstring& parsingOrAumid);
+std::wstring ResolveAppsFolderParsingName(const std::wstring& appName);
+bool IsGenericNotificationAppName(const std::wstring& appName);
+#if DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER
+std::wstring TryGetToastLaunchArgs(const std::wstring& aumid, const std::wstring& titleHint);
+#endif
 void ToggleEndpointMute();
 void SeekMediaToTicks(int64_t targetTicks);
 void PasteIntoFileTray(HWND hwnd);
@@ -11615,10 +11939,104 @@ bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments) {
         !activator) {
         return false;
     }
-    DWORD pid = 0;
-    return SUCCEEDED(
-        activator->ActivateApplication(aumid.c_str(), arguments, AO_NONE, &pid));
+    auto tryActivate = [&](const std::wstring& id) -> bool {
+        if (id.empty()) {
+            return false;
+        }
+        DWORD pid = 0;
+        return SUCCEEDED(activator->ActivateApplication(id.c_str(), arguments, AO_NONE, &pid));
+    };
+    if (tryActivate(aumid)) {
+        return true;
+    }
+    // AppInfo.Id is sometimes only the package family name (no !App).
+    if (aumid.find(L'!') == std::wstring::npos && aumid.find(L'_') != std::wstring::npos) {
+        if (tryActivate(aumid + L"!App")) {
+            return true;
+        }
+    }
+    return false;
 }
+std::wstring NormalizeNotificationAumid(std::wstring id) {
+    while (!id.empty() && (id.front() == L'"' || iswspace(id.front()))) {
+        id.erase(id.begin());
+    }
+    while (!id.empty() && (id.back() == L'"' || iswspace(id.back()))) {
+        id.pop_back();
+    }
+    if (!id.empty() && id.find(L'!') == std::wstring::npos && id.find(L'_') != std::wstring::npos) {
+        id += L"!App";
+    }
+    return id;
+}
+bool LooksLikeActivationUri(const std::wstring& value) {
+    if (value.size() < 4) {
+        return false;
+    }
+    const std::wstring lower = ToLowerCopy(value);
+    return lower.find(L"://") != std::wstring::npos || lower.rfind(L"ms-", 0) == 0 ||
+           lower.rfind(L"http", 0) == 0 || lower.rfind(L"https", 0) == 0;
+}
+#if DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER
+std::wstring TryGetToastLaunchArgs(const std::wstring& aumid, const std::wstring& titleHint) {
+    try {
+        using winrt::Windows::UI::Notifications::ToastNotificationManager;
+        auto history = ToastNotificationManager::History();
+        winrt::Windows::Foundation::Collections::IVectorView<
+            winrt::Windows::UI::Notifications::ToastNotification>
+            toasts{nullptr};
+        try {
+            if (!aumid.empty()) {
+                toasts = history.GetHistory(aumid);
+            }
+        } catch (...) {
+            toasts = nullptr;
+        }
+        if (!toasts) {
+            try {
+                toasts = history.GetHistory();
+            } catch (...) {
+                return {};
+            }
+        }
+        if (!toasts) {
+            return {};
+        }
+        const std::wstring hint =
+            titleHint.size() > 24 ? titleHint.substr(0, 24) : titleHint;
+        std::wstring fallback;
+        for (auto const& toast : toasts) {
+            try {
+                auto doc = toast.Content();
+                if (!doc) {
+                    continue;
+                }
+                auto root = doc.DocumentElement();
+                if (!root) {
+                    continue;
+                }
+                const std::wstring launch = root.GetAttribute(L"launch").c_str();
+                if (launch.empty()) {
+                    continue;
+                }
+                if (!hint.empty()) {
+                    const std::wstring xml = doc.GetXml().c_str();
+                    if (xml.find(hint) != std::wstring::npos) {
+                        return launch;
+                    }
+                }
+                if (fallback.empty()) {
+                    fallback = launch;
+                }
+            } catch (...) {
+            }
+        }
+        return fallback;
+    } catch (...) {
+        return {};
+    }
+}
+#endif
 struct NotificationWindowHunt {
     std::wstring aumidLower;
     std::wstring appNameLower;
@@ -11627,7 +12045,7 @@ struct NotificationWindowHunt {
 };
 BOOL CALLBACK HuntNotificationSourceWindowProc(HWND hwnd, LPARAM lParam) {
     auto* hunt = reinterpret_cast<NotificationWindowHunt*>(lParam);
-    if (!hwnd || hwnd == g_hwnd || !IsWindowVisible(hwnd) || WindowIsCloaked(hwnd)) {
+    if (!hwnd || hwnd == g_hwnd || !IsWindowVisible(hwnd)) {
         return TRUE;
     }
     const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -11637,16 +12055,23 @@ BOOL CALLBACK HuntNotificationSourceWindowProc(HWND hwnd, LPARAM lParam) {
     int score = 0;
     if (!hunt->aumidLower.empty()) {
         const std::wstring winAumid = ToLowerCopy(QueryWindowAumid(hwnd));
-        if (AumidsReferToSameApp(winAumid, hunt->aumidLower)) {
+        if (!IsNoiseNotificationAumid(winAumid) &&
+            AumidsReferToSameApp(winAumid, hunt->aumidLower)) {
             score += 100;
         }
+    }
+    // UWP frames may be briefly cloaked — keep strong AUMID hits, drop weak cloaked noise.
+    if (WindowIsCloaked(hwnd) && score < 100) {
+        return TRUE;
     }
     if (!hunt->appNameLower.empty()) {
         wchar_t title[512] = {};
         if (GetWindowTextW(hwnd, title, ARRAYSIZE(title)) > 0) {
             const std::wstring titleLower = ToLowerCopy(title);
-            if (titleLower.find(hunt->appNameLower) != std::wstring::npos) {
-                score += 40;
+            if (titleLower == hunt->appNameLower) {
+                score += 55;
+            } else if (titleLower.find(hunt->appNameLower) != std::wstring::npos) {
+                score += 30;
             }
         }
         DWORD pid = 0;
@@ -11657,12 +12082,17 @@ BOOL CALLBACK HuntNotificationSourceWindowProc(HWND hwnd, LPARAM lParam) {
             size_t slash = exeLower.find_last_of(L"\\/");
             const std::wstring exeName =
                 slash == std::wstring::npos ? exeLower : exeLower.substr(slash + 1);
-            if (exeName.find(hunt->appNameLower) != std::wstring::npos) {
-                score += 50;
+            std::wstring exeStem = exeName;
+            if (exeStem.size() > 4 && EqualsNoCase(exeStem.substr(exeStem.size() - 4), L".exe")) {
+                exeStem.resize(exeStem.size() - 4);
+            }
+            if (exeStem == hunt->appNameLower || exeName.find(hunt->appNameLower) != std::wstring::npos) {
+                score += 60;
             }
         }
     }
-    if (score <= 0) {
+    // Ignore weak title-only hits — they steal focus from the real activation path.
+    if (score < 60) {
         return TRUE;
     }
     if (!IsIconic(hwnd)) {
@@ -11695,68 +12125,150 @@ void OpenNotificationSource() {
         std::lock_guard lock(g_stateMutex);
         snap = g_state.notification;
     }
-    if (!snap.active) {
+    // Still try to open even if the toast just expired — identity may remain.
+    if (snap.aumid.empty() && snap.app.empty() && snap.activationArgs.empty()) {
+        Wh_Log(L"OpenNotificationSource: empty identity (no aumid/app/args)");
         return;
+    }
+    snap.aumid = NormalizeNotificationAumid(snap.aumid);
+    if (IsNoiseNotificationAumid(snap.aumid)) {
+        snap.aumid.clear();
+    }
+    if ((snap.aumid.empty() || snap.aumid.find(L'\\') != std::wstring::npos) &&
+        !IsGenericNotificationAppName(snap.app)) {
+        std::wstring resolved = ResolveNotificationAumidFromAppName(snap.app);
+        if (!resolved.empty() && !IsNoiseNotificationAumid(resolved)) {
+            // Prefer packaged / AppsFolder id over a stale exe path from toast HWND.
+            if (snap.aumid.empty() || resolved.find(L'!') != std::wstring::npos ||
+                resolved.find(L'_') != std::wstring::npos) {
+                snap.aumid = std::move(resolved);
+            }
+        }
+    }
+    if (snap.aumid.empty() && !IsGenericNotificationAppName(snap.app)) {
+        snap.aumid = ResolveAppsFolderParsingName(snap.app);
+        if (IsNoiseNotificationAumid(snap.aumid)) {
+            snap.aumid.clear();
+        }
+    }
+    Wh_Log(L"OpenNotificationSource: app='%s' aumid='%s' args='%s'", snap.app.c_str(),
+           snap.aumid.c_str(), snap.activationArgs.c_str());
+    AllowSetForegroundWindow(ASFW_ANY);
+    auto shellOpen = [](const std::wstring& file, const wchar_t* params) -> bool {
+        if (file.empty()) {
+            return false;
+        }
+        SHELLEXECUTEINFOW sei = {sizeof(sei)};
+        sei.fMask = SEE_MASK_FLAG_NO_UI;
+        sei.lpVerb = L"open";
+        sei.lpFile = file.c_str();
+        if (params && params[0]) {
+            sei.lpParameters = params;
+        }
+        sei.nShow = SW_SHOWNORMAL;
+        if (!ShellExecuteExW(&sei)) {
+            Wh_Log(L"OpenNotificationSource: ShellExecuteEx failed for '%s' (err=%lu)",
+                   file.c_str(), GetLastError());
+            return false;
+        }
+        const INT_PTR rc = reinterpret_cast<INT_PTR>(sei.hInstApp);
+        if (rc <= 32 && rc != 0) {
+            Wh_Log(L"OpenNotificationSource: ShellExecuteEx rejected '%s' (rc=%Id)", file.c_str(),
+                   rc);
+            return false;
+        }
+        return true;
+    };
+    auto tryActivateTarget = [&](const std::wstring& target, const wchar_t* args) -> bool {
+        if (target.empty() || IsNoiseNotificationAumid(target)) {
+            return false;
+        }
+        if (LooksLikeActivationUri(target)) {
+            return shellOpen(target, nullptr);
+        }
+        std::wstring path = target;
+        if (path.size() >= 2 && path.front() == L'"' && path.back() == L'"') {
+            path = path.substr(1, path.size() - 2);
+        }
+        const bool isFilePath =
+            (path.find(L":\\") != std::wstring::npos ||
+             (path.size() >= 4 && EqualsNoCase(path.substr(path.size() - 4), L".exe")));
+        if (isFilePath) {
+            return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES &&
+                   shellOpen(path, args);
+        }
+        if (ActivatePackagedApp(path, args)) {
+            return true;
+        }
+        if (args && ActivatePackagedApp(path, nullptr)) {
+            return true;
+        }
+        if (ActivateShellAppsFolderItem(path)) {
+            return true;
+        }
+        if (shellOpen(L"shell:AppsFolder\\" + path, nullptr)) {
+            return true;
+        }
+        const size_t cut = path.find(L'!');
+        if (cut != std::wstring::npos) {
+            const std::wstring family = path.substr(0, cut);
+            if (ActivateShellAppsFolderItem(family) ||
+                shellOpen(L"shell:AppsFolder\\" + family, nullptr)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Deep link / protocol from toast launch=... → open that screen/URI first.
+    if (!snap.activationArgs.empty() && LooksLikeActivationUri(snap.activationArgs)) {
+        if (shellOpen(snap.activationArgs, nullptr)) {
+            return;
+        }
     }
     NotificationWindowHunt hunt;
     hunt.aumidLower = ToLowerCopy(snap.aumid);
+    // Strip !App for family matching in window AUMIDs.
+    const size_t bang = hunt.aumidLower.find(L'!');
+    if (bang != std::wstring::npos) {
+        hunt.aumidLower.resize(bang);
+    }
     hunt.appNameLower = ToLowerCopy(snap.app);
-    if (hunt.appNameLower == ToLowerCopy(Loc(L"Notification")) ||
-        hunt.appNameLower == L"notification" || hunt.appNameLower == L"new notification") {
+    if (IsGenericNotificationAppName(snap.app)) {
         hunt.appNameLower.clear();
     }
     if (!hunt.aumidLower.empty() || hunt.appNameLower.size() >= 2) {
         EnumWindows(HuntNotificationSourceWindowProc, reinterpret_cast<LPARAM>(&hunt));
     }
-    if (hunt.best) {
-        // foreground or background (incl. minimized)
+    // Only focus an already-running window on a strong match (AUMID / exe).
+    if (hunt.best && hunt.bestScore >= 100) {
         ForceForegroundWindow(hunt.best);
         return;
     }
-    const wchar_t* args = snap.activationArgs.empty() ? nullptr : snap.activationArgs.c_str();
-    if (!snap.aumid.empty() && ActivatePackagedApp(snap.aumid, args)) {
-        // terminated packaged / Store app — cold start (with deep link when args set)
+    const wchar_t* args = nullptr;
+    if (!snap.activationArgs.empty() && !LooksLikeActivationUri(snap.activationArgs)) {
+        args = snap.activationArgs.c_str();
+    }
+    if (tryActivateTarget(snap.aumid, args)) {
         return;
     }
-    if (!snap.aumid.empty()) {
-        std::wstring executePath = snap.aumid;
-        if (executePath.size() >= 2 && executePath.front() == L'"' && executePath.back() == L'"') {
-            executePath = executePath.substr(1, executePath.size() - 2);
+    if (hunt.best && hunt.bestScore >= 80) {
+        ForceForegroundWindow(hunt.best);
+        return;
+    }
+    std::vector<std::wstring> targets;
+    if (!IsGenericNotificationAppName(snap.app)) {
+        const std::wstring appsId = ResolveAppsFolderParsingName(snap.app);
+        if (!appsId.empty()) {
+            targets.push_back(appsId);
         }
-        const bool isFilePath =
-            (executePath.find(L":\\") != std::wstring::npos ||
-             (executePath.size() >= 4 &&
-              EqualsNoCase(executePath.substr(executePath.size() - 4), L".exe")));
-        if (isFilePath) {
-            if (GetFileAttributesW(executePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                SHELLEXECUTEINFOW sei = {sizeof(sei)};
-                sei.fMask = SEE_MASK_FLAG_NO_UI;
-                sei.lpFile = executePath.c_str();
-                if (args) {
-                    sei.lpParameters = args;
-                }
-                sei.nShow = SW_SHOWNORMAL;
-                ShellExecuteExW(&sei);
-                return;
-            }
-        } else {
-            std::wstring shellPath = L"shell:AppsFolder\\" + executePath;
-            SHELLEXECUTEINFOW sei = {sizeof(sei)};
-            sei.fMask = SEE_MASK_FLAG_NO_UI;
-            sei.lpFile = shellPath.c_str();
-            sei.nShow = SW_SHOWNORMAL;
-            ShellExecuteExW(&sei);
+        targets.push_back(snap.app);
+    }
+    for (const std::wstring& target : targets) {
+        if (tryActivateTarget(target, nullptr)) {
             return;
         }
     }
-    if (!snap.app.empty() && snap.app != Loc(L"Notification")) {
-        // Last resort: let Shell resolve the display name (rare).
-        SHELLEXECUTEINFOW sei = {sizeof(sei)};
-        sei.fMask = SEE_MASK_FLAG_NO_UI;
-        sei.lpFile = snap.app.c_str();
-        sei.nShow = SW_SHOWNORMAL;
-        ShellExecuteExW(&sei);
-    }
+    Wh_Log(L"OpenNotificationSource: all activation paths failed");
 }
 void OpenRelevantApp() {
     std::wstring title;
@@ -12146,6 +12658,10 @@ struct MediaPillMetrics {
     bool showClock = false;
     bool showDate = false;
 };
+struct NotificationCardMetrics {
+    float width = 220.0f;
+    float height = 56.0f;
+};
 std::wstring WidestDigitForm(std::wstring text) {
     for (wchar_t& c : text) {
         if (c >= L'0' && c <= L'9') {
@@ -12420,11 +12936,20 @@ public:
                 float nudge, bool hover, bool pinned, double now) {
         EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
         width = std::max(width, 0.0f);
+        height = std::max(height, 0.0f);
+        // Stage follows the spring-animated island box. Toast is seam-anchored to its
+        // left — never re-center the pair (that slid both pills and left ghost trails).
+        float stageW = width;
+        float stageH = secondary ? std::max(height, secondary->height) : height;
+        stageW = std::max(stageW, 0.0f);
+        stageH = std::max(stageH, 0.0f);
         if (UsesFixedStage(settings)) {
+            stageW = std::min(stageW, kStageContentWidth * settings.sizeScale);
+            stageH = std::min(stageH, kStageContentHeight * settings.sizeScale);
             width = std::min(width, kStageContentWidth * settings.sizeScale);
             height = std::min(height, kStageContentHeight * settings.sizeScale);
         }
-        const StageLayout stage = ComputeStageLayout(settings, width, height);
+        const StageLayout stage = ComputeStageLayout(settings, stageW, stageH);
         const int pixelWidth = stage.width;
         const int pixelHeight = stage.height;
         const bool flushTop = settings.notchStyle || settings.borderMergedMode;
@@ -12433,9 +12958,62 @@ public:
         const BYTE alpha = static_cast<BYTE>(Clamp(settings.pillOpacity, 0.35f, 1.0f) * 255.0f);
         const bool sizeChanged = pixelWidth != bitmapWidth_ || pixelHeight != bitmapHeight_;
         const bool moved = stage.origin.x != lastOrigin_.x || stage.origin.y != lastOrigin_.y;
+        const bool secondaryNow = secondary.has_value();
+        const bool secondaryToggled = secondaryNow != lastHadSecondary_;
+        lastHadSecondary_ = secondaryNow;
+        // Dual pills: toast LEFT of island, island stays on stage.pillLeft (seam-anchored).
+        const float gap = secondary ? 20.0f * settings.sizeScale : 0.0f;
+        const float primaryW = width;
+        const float primaryH = height;
+        float toastW = secondary ? secondary->width : 0.0f;
+        float toastH = secondary ? secondary->height : 0.0f;
+        float pLeft = left;
+        float pTop = top;
+        float sLeft = left;
+        float sTop = top;
+        if (secondary) {
+            const float pairH = std::max(primaryH, toastH);
+            sLeft = pLeft - gap - toastW;
+            // Keep toast inside the stage pad; shift the pair right only if clipped.
+            if (sLeft < kRenderPadX) {
+                const float shift = kRenderPadX - sLeft;
+                sLeft += shift;
+                pLeft += shift;
+            }
+            const bool hangFromTop = settings.notchStyle || settings.borderMergedMode;
+            if (hangFromTop) {
+                pTop = top;
+                sTop = top;
+            } else {
+                pTop = top + (pairH - primaryH) * 0.5f;
+                sTop = top + (pairH - toastH) * 0.5f;
+            }
+            pairSeamX_ = pLeft;
+            pairSeamY_ = top + pairH * 0.5f;
+        } else {
+            pairSeamX_ = -1.0f;
+            pairSeamY_ = -1.0f;
+        }
+        const float contentLeft = secondary ? sLeft : pLeft;
+        const float contentRight = pLeft + primaryW;
+        const float contentTop = secondary ? std::min(pTop, sTop) : pTop;
+        const float contentBottom =
+            secondary ? std::max(pTop + primaryH, sTop + toastH) : pTop + primaryH;
+        RECT bounds;
+        bounds.left = std::max(0, static_cast<int>(std::floor(contentLeft - kRenderPadX - 4.0f)));
+        bounds.top = std::max(0, static_cast<int>(std::floor(contentTop - kRenderPadY - 12.0f)));
+        bounds.right =
+            std::min(pixelWidth, static_cast<int>(std::ceil(contentRight + kRenderPadX + 4.0f)));
+        bounds.bottom =
+            std::min(pixelHeight, static_cast<int>(std::ceil(contentBottom + kRenderPadY + 12.0f)));
+        const bool boundsJumped =
+            std::abs(bounds.left - lastBounds_.left) > 2 ||
+            std::abs(bounds.top - lastBounds_.top) > 2 ||
+            std::abs(bounds.right - lastBounds_.right) > 2 ||
+            std::abs(bounds.bottom - lastBounds_.bottom) > 2;
         const bool fullPaint = !kUseDirtyRect || !stageValid_ || sizeChanged || moved ||
-                               alpha != lastAlpha_ || (now - lastFullPaint_) > 1.0 ||
-                               compositionActive_;
+                               secondaryToggled || boundsJumped || alpha != lastAlpha_ ||
+                               (now - lastFullPaint_) > 1.0 || compositionActive_;
         if (settings.useDirectComposition && !compositionActive_) {
             TryEnableComposition(pixelWidth, pixelHeight);
         } else if (!settings.useDirectComposition && compositionActive_) {
@@ -12461,23 +13039,15 @@ public:
                 g_layoutDirty = true;
             }
         }
-        float extentW = width;
-        float extentH = height;
-        if (secondary) {
-            const float gap = 12.0f * settings.sizeScale;
-            extentW = width + gap + secondary->width;
-            extentH = std::max(height, secondary->height);
-        }
-        RECT bounds;
-        bounds.left = std::max(0, static_cast<int>(std::floor(left - kRenderPadX - 4.0f)));
-        bounds.top = std::max(0, static_cast<int>(std::floor(top - kRenderPadY - 12.0f)));
-        bounds.right =
-            std::min(pixelWidth, static_cast<int>(std::ceil(left + extentW + kRenderPadX + 4.0f)));
-        bounds.bottom =
-            std::min(pixelHeight, static_cast<int>(std::ceil(top + extentH + kRenderPadY + 12.0f)));
         RECT dirty = {0, 0, pixelWidth, pixelHeight};
         if (!fullPaint && !compositionActive_) {
             UnionRect(&dirty, &lastBounds_, &bounds);
+            // Inflate so spring steps never leave a 1px ghost rim.
+            InflateRect(&dirty, 8, 8);
+            dirty.left = std::max(0L, dirty.left);
+            dirty.top = std::max(0L, dirty.top);
+            dirty.right = std::min(static_cast<LONG>(pixelWidth), dirty.right);
+            dirty.bottom = std::min(static_cast<LONG>(pixelHeight), dirty.bottom);
         }
         if (IsRectEmpty(&dirty)) {
             dirty = RECT{0, 0, pixelWidth, pixelHeight};
@@ -12515,27 +13085,25 @@ public:
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
                                         (settings.gameOverlay || g_gameOverlayPinned.load());
         islandHiding_ = primary.width < 1.0f && primary.height < 1.0f && !secondary;
-        const float hoverScale = (settings.expandOnHover && ((hover && !gameMetricsPresent) || pinned)) ? 1.025f : 1.0f;
+        // Hover-scale grows pills toward each other and eats the gap — disable for pairs.
+        const float hoverScale =
+            (!secondary && settings.expandOnHover && ((hover && !gameMetricsPresent) || pinned))
+                ? 1.025f
+                : 1.0f;
         const float scale = hoverScale;
         hoverScale_ = scale;
-        if (width >= 2.0f && height >= 2.0f) {
+        if (primaryW >= 2.0f && primaryH >= 2.0f) {
             if (secondary) {
-                const float gap = 12.0f * settings.sizeScale;
-                const float maxH = std::max(primary.height, secondary->height);
-                const bool hangFromTop = settings.notchStyle || settings.borderMergedMode;
-                const float pTop = hangFromTop ? top : top + (maxH - primary.height) * 0.5f;
-                const float sTop = hangFromTop ? top : top + (maxH - secondary->height) * 0.5f;
+                // Island first, toast second so the chip stays crisp above island shadows.
                 DrawPill(state, settings, primary,
-                         D2D1::RectF(left, pTop, left + primary.width, pTop + primary.height),
-                         scale, now);
+                         D2D1::RectF(pLeft, pTop, pLeft + primaryW, pTop + primaryH), scale,
+                         now);
                 DrawPill(state, settings, *secondary,
-                         D2D1::RectF(left + primary.width + gap, sTop,
-                                     left + primary.width + gap + secondary->width,
-                                     sTop + secondary->height),
-                         scale, now);
+                         D2D1::RectF(sLeft, sTop, sLeft + toastW, sTop + toastH), scale, now);
             } else {
                 DrawPill(state, settings, primary,
-                         D2D1::RectF(left, top, left + width, top + height), scale, now);
+                         D2D1::RectF(pLeft, pTop, pLeft + primaryW, pTop + primaryH), scale,
+                         now);
             }
         }
         target_->PopAxisAlignedClip();
@@ -12592,22 +13160,39 @@ public:
             if (fullPaint)
                 lastFullPaint_ = now;
             if (compositionActive_) {
-                g_pillClientRect = PillClientRect{left - static_cast<float>(bounds.left),
-                                                  top - static_cast<float>(bounds.top),
-                                                  left + width - static_cast<float>(bounds.left),
-                                                  top + height - static_cast<float>(bounds.top),
-                                                  true};
-                g_clientContentOriginX.store(static_cast<float>(bounds.left),
-                                            std::memory_order_relaxed);
-                g_clientContentOriginY.store(static_cast<float>(bounds.top),
-                                            std::memory_order_relaxed);
+                const float ox = static_cast<float>(bounds.left);
+                const float oy = static_cast<float>(bounds.top);
+                if (secondary) {
+                    g_secondaryPillClientRect =
+                        PillClientRect{sLeft - ox, sTop - oy, sLeft + toastW - ox,
+                                       sTop + toastH - oy, true};
+                    g_pillClientRect =
+                        PillClientRect{pLeft - ox, pTop - oy, pLeft + primaryW - ox,
+                                       pTop + primaryH - oy, true};
+                } else {
+                    g_pillClientRect = PillClientRect{pLeft - ox, pTop - oy, pLeft + primaryW - ox,
+                                                      pTop + primaryH - oy, true};
+                    g_secondaryPillClientRect = {};
+                }
+                g_clientContentOriginX.store(ox, std::memory_order_relaxed);
+                g_clientContentOriginY.store(oy, std::memory_order_relaxed);
             } else {
-                g_pillClientRect = PillClientRect{left, top, left + width, top + height, true};
+                if (secondary) {
+                    g_secondaryPillClientRect =
+                        PillClientRect{sLeft, sTop, sLeft + toastW, sTop + toastH, true};
+                    g_pillClientRect =
+                        PillClientRect{pLeft, pTop, pLeft + primaryW, pTop + primaryH, true};
+                } else {
+                    g_pillClientRect =
+                        PillClientRect{pLeft, pTop, pLeft + primaryW, pTop + primaryH, true};
+                    g_secondaryPillClientRect = {};
+                }
                 g_clientContentOriginX.store(0.0f, std::memory_order_relaxed);
                 g_clientContentOriginY.store(0.0f, std::memory_order_relaxed);
             }
         } else {
             stageValid_ = false;
+            g_secondaryPillClientRect = {};
         }
         if (presented) {
             BackdropMaterial syncMat = settings.backdropMaterial;
@@ -12810,6 +13395,108 @@ public:
         mediaPillCachedSectionWidth_ = section;
         mediaPillMetricsCacheValid_ = true;
         return metrics;
+    }
+    // Size toast to content; never exceed maxW/maxH (usually the island box).
+    // Logical (unscaled) size that fits notification text, never exceeding maxW/maxH.
+    NotificationCardMetrics MeasureNotificationCard(const SharedState& state,
+                                                    const Settings& settings, float maxW,
+                                                    float maxH) {
+        EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
+        NotificationCardMetrics out;
+        maxW = std::max(48.0f, maxW);
+        maxH = std::max(28.0f, maxH);
+        const bool compact = maxH < 64.0f;
+        const float pad = compact ? 8.0f : 14.0f;
+        const float icon = compact ? Clamp(maxH - pad * 2.0f, 18.0f, 28.0f) : 36.0f;
+        const float gap = compact ? 8.0f : 12.0f;
+        const float minW = std::min(maxW, compact ? 120.0f : 168.0f);
+        const float minH = std::min(maxH, compact ? maxH : 52.0f);
+
+        std::wstring app = state.notification.app;
+        if (app.empty() || app == L"Notification" || app == Loc(L"Notification")) {
+            app = Loc(L"Notification");
+        }
+        std::wstring title = state.notification.title.empty() ? std::wstring(Loc(L"Notification"))
+                                                              : state.notification.title;
+        const std::wstring& body = state.notification.body;
+
+        auto measureLine = [&](const std::wstring& text, IDWriteTextFormat* fmt) -> float {
+            if (!fmt || !dwriteFactory_ || text.empty()) {
+                return 0.0f;
+            }
+            ComPtr<IDWriteTextLayout> layout;
+            if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
+                                                        static_cast<UINT32>(text.size()), fmt,
+                                                        4096.0f, 64.0f, &layout)) ||
+                !layout) {
+                return 0.0f;
+            }
+            DWRITE_TEXT_METRICS tm = {};
+            if (FAILED(layout->GetMetrics(&tm))) {
+                return 0.0f;
+            }
+            return std::max(tm.width, tm.widthIncludingTrailingWhitespace);
+        };
+        auto measureWrapped = [&](const std::wstring& text, IDWriteTextFormat* fmt,
+                                  float wrapW, float wrapH) -> DWRITE_TEXT_METRICS {
+            DWRITE_TEXT_METRICS tm = {};
+            if (!fmt || !dwriteFactory_ || text.empty() || wrapW < 8.0f) {
+                return tm;
+            }
+            ComPtr<IDWriteTextLayout> layout;
+            fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                    text.c_str(), static_cast<UINT32>(text.size()), fmt, wrapW, wrapH,
+                    &layout)) &&
+                layout) {
+                layout->GetMetrics(&tm);
+            }
+            fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            return tm;
+        };
+
+        IDWriteTextFormat* appFmt = smallTextFormat_ ? smallTextFormat_.Get() : textFormat_.Get();
+        IDWriteTextFormat* titleFmt = textFormat_ ? textFormat_.Get() : appFmt;
+        const float appW = measureLine(app, appFmt);
+        const float titleW = measureLine(title, titleFmt);
+        // Body only drives width when the island is tall enough to show it.
+        const bool bodyFits = !body.empty() && maxH >= 72.0f;
+        const float bodyW = bodyFits ? measureLine(body, appFmt) : 0.0f;
+        const float textNeed = std::max({appW, titleW, bodyW});
+
+        float width = pad + icon + gap + textNeed + pad;
+        width = Clamp(width, minW, maxW);
+        width = std::ceil(width * 0.5f) * 2.0f;
+        width = std::min(width, maxW);
+
+        if (compact) {
+            // Match island strip height; truncate with marquee at draw time.
+            out.width = width;
+            out.height = maxH;
+            return out;
+        }
+
+        const float textCol = std::max(40.0f, width - pad - icon - gap - pad);
+        const float wrapBudget = std::max(24.0f, maxH - pad * 2.0f);
+        const DWRITE_TEXT_METRICS titleMetrics =
+            measureWrapped(title, titleFmt, textCol, wrapBudget);
+        const DWRITE_TEXT_METRICS bodyMetrics =
+            bodyFits ? measureWrapped(body, appFmt, textCol, wrapBudget) : DWRITE_TEXT_METRICS{};
+        const float appLineH = 16.0f;
+        const float titleBlockH = std::max(18.0f, titleMetrics.height);
+        const float bodyBlockH = bodyFits ? (6.0f + std::max(14.0f, bodyMetrics.height)) : 0.0f;
+        const float textStack = appLineH + 4.0f + titleBlockH + bodyBlockH;
+        float height = pad + std::max(icon, textStack) + pad;
+        if (!bodyFits && titleMetrics.lineCount <= 1 && titleW <= textCol + 1.0f) {
+            height = minH;
+        }
+        height = Clamp(height, minH, maxH);
+        height = std::ceil(height * 0.5f) * 2.0f;
+        height = std::min(height, maxH);
+
+        out.width = width;
+        out.height = height;
+        return out;
     }
 
 private:
@@ -13213,8 +13900,38 @@ private:
         D2D1_COLOR_F targetAccent = settings.customAccent;
         if (settings.accentMode == AccentMode::System) {
             targetAccent = GetSystemAccentColor();
-        } else if (settings.accentMode == AccentMode::Auto && state.media.art) {
-            targetAccent = state.media.art->sampledAccent;
+        } else if (settings.accentMode == AccentMode::Auto) {
+            // Built-in fallback palette when cover art is missing.
+            static const D2D1_COLOR_F kFallbackPalette[] = {
+                D2D1::ColorF(0x4cc9f0), D2D1::ColorF(0xff6b6b), D2D1::ColorF(0x51cf66),
+                D2D1::ColorF(0xffd43b), D2D1::ColorF(0x845ef7), D2D1::ColorF(0xff922b),
+                D2D1::ColorF(0x22b8cf), D2D1::ColorF(0xf06595), D2D1::ColorF(0x94d82d),
+                D2D1::ColorF(0x748ffc), D2D1::ColorF(0xff8787), D2D1::ColorF(0x3bc9db),
+            };
+            constexpr int kFallbackCount =
+                static_cast<int>(sizeof(kFallbackPalette) / sizeof(kFallbackPalette[0]));
+            const D2D1_COLOR_F* palette = kFallbackPalette;
+            int paletteCount = kFallbackCount;
+            if (state.media.art && state.media.art->paletteCount > 0) {
+                palette = state.media.art->palette;
+                paletteCount = state.media.art->paletteCount;
+            }
+            // New track → new base color; also advance every 5 minutes while playing.
+            uint64_t trackHash = 14695981039346656037ull;
+            auto mixStr = [&](const std::wstring& s) {
+                for (wchar_t ch : s) {
+                    trackHash ^= static_cast<uint64_t>(ch);
+                    trackHash *= 1099511628211ull;
+                }
+            };
+            mixStr(state.media.title);
+            mixStr(state.media.artist);
+            const int trackSlot =
+                paletteCount > 0 ? static_cast<int>(trackHash % static_cast<uint64_t>(paletteCount))
+                                 : 0;
+            const int timeSlot = static_cast<int>(now / 300.0) % std::max(paletteCount, 1);
+            const int slot = (trackSlot + timeSlot) % std::max(paletteCount, 1);
+            targetAccent = EnsureContrastAgainstBackground(palette[slot], themeBg);
         } else {
             targetAccent = EnsureContrastAgainstBackground(targetAccent, themeBg);
         }
@@ -19750,16 +20467,23 @@ private:
         mutedBrush_->SetOpacity(0.58f);
     }
     void DrawNotification(const SharedState& state, D2D1_RECT_F rect) {
-        if (rect.bottom - rect.top < 48.0f || rect.right - rect.left < 120.0f)
+        const float boxW = rect.right - rect.left;
+        const float boxH = rect.bottom - rect.top;
+        if (boxH < 28.0f || boxW < 80.0f)
             return;
         const double now = NowSeconds();
-        const float ttl = 4.0f;
+        const float ttl = 8.0f;
         const float remaining = Clamp(static_cast<float>(state.notification.expiresAt - now), 0.0f, ttl);
         const float progress = remaining / ttl;
+        const bool compact = boxH < 64.0f;
+        const bool showBody = !state.notification.body.empty() && boxH >= 72.0f;
+        const float pad = compact ? 8.0f : (boxH >= 100.0f ? 16.0f : 12.0f);
+        const float iconSz = compact ? Clamp(boxH - pad * 2.0f, 18.0f, 28.0f)
+                                     : Clamp(std::min(36.0f, boxH - pad * 2.0f), 24.0f, 48.0f);
         const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float iconSz = (rect.bottom - rect.top) - 16.0f;
-        D2D1_RECT_F badge = D2D1::RectF(rect.left + 14, cy - iconSz * 0.5f,
-                                        rect.left + 14 + iconSz, cy + iconSz * 0.5f);
+        const float badgeTop = compact ? (cy - iconSz * 0.5f) : (rect.top + pad);
+        D2D1_RECT_F badge = D2D1::RectF(rect.left + pad, badgeTop,
+                                        rect.left + pad + iconSz, badgeTop + iconSz);
         const float br = iconSz * 0.35f;
         ComPtr<ID2D1SolidColorBrush> plateBrush;
         target_->CreateSolidColorBrush(material_.raisedStrong, &plateBrush);
@@ -19790,32 +20514,61 @@ private:
             }
             textBrush_->SetOpacity(0.90f);
         }
-        const float tx = badge.right + 14.0f;
+        const float tx = badge.right + (compact ? 8.0f : 12.0f);
+        const float textRight = rect.right - pad;
         const bool showBar = frameSettings_.statusCountdownProgress;
-        D2D1_RECT_F appRect = showBar
-                                  ? D2D1::RectF(tx, cy - 18.0f, rect.right - 14.0f, cy - 2.0f)
-                                  : D2D1::RectF(tx, cy - 16.0f, rect.right - 14.0f, cy - 1.0f);
-        mutedBrush_->SetOpacity(0.75f);
+        const float textBottom = showBar ? (rect.bottom - 10.0f) : (rect.bottom - pad);
         const std::wstring appLabel =
             (state.notification.app.empty() ||
              state.notification.app == L"Notification" ||
              state.notification.app == Loc(L"Notification"))
                 ? std::wstring(Loc(L"Notification"))
                 : state.notification.app;
-        target_->DrawTextW(appLabel.c_str(),
-                           static_cast<UINT32>(appLabel.size()),
-                           smallTextFormat_.Get(), appRect, mutedBrush_.Get(),
-                           D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        D2D1_RECT_F titleRect = showBar
-                                    ? D2D1::RectF(tx, cy - 2.0f, rect.right - 14.0f, cy + 15.0f)
-                                    : D2D1::RectF(tx, cy - 1.0f, rect.right - 14.0f, cy + 16.0f);
+        const std::wstring titleText = state.notification.title.empty()
+                                           ? std::wstring(Loc(L"Notification"))
+                                           : state.notification.title;
+        mutedBrush_->SetOpacity(0.75f);
         textBrush_->SetOpacity(0.95f);
-        DrawMarqueeText(state.notification.title.empty()
-                            ? std::wstring(Loc(L"Notification"))
-                            : state.notification.title,
-                        titleRect, textFormat_.Get(), textBrush_.Get(), now, 28.0f, marqueeNotificationCache_);
+        if (compact) {
+            D2D1_RECT_F appRect = D2D1::RectF(tx, cy - 15.0f, textRight, cy - 1.0f);
+            target_->DrawTextW(appLabel.c_str(), static_cast<UINT32>(appLabel.size()),
+                               smallTextFormat_.Get(), appRect, mutedBrush_.Get(),
+                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            D2D1_RECT_F titleRect = D2D1::RectF(tx, cy - 1.0f, textRight, cy + 15.0f);
+            DrawMarqueeText(titleText, titleRect, textFormat_.Get(), textBrush_.Get(), now, 28.0f,
+                            marqueeNotificationCache_);
+        } else {
+            float y = rect.top + pad;
+            D2D1_RECT_F appRect = D2D1::RectF(tx, y, textRight, y + 16.0f);
+            target_->DrawTextW(appLabel.c_str(), static_cast<UINT32>(appLabel.size()),
+                               smallTextFormat_.Get(), appRect, mutedBrush_.Get(),
+                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            y += 18.0f;
+            const float titleBottom = showBody ? std::min(y + 40.0f, textBottom - 22.0f)
+                                               : textBottom;
+            D2D1_RECT_F titleRect = D2D1::RectF(tx, y, textRight, std::max(y + 16.0f, titleBottom));
+            if (textFormat_) {
+                textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+                target_->DrawTextW(titleText.c_str(), static_cast<UINT32>(titleText.size()),
+                                   textFormat_.Get(), titleRect, textBrush_.Get(),
+                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            }
+            if (showBody) {
+                D2D1_RECT_F bodyRect = D2D1::RectF(tx, titleRect.bottom + 4.0f, textRight, textBottom);
+                mutedBrush_->SetOpacity(0.85f);
+                if (smallTextFormat_) {
+                    smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+                    target_->DrawTextW(state.notification.body.c_str(),
+                                       static_cast<UINT32>(state.notification.body.size()),
+                                       smallTextFormat_.Get(), bodyRect, mutedBrush_.Get(),
+                                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                }
+            }
+        }
         textBrush_->SetOpacity(0.90f);
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 6.0f, progress);
+        DrawCountdownProgress(tx, textRight, rect.bottom - 6.0f, progress);
         mutedBrush_->SetOpacity(0.50f);
     }
     void DrawVolume(const SharedState& state, D2D1_RECT_F rect) {
@@ -20992,6 +21745,7 @@ private:
     int bitmapCapH_ = 0;
     POINT lastOrigin_ = {0, 0};
     RECT lastBounds_ = {0, 0, 0, 0};
+    bool lastHadSecondary_ = false;
     BYTE lastAlpha_ = 0;
     bool stageValid_ = false;
     double lastFullPaint_ = -1e9;
@@ -21260,6 +22014,10 @@ private:
     RadialGradientSlot bloomGrad_;
     ShapeEntry shapeCache_[kShapeCacheSize];
     uint64_t shapeClock_ = 0;
+    // Pair layout: toast left / island right share a fixed seam so they expand
+    // away from each other (3-way) instead of pushing.
+    float pairSeamX_ = -1.0f;
+    float pairSeamY_ = -1.0f;
 };
 Activity ActivityForKind(IslandKind kind, const Settings& settings, const SharedState& state) {
     Activity activity;
@@ -21278,8 +22036,8 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
         activity.height = 56.0f;
         break;
     case IslandKind::Notification:
-        activity.width = 360.0f;
-        activity.height = 58.0f;
+        activity.width = 220.0f;
+        activity.height = 56.0f;
         break;
     case IslandKind::Volume:
         // Compact numeric OSD (icon + percent only).
@@ -21377,6 +22135,33 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
         activities.push_back(IslandKind::Idle);
     }
     return activities;
+}
+// Keep the main island (Media / Idle tabs) as primary. Notifications adapt beside it
+// as a secondary pill — they must not collapse an expanded player or dashboard.
+void StabilizeIslandActivities(std::vector<IslandKind>& kinds, bool islandExpanded,
+                               bool mediaAvailable) {
+    if (kinds.empty()) {
+        return;
+    }
+    // Quick Lookup keeps absolute priority.
+    if (kinds[0] == IslandKind::Lookup) {
+        return;
+    }
+    const bool hasNotification =
+        std::find(kinds.begin(), kinds.end(), IslandKind::Notification) != kinds.end();
+    if (!hasNotification) {
+        return;
+    }
+    if (mediaAvailable ||
+        std::find(kinds.begin(), kinds.end(), IslandKind::Media) != kinds.end()) {
+        kinds.clear();
+        kinds.push_back(IslandKind::Media);
+        kinds.push_back(IslandKind::Notification);
+        return;
+    }
+    // Keep Notification as primary while it is the only toast. Inserting Idle on
+    // hover/expand produced an empty expanded capsule beside a vanishing toast.
+    (void)islandExpanded;
 }
 constexpr UINT WM_APP_CAPSLOCK = WM_APP + 0x444;
 HHOOK g_keyboardHook = nullptr;
@@ -22354,12 +23139,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Outside pill → HTTRANSPARENT (pass through to windows below — NOT "accept drop").
         POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(hwnd, &pt);
-        if (g_pillClientRect.valid) {
-            const PillClientRect& r = g_pillClientRect;
-            if (pt.x < r.left || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) {
-                return HTTRANSPARENT;
-            }
+        const float px = static_cast<float>(pt.x);
+        const float py = static_cast<float>(pt.y);
+        if (g_pillClientRect.Contains(px, py) || g_secondaryPillClientRect.Contains(px, py)) {
             return HTCLIENT;
+        }
+        if (g_pillClientRect.valid || g_secondaryPillClientRect.valid) {
+            return HTTRANSPARENT;
         }
         RECT clientRect = {};
         GetClientRect(hwnd, &clientRect);
@@ -22819,18 +23605,70 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             mediaActive = settings.media && g_state.media.available;
             kinds = ChooseActivities(g_state, settings, NowSeconds());
         }
-        const bool onSecondarySplit = (kinds.size() > 1 && g_pillClientRect.valid &&
-                                       xPos > (g_pillClientRect.left + (g_pillClientRect.right - g_pillClientRect.left) * 0.5f));
+        const bool islandExpanded =
+            g_pinnedExpanded.load(std::memory_order_relaxed) ||
+            g_clickExpanded.load(std::memory_order_relaxed);
+        StabilizeIslandActivities(kinds, islandExpanded, mediaActive);
+        const float tapX = static_cast<float>(xPos);
+        const float tapY = static_cast<float>(yPos);
+        bool onSecondaryPill = g_secondaryPillClientRect.Contains(tapX, tapY);
+        const bool onPrimaryPill = g_pillClientRect.Contains(tapX, tapY);
+        // Inflate secondary hit + treat "left of primary" as secondary (toast is on the left).
+        if (!onSecondaryPill && g_secondaryPillClientRect.valid) {
+            const float pad = 10.0f;
+            if (tapX >= g_secondaryPillClientRect.left - pad &&
+                tapX <= g_secondaryPillClientRect.right + pad &&
+                tapY >= g_secondaryPillClientRect.top - pad &&
+                tapY <= g_secondaryPillClientRect.bottom + pad) {
+                onSecondaryPill = true;
+            } else if (g_pillClientRect.valid && tapX < g_pillClientRect.left) {
+                onSecondaryPill = true;
+            }
+        }
         if (PrivacyDotsHitTest(xPos, yPos)) {
             OpenPrivacySettingsForActiveDevice();
             return 0;
         }
-        if (!kinds.empty() && !onSecondarySplit &&
-            (kinds[0] == IslandKind::Notification || kinds[0] == IslandKind::Clipboard)) {
-            if (kinds[0] == IslandKind::Notification) {
-                // Tap notification pill → open source app (fg / bg / terminated), then dismiss.
+        bool notificationActive = false;
+        {
+            std::lock_guard lock(g_stateMutex);
+            notificationActive =
+                g_state.notification.active && NowSeconds() < g_state.notification.expiresAt;
+        }
+        const bool notificationIsPrimary =
+            !kinds.empty() && kinds[0] == IslandKind::Notification;
+        const bool notificationIsSecondary =
+            kinds.size() > 1 && kinds[1] == IslandKind::Notification;
+        const bool hasNotificationKind =
+            notificationIsPrimary || notificationIsSecondary ||
+            std::find(kinds.begin(), kinds.end(), IslandKind::Notification) != kinds.end();
+        IslandKind tappedKind = IslandKind::Idle;
+        if (onSecondaryPill && kinds.size() > 1) {
+            tappedKind = kinds[1];
+        } else if (onPrimaryPill && !kinds.empty()) {
+            tappedKind = kinds[0];
+        } else if (notificationIsPrimary) {
+            tappedKind = IslandKind::Notification;
+        }
+        // Universal toast open: primary toast, side toast, or any island click while a
+        // toast is showing alone (no media competing for the primary pill).
+        const bool openNotification =
+            notificationActive && hasNotificationKind &&
+            (notificationIsPrimary || onSecondaryPill ||
+             (onPrimaryPill && notificationIsPrimary) ||
+             (!mediaActive && !notificationIsSecondary));
+        if (openNotification) {
+            tappedKind = IslandKind::Notification;
+        }
+        if (!kinds.empty() &&
+            (openNotification ||
+             (tappedKind == IslandKind::Clipboard &&
+              ((tappedKind == kinds[0] && onPrimaryPill) ||
+               (kinds.size() > 1 && tappedKind == kinds[1] && onSecondaryPill))))) {
+            if (openNotification) {
                 OpenNotificationSource();
-            } else if (kinds[0] == IslandKind::Clipboard) {
+                tappedKind = IslandKind::Notification;
+            } else if (tappedKind == IslandKind::Clipboard) {
                 ClipboardAction action = ClipboardAction::None;
                 std::wstring actionUrl;
                 {
@@ -22849,16 +23687,19 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             {
                 std::lock_guard lock(g_stateMutex);
-                if (kinds[0] == IslandKind::Notification) {
+                if (tappedKind == IslandKind::Notification) {
                     g_state.notification.active = false;
                     g_state.notification.expiresAt = 0.0;
-                } else if (kinds[0] == IslandKind::Clipboard) {
+                } else if (tappedKind == IslandKind::Clipboard) {
                     g_state.clipboard.active = false;
                     g_state.clipboard.expiresAt = 0.0;
                 }
             }
             g_clipActionHitValid.store(false, std::memory_order_relaxed);
-            g_clickExpanded = false;
+            // Dismissing a side toast must not collapse the main island.
+            if (tappedKind == kinds[0]) {
+                g_clickExpanded = false;
+            }
             g_layoutDirty = true;
             TriggerNudge();
             return 0;
@@ -23485,9 +24326,35 @@ DWORD WINAPI RenderThreadProc(void*) {
                 g_state.clipboard.active = false;
                 snapshot.clipboard.active = false;
             }
-            if (g_state.notification.active && now >= g_state.notification.expiresAt) {
-                g_state.notification.active = false;
-                snapshot.notification.active = false;
+            if (g_state.notification.active) {
+                // Keep toast alive while the cursor rests on it (primary or side pill).
+                bool overNotification = false;
+                if (g_hwnd) {
+                    POINT pt = {};
+                    GetCursorPos(&pt);
+                    if (ScreenToClient(g_hwnd, &pt)) {
+                        const float x = static_cast<float>(pt.x);
+                        const float y = static_cast<float>(pt.y);
+                        const float pad = 12.0f;
+                        auto hit = [&](const PillClientRect& r) {
+                            return r.valid && x >= r.left - pad && x <= r.right + pad &&
+                                   y >= r.top - pad && y <= r.bottom + pad;
+                        };
+                        if (g_secondaryPillClientRect.valid) {
+                            overNotification = hit(g_secondaryPillClientRect);
+                        } else {
+                            overNotification = hit(g_pillClientRect);
+                        }
+                    }
+                }
+                if (overNotification) {
+                    g_state.notification.expiresAt =
+                        (std::max)(g_state.notification.expiresAt, now + 2.0);
+                    snapshot.notification = g_state.notification;
+                } else if (now >= g_state.notification.expiresAt) {
+                    g_state.notification.active = false;
+                    snapshot.notification.active = false;
+                }
             }
             if (g_state.volume.active &&
                 (g_volumeDragging.load(std::memory_order_relaxed) ||
@@ -23522,25 +24389,12 @@ DWORD WINAPI RenderThreadProc(void*) {
             (!frame.quickLookup || !snapshot.lookup.active || now >= snapshot.lookup.expiresAt)) {
             CloseLookupPanel(hwnd);
         }
-        const std::vector<IslandKind> kinds = ChooseActivities(snapshot, frame, now);
+        std::vector<IslandKind> kinds = ChooseActivities(snapshot, frame, now);
         g_lyricsTabAvailable.store(
             frame.lyrics && frame.media && snapshot.media.available,
             std::memory_order_relaxed);
-        Activity primary = ActivityForKind(kinds[0], frame, snapshot);
-        std::optional<Activity> secondary;
-        if (kinds.size() >= 2) {
-            secondary = ActivityForKind(kinds[1], frame, snapshot);
-        }
+        const bool mediaAvailable = frame.media && snapshot.media.available;
         const bool pinned = g_pinnedExpanded.load();
-        if (primary.kind != previousPrimary) {
-            if (primary.kind != IslandKind::Idle) {
-                nudgeSpring.value = -6.0f;
-                nudgeSpring.velocity = 0.0f;
-                nudgeSpring.target = 0.0f;
-            }
-            lastInteractionTime = now;
-        }
-        previousPrimary = primary.kind;
         POINT cursor = {};
         GetCursorPos(&cursor);
         const bool flushTopNow = frame.notchStyle || frame.borderMergedMode;
@@ -23548,15 +24402,44 @@ DWORD WINAPI RenderThreadProc(void*) {
             ComputeStageLayout(frame, widthSpring.value, heightSpring.value);
         const float hoverTop = hoverStage.pillTop +
                                (flushTopNow ? std::max(0.0f, nudgeSpring.value) : nudgeSpring.value);
+        // Screen union of island + left toast (client hit rects from last present).
         RECT pillRect = {
             hoverStage.origin.x + static_cast<int>(std::lround(hoverStage.pillLeft)),
             hoverStage.origin.y + static_cast<int>(std::lround(hoverTop)),
             hoverStage.origin.x + static_cast<int>(std::lround(hoverStage.pillLeft + widthSpring.value)),
             hoverStage.origin.y + static_cast<int>(std::lround(hoverTop + heightSpring.value))};
         bool hover = false;
-        if (widthSpring.value > 1.0f && heightSpring.value > 1.0f) {
+        if (g_hwnd && (g_pillClientRect.valid || g_secondaryPillClientRect.valid)) {
+            POINT clientPt = cursor;
+            if (ScreenToClient(g_hwnd, &clientPt)) {
+                const float pad = 8.0f;
+                const float cx = static_cast<float>(clientPt.x);
+                const float cy = static_cast<float>(clientPt.y);
+                auto hit = [&](const PillClientRect& r) {
+                    return r.valid && cx >= r.left - pad && cx <= r.right + pad &&
+                           cy >= r.top - pad && cy <= r.bottom + pad;
+                };
+                hover = hit(g_pillClientRect) || hit(g_secondaryPillClientRect);
+                float l = g_pillClientRect.valid ? g_pillClientRect.left : g_secondaryPillClientRect.left;
+                float t = g_pillClientRect.valid ? g_pillClientRect.top : g_secondaryPillClientRect.top;
+                float r = g_pillClientRect.valid ? g_pillClientRect.right : g_secondaryPillClientRect.right;
+                float b = g_pillClientRect.valid ? g_pillClientRect.bottom : g_secondaryPillClientRect.bottom;
+                if (g_secondaryPillClientRect.valid) {
+                    l = std::min(l, g_secondaryPillClientRect.left);
+                    t = std::min(t, g_secondaryPillClientRect.top);
+                    r = std::max(r, g_secondaryPillClientRect.right);
+                    b = std::max(b, g_secondaryPillClientRect.bottom);
+                }
+                POINT tl = {static_cast<LONG>(std::floor(l)), static_cast<LONG>(std::floor(t))};
+                POINT br = {static_cast<LONG>(std::ceil(r)), static_cast<LONG>(std::ceil(b))};
+                ClientToScreen(g_hwnd, &tl);
+                ClientToScreen(g_hwnd, &br);
+                pillRect = {tl.x, tl.y, br.x, br.y};
+            }
+        } else if (widthSpring.value > 1.0f && heightSpring.value > 1.0f) {
             hover = PtInRect(&pillRect, cursor) != FALSE;
-        } else if (frame.unhideOnHover) {
+        }
+        if (!hover && frame.unhideOnHover && widthSpring.value <= 1.0f) {
             RECT dockRect = GetIslandDockRect(frame);
             hover = PtInRect(&dockRect, cursor) != FALSE;
         }
@@ -23572,12 +24455,31 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_hoveredMediaButton = -1;
             needsRender = true;
         }
+        bool isHoverExpanded = frame.expandOnHover ? hover : (hover && g_clickExpanded.load());
+        // Island stays primary; toast rides as a side pill instead of replacing the dashboard.
+        StabilizeIslandActivities(kinds, pinned || isHoverExpanded, mediaAvailable);
+        Activity primary = ActivityForKind(kinds[0], frame, snapshot);
+        std::optional<Activity> secondary;
+        if (kinds.size() >= 2) {
+            secondary = ActivityForKind(kinds[1], frame, snapshot);
+        }
+        if (primary.kind != previousPrimary) {
+            if (primary.kind != IslandKind::Idle) {
+                nudgeSpring.value = -6.0f;
+                nudgeSpring.velocity = 0.0f;
+                nudgeSpring.target = 0.0f;
+            }
+            lastInteractionTime = now;
+        }
+        previousPrimary = primary.kind;
         const bool recentTrackChange = frame.mediaAutoExpand &&
                                        !MediaExpandBlocked(snapshot.media) &&
                                        primary.kind == IslandKind::Media &&
                                        snapshot.media.playing &&
                                        !snapshot.media.title.empty() &&
                                        (now - snapshot.media.titleChangedAt < 5.0);
+        const bool notificationShowing =
+            snapshot.notification.active && now < snapshot.notification.expiresAt;
         bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
                                  primary.kind == IslandKind::Notification ||
                                  primary.kind == IslandKind::Volume ||
@@ -23588,6 +24490,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                                  primary.kind == IslandKind::Bluetooth ||
                                  primary.kind == IslandKind::DoNotDisturb ||
                                  primary.kind == IslandKind::Lookup ||
+                                 notificationShowing ||
                                  recentTrackChange);
         const bool unhideGraceActive = (now < g_hotkeyUnhideUntil.load());
         const bool hoverUnhides = frame.unhideOnHover && hover;
@@ -23599,7 +24502,6 @@ DWORD WINAPI RenderThreadProc(void*) {
                 currentlyHidden = (now - lastInteractionTime > frame.autoHideIdleSeconds);
             }
         }
-        bool isHoverExpanded = frame.expandOnHover ? hover : (hover && g_clickExpanded.load());
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
                                         (frame.gameOverlay || g_gameOverlayPinned.load());
         if (gameMetricsPresent) {
@@ -23705,6 +24607,26 @@ DWORD WINAPI RenderThreadProc(void*) {
                                  lookupSettings.sizeScale;
             }
         }
+        // Toast sizes to content, never larger than the island (primary) box.
+        const float sizeScale = std::max(0.01f, frame.sizeScale);
+        if (primary.kind == IslandKind::Notification) {
+            const float soloMaxW =
+                (pinned || isHoverExpanded) ? MediaLayout::kExpandedWidth : 320.0f;
+            const float soloMaxH =
+                (pinned || isHoverExpanded) ? MediaLayout::kExpandedHeight : 64.0f;
+            const auto fit =
+                renderer.MeasureNotificationCard(snapshot, frame, soloMaxW, soloMaxH);
+            primary.width = std::min(fit.width, soloMaxW) * sizeScale;
+            primary.height = std::min(fit.height, soloMaxH) * sizeScale;
+        }
+        if (secondary && secondary->kind == IslandKind::Notification) {
+            const float islandCapW = primary.width / sizeScale;
+            const float islandCapH = primary.height / sizeScale;
+            const auto fit =
+                renderer.MeasureNotificationCard(snapshot, frame, islandCapW, islandCapH);
+            secondary->width = std::min(fit.width, islandCapW) * sizeScale;
+            secondary->height = std::min(fit.height, islandCapH) * sizeScale;
+        }
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
@@ -23717,10 +24639,11 @@ DWORD WINAPI RenderThreadProc(void*) {
             ((primary.kind == IslandKind::Media && primary.width > 1.0f && primary.height > 1.0f) ||
              (secondary && secondary->kind == IslandKind::Media && secondary->width > 1.0f && secondary->height > 1.0f));
         g_audioCaptureNeeded.store(mediaWaveformVisible, std::memory_order_relaxed);
+        // Springs track the island only — toast is seam-anchored and must not
+        // recenter the stage when it grows.
         float targetWidth = primary.width;
         float targetHeight = primary.height;
         if (secondary) {
-            targetWidth = primary.width + secondary->width + 12.0f * frame.sizeScale;
             targetHeight = std::max(primary.height, secondary->height);
         }
         widthSpring.target = targetWidth;
@@ -24311,11 +25234,31 @@ void WhTool_ModUninit() {
 #ifdef LUX_STANDALONE
 void LuxOverlay_ShowIsland() {
     RequestShowIsland();
+    // Smoke / --no-workers scaffold HWND (if present).
+    AppState& app = GetApp();
+    if (app.overlayHwnd && IsWindow(app.overlayHwnd)) {
+        ShowWindow(app.overlayHwnd, SW_SHOWNOACTIVATE);
+        InvalidateRect(app.overlayHwnd, nullptr, FALSE);
+    }
 }
 void LuxOverlay_HideIsland() {
     RequestHideIsland();
+    AppState& app = GetApp();
+    if (app.overlayHwnd && IsWindow(app.overlayHwnd)) {
+        ShowWindow(app.overlayHwnd, SW_HIDE);
+    }
 }
 void LuxOverlay_ToggleIsland() {
+    AppState& app = GetApp();
+    const bool scaffoldOnly = app.overlayHwnd && IsWindow(app.overlayHwnd) && !g_hwnd;
+    if (scaffoldOnly) {
+        if (IsWindowVisible(app.overlayHwnd)) {
+            LuxOverlay_HideIsland();
+        } else {
+            LuxOverlay_ShowIsland();
+        }
+        return;
+    }
     RequestToggleIsland();
 }
 #endif

@@ -49,7 +49,7 @@ Collapsed pill: clock, date, media glance. Expand on hover or click for tabs and
 - **Drag** empty pill area to move; offset is saved.
 - **Right-click** → Hide / Reset position / Exit / Settings.
 - **Tray** → Show / Settings / Exit.
-- Fullscreen apps can auto-hide the island (setting).
+- **Fullscreen** apps can auto-hide the island (setting).
 
 ---
 
@@ -83,6 +83,8 @@ app\build.bat
 
 Output: `build\Release\DynamicIslandLux.exe`
 
+Version for packaging/installer is parsed from `app\CMakeLists.txt` via `scripts\_version.cmd` (keep that `project(… VERSION …)` in sync with tags).
+
 Release packaging:
 
 ```bat
@@ -97,6 +99,7 @@ scripts\make-installer.bat
 ```
 
 Developer notes, smoke flags, exit codes, and release checklist: **[app/README.md](app/README.md)**.  
+Settings schema rules: **[CONTRIBUTING.md](CONTRIBUTING.md)**.  
 Changelog: **[RELEASE_NOTES.md](RELEASE_NOTES.md)**.
 
 ---

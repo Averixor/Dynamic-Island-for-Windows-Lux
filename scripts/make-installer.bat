@@ -2,7 +2,9 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0\.."
 
-set VER=1.0.5
+call "%~dp0_version.cmd"
+if errorlevel 1 exit /b 1
+
 set EXE=build\Release\DynamicIslandLux.exe
 set ISS=installer\DynamicIslandLux.iss
 set OUT=dist\v%VER%\DynamicIslandLux-Setup-%VER%.exe
@@ -38,6 +40,7 @@ if not defined ISCC (
 if not exist "dist\v%VER%" mkdir "dist\v%VER%"
 
 echo Using ISCC: %ISCC%
+echo Version: %VER%
 "%ISCC%" "/DMyAppVersion=%VER%" "%ISS%"
 if errorlevel 1 (
   echo FAILED: Inno Setup compile

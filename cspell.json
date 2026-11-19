@@ -1,6 +1,6 @@
 {
   "version": "0.2",
-  "language": "en,uk",
+  "language": "en,uk,ru",
   "allowCompoundWords": true,
   "dictionaryDefinitions": [
     {
@@ -73,7 +73,31 @@
     "воркери",
     "воркер",
     "Інжект",
-    "інжект"
+    "інжект",
+    "dxgi",
+    "dcomp",
+    "dxva",
+    "propsys",
+    "comctl",
+    "uxtheme",
+    "comdlg",
+    "wbemuuid",
+    "iphlpapi",
+    "winver",
+    "quns",
+    "HMONITOR",
+    "Wbem",
+    "wekyb",
+    "bbwe"
+  ],
+  "ignorePaths": [
+    "LICENSE",
+    "**/LICENSE",
+    ".clang-format",
+    "installer/**",
+    "**/*.iss",
+    "dist/**",
+    "build/**"
   ],
   "ignoreRegExpList": [
     "-l[A-Za-z0-9]+",

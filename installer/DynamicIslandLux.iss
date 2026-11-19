@@ -17,6 +17,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppCopyright=Copyright (c) Averixor and contributors
 AppPublisherURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux
 AppSupportURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/issues
 AppUpdatesURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases
@@ -42,6 +43,7 @@ RestartApplications=no
 AllowNoIcons=yes
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
+VersionInfoCopyright=Copyright (c) Averixor and contributors
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
@@ -77,9 +79,3 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppNameSh
 [UninstallDelete]
 ; Leave user settings/logs; only remove empty install dir leftovers.
 Type: dirifempty; Name: "{app}"
-
-[Code]
-function InitializeSetup(): Boolean;
-begin
-  Result := True;
-end;

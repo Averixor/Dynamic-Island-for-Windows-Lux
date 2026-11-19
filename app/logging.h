@@ -2,6 +2,11 @@
 
 #include <windows.h>
 
+// File sink: %LocalAppData%\DynamicIslandLux\logs\lux.log (rotated at 5 MB → .1 / .2).
+// Release default min level = Info; Debug builds default to Debug.
+// Override: --log-level=error|warn|info|debug
+// Ephemeral (smoke / --test-json): no file I/O.
+
 enum class LuxLogLevel {
   Error = 0,
   Warn = 1,

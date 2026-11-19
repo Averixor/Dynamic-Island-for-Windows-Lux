@@ -1,7 +1,12 @@
 #pragma once
 
+// Host-process resource / command IDs (tray + message-only HWND).
+// Island render thread uses its own WM_APP + 0x442… range in the .wh.cpp body —
+// keep these below WM_APP + 0x100 to avoid collisions.
+
 #define IDI_APP 101
 
+// STRINGTABLE fallbacks (English). Live tray/UI strings come from SettingsUiLoc.
 #define IDS_APP_TITLE 201
 #define IDS_TRAY_TIP 202
 #define IDS_MENU_SETTINGS 203

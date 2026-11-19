@@ -2,9 +2,19 @@
 
 #include <string>
 
+// Flat JSON store under %AppData%\DynamicIslandLux\
+//   settings.json — user prefs (schema keys + app.* stamps)
+//   runtime.json  — ephemeral worker state
+//
+// Thread-safe (internal mutex). SettingsSet* only mark dirty when the value
+// actually changes; SettingsStoreSaveUser is a no-op when clean so LastWriteTime
+// does not jump on OK-without-edits / Cancel.
+
 bool SettingsStoreInit();
 void SettingsStoreShutdown();
 void SettingsStoreReload();
+// Persist g_user when dirty. Returns true if disk matches memory (including
+// already-clean). False only when a needed write failed.
 bool SettingsStoreSaveUser();
 
 int SettingsGetInt(const wchar_t* key, int fallback);

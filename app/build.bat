@@ -55,6 +55,10 @@ if not defined HAS_MSVC_CRT (
   exit /b 1
 )
 
+rem Avoid LNK1104 when a previous Lux instance still holds the exe.
+taskkill /F /IM DynamicIslandLux.exe >nul 2>&1
+timeout /t 1 /nobreak >nul
+
 "%CMAKE%" -S app -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 exit /b 1
 "%CMAKE%" --build build --config Release

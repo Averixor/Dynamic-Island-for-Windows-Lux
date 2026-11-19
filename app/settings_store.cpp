@@ -389,10 +389,13 @@ bool SettingsStoreInit() {
     }
   }
   // One-shot: adopt WheelStep=2 as the new product default (was 5).
+  // Only fill when the key is absent — never overwrite an explicit user value.
   {
     auto mig = g_user.find(L"app.migrate.wheelStep2");
     if (mig == g_user.end() || mig->second != L"1") {
-      g_user[L"Behavior.WheelStep"] = L"2";
+      if (g_user.find(L"Behavior.WheelStep") == g_user.end()) {
+        g_user[L"Behavior.WheelStep"] = L"2";
+      }
       g_user[L"app.migrate.wheelStep2"] = L"1";
       schemaFilled = true;
     }
@@ -405,9 +408,15 @@ bool SettingsStoreInit() {
   }
   // First launch / corrupt recovery / schema growth / one-shot migration: persist.
   if (userLoad != JsonLoadResult::Ok || versionBump || schemaFilled) {
-    if (!SaveFileMap(UserPath(), g_user) && userLoad == JsonLoadResult::Corrupt) {
-      LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
+    if (SaveFileMap(UserPath(), g_user)) {
+      g_userDirty.store(false);
+    } else {
+      g_userDirty.store(true);
+      if (userLoad == JsonLoadResult::Corrupt) {
+        LUX_LOGW(L"Could not rewrite settings.json after corrupt recovery");
+      }
     }
+  } else {
     g_userDirty.store(false);
   }
   return true;
@@ -428,19 +437,31 @@ void SettingsStoreShutdown() {
 
 void SettingsStoreReload() {
   std::lock_guard lock(g_mutex);
-  if (LoadFileMap(UserPath(), &g_user) == JsonLoadResult::Corrupt) {
-    for (const SettingDef& def : kSettingSchema) {
-      if (g_user.find(def.key) == g_user.end() && def.defaultString) {
-        g_user[def.key] = def.defaultString;
-      }
+  const JsonLoadResult userLoad = LoadFileMap(UserPath(), &g_user);
+  bool filled = false;
+  for (const SettingDef& def : kSettingSchema) {
+    if (g_user.find(def.key) == g_user.end() && def.defaultString) {
+      g_user[def.key] = def.defaultString;
+      filled = true;
     }
-    SaveFileMap(UserPath(), g_user);
+  }
+  if (userLoad == JsonLoadResult::Corrupt || filled) {
+    if (SaveFileMap(UserPath(), g_user)) {
+      g_userDirty.store(false);
+    } else {
+      g_userDirty.store(true);
+    }
+  } else {
+    g_userDirty.store(false);
   }
   LoadFileMap(RuntimePath(), &g_runtime);
 }
 
 bool SettingsStoreSaveUser() {
   std::lock_guard lock(g_mutex);
+  if (!g_userDirty.load()) {
+    return true;
+  }
   if (!SaveFileMap(UserPath(), g_user)) {
     return false;
   }
@@ -473,20 +494,35 @@ std::wstring SettingsGetString(const wchar_t* key, const wchar_t* fallback) {
 }
 
 void SettingsSetInt(const wchar_t* key, int value) {
+  const std::wstring next = std::to_wstring(value);
   std::lock_guard lock(g_mutex);
-  g_user[key] = std::to_wstring(value);
+  auto it = g_user.find(key);
+  if (it != g_user.end() && it->second == next) {
+    return;
+  }
+  g_user[key] = next;
   g_userDirty.store(true);
 }
 
 void SettingsSetBool(const wchar_t* key, bool value) {
+  const wchar_t* next = value ? L"1" : L"0";
   std::lock_guard lock(g_mutex);
-  g_user[key] = value ? L"1" : L"0";
+  auto it = g_user.find(key);
+  if (it != g_user.end() && it->second == next) {
+    return;
+  }
+  g_user[key] = next;
   g_userDirty.store(true);
 }
 
 void SettingsSetString(const wchar_t* key, const wchar_t* value) {
+  const wchar_t* next = value ? value : L"";
   std::lock_guard lock(g_mutex);
-  g_user[key] = value ? value : L"";
+  auto it = g_user.find(key);
+  if (it != g_user.end() && it->second == next) {
+    return;
+  }
+  g_user[key] = next;
   g_userDirty.store(true);
 }
 

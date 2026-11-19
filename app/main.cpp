@@ -166,9 +166,16 @@ bool AcquireSingleInstance(AppState& app) {
     return false;
   }
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    CloseHandle(app.singleInstanceMutex);
+    app.singleInstanceMutex = nullptr;
     return false;
   }
   app.readyEvent = CreateEventW(nullptr, TRUE, FALSE, kAppReadyEventName);
+  if (!app.readyEvent) {
+    CloseHandle(app.singleInstanceMutex);
+    app.singleInstanceMutex = nullptr;
+    return false;
+  }
   return true;
 }
 
@@ -219,9 +226,11 @@ bool NotifyRunningInstance(CopyDataCommand cmd) {
   cds.cbData = sizeof(payload);
   cds.lpData = &payload;
   // Short timeout so a hung primary instance cannot freeze the second process.
-  SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
-                      2000, nullptr);
-  return true;
+  DWORD_PTR sendResult = 0;
+  const LRESULT ok =
+      SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
+                          2000, &sendResult);
+  return ok != 0 && sendResult != FALSE;
 }
 
 void RegisterTrayIcon(AppState& app) {
@@ -259,6 +268,7 @@ void ShowTrayMenu(AppState& app, POINT screenPt) {
   const SettingsUiLoc::Lang lang = SettingsUiLoc::ResolveLang();
   HMENU menu = CreatePopupMenu();
   AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, SettingsUiLoc::TraySettings(lang));
+  AppendMenuW(menu, MF_STRING, IDM_TRAY_SHOW, SettingsUiLoc::TrayShow(lang));
   AppendMenuW(menu, MF_STRING, IDM_TRAY_RELOAD, SettingsUiLoc::TrayReload(lang));
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, SettingsUiLoc::TrayExit(lang));
@@ -269,17 +279,33 @@ void ShowTrayMenu(AppState& app, POINT screenPt) {
   PostMessageW(app.hostHwnd, WM_NULL, 0, 0);
 }
 
+namespace {
+void CleanupProcessHandles(AppState& app) {
+  UnregisterTrayIcon(app);
+  if (app.readyEvent) {
+    CloseHandle(app.readyEvent);
+    app.readyEvent = nullptr;
+  }
+  if (app.singleInstanceMutex) {
+    CloseHandle(app.singleInstanceMutex);
+    app.singleInstanceMutex = nullptr;
+  }
+}
+}  // namespace
+
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   // Startup order (documented contract):
-  //   1) mutex (single instance)
-  //   2) host HWND (WM_COPYDATA handler lives here)
-  //   3) LuxOverlay_Init → overlay HWND + D2D (no workers yet)
-  //   4) SignalAppReady  (second instance may open settings now)
-  //   5) LuxOverlay_StartWorkers
-  //   6) first frame / message loop
+  //   1) parse argv + LuxLogInit
+  //   2) mutex (single instance) / WM_COPYDATA handoff
+  //   3) SettingsStoreInit
+  //   4) host HWND (WM_COPYDATA target)
+  //   5) LuxOverlay_Init → overlay HWND + D2D (no workers yet)
+  //   6) SignalAppReady  (second instance may open settings now)
+  //   7) LuxOverlay_StartWorkers
+  //   8) message loop
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-  AppOptions options = ParseCommandLine(argc, argv ? argv : nullptr);
+  AppOptions options = ParseCommandLine(argv ? argc : 0, argv);
   if (argv) {
     LocalFree(argv);
   }
@@ -316,16 +342,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
         options.openSettings ? CopyDataCommand::OpenSettings : CopyDataCommand::ShowIsland;
     // If the peer exited mid-wait (e.g. smoke), Notify fails — retry mutex and become primary.
     if (NotifyRunningInstance(cmd)) {
-      if (g_app.singleInstanceMutex) {
-        CloseHandle(g_app.singleInstanceMutex);
-        g_app.singleInstanceMutex = nullptr;
-      }
       LuxLogShutdown();
       return static_cast<int>(LuxExitCode::Ok);
-    }
-    if (g_app.singleInstanceMutex) {
-      CloseHandle(g_app.singleInstanceMutex);
-      g_app.singleInstanceMutex = nullptr;
     }
     LUX_LOGW(L"Peer gone during --settings handoff; retrying as primary instance");
     if (!AcquireSingleInstance(g_app)) {
@@ -350,13 +368,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   if (options.testJson) {
     const bool ok = SettingsStoreSelfTestJson();
     SettingsStoreShutdown();
+    CleanupProcessHandles(g_app);
     LuxLogShutdown();
-    if (g_app.readyEvent) {
-      CloseHandle(g_app.readyEvent);
-    }
-    if (g_app.singleInstanceMutex) {
-      CloseHandle(g_app.singleInstanceMutex);
-    }
     return ok ? static_cast<int>(LuxExitCode::Ok)
               : static_cast<int>(LuxExitCode::JsonTestFailure);
   }
@@ -375,11 +388,17 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
                       HWND_MESSAGE, nullptr, instance, nullptr);
   if (!g_app.hostHwnd) {
     LUX_LOGE(L"Host window failed");
+    SettingsStoreShutdown();
+    CleanupProcessHandles(g_app);
+    LuxLogShutdown();
     return static_cast<int>(LuxExitCode::InitFailure);
   }
 
   if (!LuxOverlay_Init(g_app)) {
     LUX_LOGE(L"LuxOverlay_Init failed");
+    SettingsStoreShutdown();
+    CleanupProcessHandles(g_app);
+    LuxLogShutdown();
     return static_cast<int>(LuxExitCode::InitFailure);
   }
 
@@ -446,20 +465,14 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
       }
     }
 
-    UnregisterTrayIcon(g_app);
     LuxOverlay_Uninit(g_app);  // WhTool_ModUninit → wait threads → destroy scaffold
     const bool workersStuck = LuxWorkersStuckOnExit();
     if (workersStuck) {
       LUX_LOGE(L"smoke-test: worker(s) stuck on Uninit (see worker … did not stop)");
     }
     SettingsStoreShutdown();
+    CleanupProcessHandles(g_app);
     LuxLogShutdown();
-    if (g_app.readyEvent) {
-      CloseHandle(g_app.readyEvent);
-    }
-    if (g_app.singleInstanceMutex) {
-      CloseHandle(g_app.singleInstanceMutex);
-    }
     if (!initOk) {
       return static_cast<int>(LuxExitCode::InitFailure);
     }
@@ -475,6 +488,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   if (!LuxOverlay_StartWorkers(g_app)) {
     LUX_LOGE(L"StartWorkers failed");
     LuxOverlay_Uninit(g_app);
+    SettingsStoreShutdown();
+    CleanupProcessHandles(g_app);
+    LuxLogShutdown();
     return static_cast<int>(LuxExitCode::InitFailure);
   }
 
@@ -484,15 +500,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     DispatchMessageW(&msg);
   }
 
-  UnregisterTrayIcon(g_app);
   LuxOverlay_Uninit(g_app);
   SettingsStoreShutdown();
+  CleanupProcessHandles(g_app);
   LuxLogShutdown();
-  if (g_app.readyEvent) {
-    CloseHandle(g_app.readyEvent);
-  }
-  if (g_app.singleInstanceMutex) {
-    CloseHandle(g_app.singleInstanceMutex);
-  }
   return static_cast<int>(msg.wParam);
 }

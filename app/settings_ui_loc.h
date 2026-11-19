@@ -72,6 +72,11 @@ inline const wchar_t* TraySettings(Lang lang) {
   return Pick(lang, L"Settings", L"Налаштування", L"Настройки");
 }
 
+inline const wchar_t* TrayShow(Lang lang) {
+  return Pick(lang, L"Show / hide island", L"Показати / сховати острів",
+              L"Показать / скрыть остров");
+}
+
 inline const wchar_t* TrayReload(Lang lang) {
   return Pick(lang, L"Restart", L"Перезапуск", L"Перезапуск");
 }
@@ -113,6 +118,47 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Appearance.Position") == 0) {
     return Pick(lang, L"Position", L"Позиція", L"Позиция");
   }
+  if (wcscmp(key, L"Appearance.SizeScale") == 0) {
+    return Pick(lang, L"Size scale", L"Масштаб розміру", L"Масштаб размера");
+  }
+  if (wcscmp(key, L"Appearance.AutoDpiScale") == 0) {
+    return Pick(lang, L"Auto DPI scale", L"Автомасштаб DPI", L"Автомасштаб DPI");
+  }
+  if (wcscmp(key, L"Appearance.OffsetX") == 0) {
+    return Pick(lang, L"Offset X", L"Зсув X", L"Смещение X");
+  }
+  if (wcscmp(key, L"Appearance.OffsetY") == 0) {
+    return Pick(lang, L"Offset Y", L"Зсув Y", L"Смещение Y");
+  }
+  if (wcscmp(key, L"Appearance.SeparateExpandedOffsetY") == 0) {
+    return Pick(lang, L"Separate expanded Y offset", L"Окремий Y для розгорнутого",
+                L"Отдельный Y для раскрытого");
+  }
+  if (wcscmp(key, L"Appearance.OffsetYExpanded") == 0) {
+    return Pick(lang, L"Expanded offset Y", L"Зсув Y (розгорнутий)", L"Смещение Y (раскрытый)");
+  }
+  if (wcscmp(key, L"Appearance.ProgressStyle") == 0) {
+    return Pick(lang, L"Progress style", L"Стиль прогресу", L"Стиль прогресса");
+  }
+  if (wcscmp(key, L"Appearance.BorderMergedMode") == 0) {
+    return Pick(lang, L"Merge with screen edge", L"Злити з краєм екрана", L"Слить с краем экрана");
+  }
+  if (wcscmp(key, L"Animations.ExpandedMediaTransitions") == 0) {
+    return Pick(lang, L"Expanded media transitions", L"Анімації розгорнутого медіа",
+                L"Анимации раскрытого медиа");
+  }
+  if (wcscmp(key, L"Animations.PillCoverSpin") == 0) {
+    return Pick(lang, L"Cover spin on pill", L"Обертання обкладинки", L"Вращение обложки");
+  }
+  if (wcscmp(key, L"Animations.TargetFPS") == 0) {
+    return Pick(lang, L"Target FPS", L"Цільовий FPS", L"Целевой FPS");
+  }
+  if (wcscmp(key, L"Animations.AnimationStyle") == 0) {
+    return Pick(lang, L"Animation style", L"Стиль анімації", L"Стиль анимации");
+  }
+  if (wcscmp(key, L"Animations.AnimationSpeed") == 0) {
+    return Pick(lang, L"Animation speed", L"Швидкість анімації", L"Скорость анимации");
+  }
   if (wcscmp(key, L"Behavior.AlwaysOnTop") == 0) {
     return Pick(lang, L"Always on top", L"Поверх усіх вікон", L"Поверх всех окон");
   }
@@ -136,10 +182,6 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Behavior.ClickThroughModifier") == 0) {
     return Pick(lang, L"Click-through modifier", L"Модифікатор наскрізних кліків",
                 L"Модификатор сквозных кликов");
-  }
-  if (wcscmp(key, L"Behavior.SplitWheelAction") == 0) {
-    return Pick(lang, L"Mouse wheel on island", L"Колесо миші на острові",
-                L"Колесо мыши на острове");
   }
   if (wcscmp(key, L"Behavior.WheelStep") == 0) {
     return Pick(lang, L"Wheel step (%)", L"Крок колеса (%)", L"Шаг колеса (%)");
@@ -169,6 +211,50 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   }
   if (wcscmp(key, L"Themes.ThemePreset") == 0) {
     return Pick(lang, L"Theme", L"Тема", L"Тема");
+  }
+  if (wcscmp(key, L"Themes.AccentColorMode") == 0) {
+    return Pick(lang, L"Accent color mode", L"Режим акцентного кольору",
+                L"Режим акцентного цвета");
+  }
+  if (wcscmp(key, L"Themes.CustomAccentHex") == 0) {
+    return Pick(lang, L"Custom accent (#hex)", L"Власний акцент (#hex)", L"Свой акцент (#hex)");
+  }
+  if (wcscmp(key, L"Themes.AccentBloom") == 0) {
+    return Pick(lang, L"Accent bloom", L"Свічення акценту", L"Свечение акцента");
+  }
+  if (wcscmp(key, L"Themes.TintIntensity") == 0) {
+    return Pick(lang, L"Tint intensity", L"Інтенсивність тону", L"Интенсивность тона");
+  }
+  if (wcscmp(key, L"Themes.MaterialDepth") == 0) {
+    return Pick(lang, L"Material depth", L"Глибина матеріалу", L"Глубина материала");
+  }
+  if (wcscmp(key, L"Themes.DropShadow") == 0) {
+    return Pick(lang, L"Drop shadow", L"Тінь", L"Тень");
+  }
+  if (wcscmp(key, L"Themes.ClockAccentGlow") == 0) {
+    return Pick(lang, L"Clock accent glow", L"Свічення годинника", L"Свечение часов");
+  }
+  if (wcscmp(key, L"Themes.ContourBorderMode") == 0) {
+    return Pick(lang, L"Border mode", L"Режим контуру", L"Режим контура");
+  }
+  if (wcscmp(key, L"Themes.ContourBorderHex") == 0) {
+    return Pick(lang, L"Border color (#hex)", L"Колір контуру (#hex)", L"Цвет контура (#hex)");
+  }
+  if (wcscmp(key, L"Themes.PillBgColor") == 0) {
+    return Pick(lang, L"Custom pill background", L"Власний фон пігулки", L"Свой фон таблетки");
+  }
+  if (wcscmp(key, L"Themes.TextPrimaryColor") == 0) {
+    return Pick(lang, L"Custom primary text", L"Власний основний текст", L"Свой основной текст");
+  }
+  if (wcscmp(key, L"Themes.TextSecondaryColor") == 0) {
+    return Pick(lang, L"Custom secondary text", L"Власний другорядний текст",
+                L"Свой второстепенный текст");
+  }
+  if (wcscmp(key, L"Themes.FontFamily") == 0) {
+    return Pick(lang, L"Font family", L"Шрифт", L"Шрифт");
+  }
+  if (wcscmp(key, L"Themes.CalendarAccent") == 0) {
+    return Pick(lang, L"Calendar accent", L"Акцент календаря", L"Акцент календаря");
   }
   if (wcscmp(key, L"Modules.CollapsedLyrics") == 0) {
     return Pick(lang, L"Lyrics on collapsed island", L"Текст пісні на згорнутому острові",
@@ -213,11 +299,64 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Modules.Media") == 0) {
     return Pick(lang, L"Media player", L"Медіаплеєр", L"Медиаплеер");
   }
+  if (wcscmp(key, L"Modules.MediaAutoExpand") == 0) {
+    return Pick(lang, L"Auto-expand on track change", L"Авторозгортання при зміні треку",
+                L"Автораскрытие при смене трека");
+  }
+  if (wcscmp(key, L"Modules.MediaExpandBlocklist") == 0) {
+    return Pick(lang, L"Media expand blocklist", L"Чорний список авторозгортання медіа",
+                L"Чёрный список автораскрытия медиа");
+  }
   if (wcscmp(key, L"Modules.Volume") == 0) {
     return Pick(lang, L"Volume", L"Гучність", L"Громкость");
   }
-  if (wcscmp(key, L"Modules.Brightness") == 0) {
-    return Pick(lang, L"Brightness", L"Яскравість", L"Яркость");
+  if (wcscmp(key, L"Modules.StatusCountdownProgress") == 0) {
+    return Pick(lang, L"Status countdown bar", L"Смужка зворотного відліку",
+                L"Полоса обратного отсчёта");
+  }
+  if (wcscmp(key, L"Modules.ShowMetricText") == 0) {
+    return Pick(lang, L"Show metric labels", L"Підписи метрик", L"Подписи метрик");
+  }
+  if (wcscmp(key, L"Modules.BluetoothShowBattery") == 0) {
+    return Pick(lang, L"Bluetooth battery", L"Заряд Bluetooth", L"Заряд Bluetooth");
+  }
+  if (wcscmp(key, L"Modules.NotificationRespectDnD") == 0) {
+    return Pick(lang, L"Respect Do Not Disturb", L"Поважати «Не турбувати»",
+                L"Учитывать «Не беспокоить»");
+  }
+  if (wcscmp(key, L"Modules.WeatherCity") == 0) {
+    return Pick(lang, L"Weather city", L"Місто для погоди", L"Город для погоды");
+  }
+  if (wcscmp(key, L"Modules.FirstDayOfWeek") == 0) {
+    return Pick(lang, L"First day of week", L"Перший день тижня", L"Первый день недели");
+  }
+  if (wcscmp(key, L"Modules.Lyrics") == 0) {
+    return Pick(lang, L"Lyrics", L"Текст пісні", L"Текст песни");
+  }
+  if (wcscmp(key, L"Modules.KaraokeLyrics") == 0) {
+    return Pick(lang, L"Karaoke lyrics", L"Караоке-текст", L"Караоке-текст");
+  }
+  if (wcscmp(key, L"Modules.KaraokeLetterGlow") == 0) {
+    return Pick(lang, L"Karaoke letter glow", L"Підсвітка літер караоке",
+                L"Подсветка букв караоке");
+  }
+  if (wcscmp(key, L"Modules.LyricsNeighborLinesVisible") == 0) {
+    return Pick(lang, L"Show neighbor lyric lines", L"Сусідні рядки тексту",
+                L"Соседние строки текста");
+  }
+  if (wcscmp(key, L"Modules.LyricsOffsetMs") == 0) {
+    return Pick(lang, L"Lyrics offset (ms)", L"Зсув тексту (мс)", L"Смещение текста (мс)");
+  }
+  if (wcscmp(key, L"Modules.LyricsOffsetBluetoothMs") == 0) {
+    return Pick(lang, L"Lyrics Bluetooth offset (ms)", L"Зсув тексту Bluetooth (мс)",
+                L"Смещение текста Bluetooth (мс)");
+  }
+  if (wcscmp(key, L"Modules.LyricsCache") == 0) {
+    return Pick(lang, L"Cache lyrics", L"Кеш тексту пісень", L"Кэш текста песен");
+  }
+  if (wcscmp(key, L"Modules.LyricsCacheMaxMB") == 0) {
+    return Pick(lang, L"Lyrics cache max (MB)", L"Макс. кеш тексту (МБ)",
+                L"Макс. кэш текста (МБ)");
   }
   if (wcscmp(key, L"Modules.Clipboard") == 0) {
     return Pick(lang, L"Clipboard", L"Буфер обміну", L"Буфер обмена");
@@ -411,18 +550,6 @@ inline const wchar_t* TargetMonitorLabel(Lang lang, const wchar_t* value) {
   return value;
 }
 
-inline const wchar_t* SplitWheelActionLabel(Lang lang, const wchar_t* value) {
-  if (_wcsicmp(value, L"off") == 0 || _wcsicmp(value, L"volume") == 0) {
-    // "volume" kept as legacy enum value; system volume is media-scale only.
-    return Pick(lang, L"Off", L"Вимкнено", L"Выкл");
-  }
-  if (_wcsicmp(value, L"brightness_volume") == 0) {
-    return Pick(lang, L"Brightness (left half)", L"Яскравість (ліва половина)",
-                L"Яркость (левая половина)");
-  }
-  return value;
-}
-
 inline const wchar_t* BlacklistModeLabel(Lang lang, const wchar_t* value) {
   if (_wcsicmp(value, L"foreground") == 0) {
     return Pick(lang, L"Foreground app", L"Активне вікно", L"Активное окно");
@@ -500,6 +627,78 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   }
   if (wcscmp(def.key, L"Behavior.BlacklistMode") == 0) {
     return BlacklistModeLabel(lang, def.enums[index].value);
+  }
+  if (wcscmp(def.key, L"Appearance.ProgressStyle") == 0 ||
+      wcscmp(def.key, L"Animations.AnimationStyle") == 0 ||
+      wcscmp(def.key, L"Animations.AnimationSpeed") == 0 ||
+      wcscmp(def.key, L"Themes.AccentColorMode") == 0 ||
+      wcscmp(def.key, L"Themes.ContourBorderMode") == 0 ||
+      wcscmp(def.key, L"Themes.CalendarAccent") == 0 ||
+      wcscmp(def.key, L"Modules.FirstDayOfWeek") == 0) {
+    const wchar_t* v = def.enums[index].value;
+    if (_wcsicmp(v, L"slim") == 0) {
+      return Pick(lang, L"Slim", L"Тонкий", L"Тонкий");
+    }
+    if (_wcsicmp(v, L"bar") == 0) {
+      return Pick(lang, L"Bar", L"Смуга", L"Полоса");
+    }
+    if (_wcsicmp(v, L"wavy") == 0) {
+      return Pick(lang, L"Wavy", L"Хвилястий", L"Волнистый");
+    }
+    if (_wcsicmp(v, L"squiggle") == 0) {
+      return Pick(lang, L"Squiggle", L"Зигзаг", L"Зигзаг");
+    }
+    if (_wcsicmp(v, L"smooth") == 0) {
+      return Pick(lang, L"Smooth", L"Плавний", L"Плавный");
+    }
+    if (_wcsicmp(v, L"default") == 0) {
+      return Pick(lang, L"Default", L"Стандартний", L"Стандартный");
+    }
+    if (_wcsicmp(v, L"bouncy") == 0) {
+      return Pick(lang, L"Bouncy", L"Пружний", L"Пружинный");
+    }
+    if (_wcsicmp(v, L"snappy") == 0) {
+      return Pick(lang, L"Snappy", L"Швидкий", L"Резкий");
+    }
+    if (_wcsicmp(v, L"very-slow") == 0) {
+      return Pick(lang, L"Very slow", L"Дуже повільно", L"Очень медленно");
+    }
+    if (_wcsicmp(v, L"slow") == 0) {
+      return Pick(lang, L"Slow", L"Повільно", L"Медленно");
+    }
+    if (_wcsicmp(v, L"normal") == 0) {
+      return Pick(lang, L"Normal", L"Нормально", L"Нормально");
+    }
+    if (_wcsicmp(v, L"fast") == 0) {
+      return Pick(lang, L"Fast", L"Швидко", L"Быстро");
+    }
+    if (_wcsicmp(v, L"very-fast") == 0) {
+      return Pick(lang, L"Very fast", L"Дуже швидко", L"Очень быстро");
+    }
+    if (_wcsicmp(v, L"ultra-fast") == 0) {
+      return Pick(lang, L"Ultra fast", L"Ультрашвидко", L"Ультрабыстро");
+    }
+    if (_wcsicmp(v, L"auto") == 0) {
+      return Pick(lang, L"Auto", L"Авто", L"Авто");
+    }
+    if (_wcsicmp(v, L"system") == 0) {
+      return Pick(lang, L"System", L"Системний", L"Системный");
+    }
+    if (_wcsicmp(v, L"custom") == 0) {
+      return Pick(lang, L"Custom", L"Власний", L"Свой");
+    }
+    if (_wcsicmp(v, L"borderless") == 0) {
+      return Pick(lang, L"Borderless", L"Без рамки", L"Без рамки");
+    }
+    if (_wcsicmp(v, L"accent") == 0) {
+      return Pick(lang, L"Accent", L"Акцент", L"Акцент");
+    }
+    if (_wcsicmp(v, L"monday") == 0) {
+      return Pick(lang, L"Monday", L"Понеділок", L"Понедельник");
+    }
+    if (_wcsicmp(v, L"sunday") == 0) {
+      return Pick(lang, L"Sunday", L"Неділя", L"Воскресенье");
+    }
   }
   // Language / modifiers: keep schema labels (endonyms / chord names).
   return def.enums[index].label;

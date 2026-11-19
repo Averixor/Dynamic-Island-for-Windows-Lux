@@ -13,7 +13,11 @@ Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive**
 app\build.bat
 ```
 
-VERSIONINFO (`FileVersion` / `ProductVersion` / `CompanyName` / `ProductName`) генерується з `project(VERSION …)` через `version.rc.in` → `version.gen.rc`. Не хардкодити версію в `resources.rc`.
+Версія = `project(DynamicIslandLux VERSION …)` у `CMakeLists.txt`.  
+Пакування/інсталер читають її через `scripts\_version.cmd` (не дублювати вручну).
+
+VERSIONINFO (`FileVersion` / `ProductVersion` / `CompanyName` / `ProductName`) генерується з `project(VERSION …)` через `version.rc.in` → `version.gen.rc`.  
+Маніфест + іконка: `resources.rc.in` → `resources.gen.rc` (`DynamicIslandLux.manifest.in`, `app.ico`). Не компілювати `resources.rc` вручну.
 
 Результат: `build\Release\DynamicIslandLux.exe` (прапорці `--smoke-test` / `--test-json` доступні в **Release**, не лише Debug).
 
@@ -22,17 +26,33 @@ VERSIONINFO (`FileVersion` / `ProductVersion` / `CompanyName` / `ProductName`) �
 ```bat
 build\Release\DynamicIslandLux.exe
 build\Release\DynamicIslandLux.exe --settings
+build\Release\DynamicIslandLux.exe --minimized
 build\Release\DynamicIslandLux.exe --test-json
 build\Release\DynamicIslandLux.exe --smoke-test --no-workers
 build\Release\DynamicIslandLux.exe --smoke-test
 build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
 build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
+build\Release\DynamicIslandLux.exe --log-level=debug
 ```
+
+| Flag | Effect |
+| --- | --- |
+| `--smoke-test` | Ephemeral run; frame proof then exit (workers start unless `--no-workers`) |
+| `--no-workers` | No threads/hooks (CI with `--smoke-test`) |
+| `--test-json` | SettingsStore JSON round-trip, then exit |
+| `--settings` | Open settings (IPC to existing instance, or become primary) |
+| `--minimized` / `--startup` | Tray only; island hidden (HKCU Run uses `--minimized`) |
+| `--no-tray` | Skip tray icon |
+| `--no-autostart` | Do not refresh HKCU Run on this launch |
+| `--ephemeral` | No settings/log file I/O |
+| `--backdrop=none\|blur\|acrylic` | Override backdrop for this run |
+| `--smoke-timeout-ms=N` | Smoke wait (default 10000) |
+| `--log-level=error\|warn\|info\|debug` | Min log level |
 
 ### Exit codes (`LuxExitCode`)
 
 | Code | Meaning |
-|------|---------|
+| --- | --- |
 | 0 | OK |
 | 1 | Init failure |
 | 2 | Worker stuck on Uninit |
@@ -47,11 +67,11 @@ build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
 
 - **`SetWindowCompositionAttribute` (WCA)** — недокументований API. На майбутніх збірках Win11 accent може зникнути без попередження. Fallback = backdrop `none`, не crash (Warn у лозі).
 - **LL-хуки** (`WH_KEYBOARD_LL` / `WH_MOUSE_LL`) можуть блокуватись антивірусом/EDR — Caps/Num і mouse-wake тоді мовчать; решта острова працює. Quick Lookup hotkey = `RegisterHotKey` (не LL).
-- **Autostart** через `HKCU\…\Run` не поважає Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) — на керованих ПК toggle може бути no-op без Error.
+- **Autostart** (`HKCU\…\Run` + `StartupApproved\Run`) — Group Policy (`DisableRegistryTools` / `DisableTaskMgr`) може зробити toggle no-op; Task Manager Disable знімається повторним enable у Settings.
 - **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
 - **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
-## Acceptance перед тегом v1.0.0
+## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.5**)
 
 ### Автоматичні (`app\build.bat`)
 
@@ -89,16 +109,17 @@ scripts\release.bat
 1. `app\build.bat` — Release + smoke (exit ≠ 0 → стоп)
 2. Cold-start чекліст вище (corrupt JSON обовʼязково)
 3. `scripts\make-release-assets.bat` — копіює **той самий** `.exe`, SHA256, VERSIONINFO≠`@PROJECT_VERSION@` (exit ≠ 0 → стоп)
-4. `git tag -a v1.0.0 -m "Dynamic Island Lux standalone v1.0.0"` на **поточний** `HEAD` після зеленого build
+4. `git tag -a v1.0.5 -m "Dynamic Island Lux standalone v1.0.5"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
 
-Не тегати `5cdfcb1`/`0796927` «наосліп». Assets: `dist\v1.0.0\`.
+Assets: `dist\v1.0.5\` (папка = `scripts\_version.cmd`).
 
 ## Архітектурні інваріанти
 
 - Hotkey / PeekMessage / Unregister — **render-thread**
 - Island layered; DwmBackdrop non-layered + WCA; Show → EnsureBehind; accent після SetWindowPos
-- Settings OK → store reload (main) + `WM_APP_RELOAD_SETTINGS` (render)
+- Settings OK → store reload (main) + `WM_APP_RELOAD_SETTINGS` (render); Cancel = no write / no reload
 - Custom settings dialog (не PROPSHEET)
+- Schema (`settings_schema.h`) = єдине джерело ключів — див. `/CONTRIBUTING.md`
 
 ## Дані
 

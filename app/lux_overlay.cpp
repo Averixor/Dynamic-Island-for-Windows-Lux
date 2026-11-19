@@ -95,6 +95,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 bool CreateScaffoldPill(AppState& app) {
+  DestroyScaffold(app);
+
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = OverlayWndProc;
@@ -119,6 +121,7 @@ bool CreateScaffoldPill(AppState& app) {
   HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, g_d2d.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
     LUX_LOGE(L"D2D1CreateFactory failed (0x%08lX)", static_cast<unsigned long>(hr));
+    DestroyScaffold(app);
     return false;
   }
 
@@ -133,13 +136,17 @@ bool CreateScaffoldPill(AppState& app) {
       D2D1::HwndRenderTargetProperties(app.overlayHwnd, size), g_rt.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
     LUX_LOGE(L"CreateHwndRenderTarget failed (0x%08lX)", static_cast<unsigned long>(hr));
+    DestroyScaffold(app);
     return false;
   }
 
   ShowWindow(app.overlayHwnd, SW_SHOWNOACTIVATE);
   g_scaffoldActive = true;
+  InterlockedExchange(&app.renderedFrames, 0);
+  InterlockedExchange(&app.lastFrameHr, static_cast<LONG>(S_OK));
   return true;
 }
+
 }  // namespace
 
 bool LuxOverlay_Init(AppState& app) {
@@ -193,7 +200,6 @@ void LuxOverlay_Reload() {
 bool LuxOverlay_StartWorkers(AppState& app) {
   (void)app;
   if (!LuxShouldStartWorkers()) {
-    // After Step D: autostart/dialog are sync on main — no extra threads here either.
     LUX_LOGI(L"LuxOverlay_StartWorkers skipped (--no-workers) — no CreateThread/hooks/hotkeys");
     return true;
   }
@@ -202,7 +208,6 @@ bool LuxOverlay_StartWorkers(AppState& app) {
     return true;
   }
 
-  // Exactly one lifecycle entry: WhTool_ModInit (NOT Wh_ModInit — gated out under LUX_STANDALONE).
   LUX_LOGI(L"worker bootstrap: calling WhTool_ModInit");
   if (!WhTool_ModInit()) {
     LUX_LOGE(L"WhTool_ModInit failed");

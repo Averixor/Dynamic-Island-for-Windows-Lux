@@ -86,6 +86,3 @@ bool NotifyRunningInstance(CopyDataCommand cmd);
 void RegisterTrayIcon(AppState& app);
 void UnregisterTrayIcon(AppState& app);
 void ShowTrayMenu(AppState& app, POINT screenPt);
-
-// Settings dialog (settings_dialog.cpp).
-void OpenSettingsDialog(HWND owner);

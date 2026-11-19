@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Template: DynamicIslandLux.manifest.in
+  CMake configure_file writes build/DynamicIslandLux.manifest with project(VERSION).
+  This checked-in copy is a fallback preview (keep version in sync when bumping CMake).
+-->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="1.9.1.0" processorArchitecture="*" name="Averixor.DynamicIslandLux" type="win32"/>
+  <assemblyIdentity version="1.0.5.0" processorArchitecture="*" name="Averixor.DynamicIslandLux" type="win32"/>
   <description>Dynamic Island for Windows Lux</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>

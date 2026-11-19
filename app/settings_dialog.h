@@ -10,5 +10,6 @@
 //
 // Modal DialogBox on the *main* (host) thread — OK because the island renders on
 // RenderThreadProc. DialogBox runs its own IsDialogMessage loop (Tab/Enter work).
-// No Apply button: OK saves+applies; Cancel discards without calling OnSettingsChanged.
+// No Apply button. Edits stay in the dialog until OK (save + OnSettingsChanged).
+// Cancel closes without writing the store and without OnSettingsChanged.
 void OpenSettingsDialog(HWND owner);

@@ -3,7 +3,8 @@ REM Strict release gate: build+smoke -> package assets -> print tag command.
 REM Do NOT tag before this script exits 0. Do NOT run make-release-assets before build.
 setlocal EnableExtensions
 cd /d "%~dp0\.."
-set VER=1.0.5
+call "%~dp0_version.cmd"
+if errorlevel 1 exit /b 1
 
 echo ========== 1/2 app\build.bat (Release + smoke) ==========
 call app\build.bat
@@ -23,6 +24,7 @@ if errorlevel 1 (
 echo.
 echo ========== READY TO TAG ==========
 for /f %%H in ('git rev-parse HEAD') do set HASH=%%H
+echo Version: %VER%
 echo Commit: %HASH%
 echo.
 echo After cold-start checklist passes, run:

@@ -9,7 +9,8 @@ Recommended (installer):
 Portable (no installer):
   1. Copy DynamicIslandLux.exe somewhere permanent (e.g. %LOCALAPPDATA%\DynamicIslandLux\)
   2. Double-click to run
-  3. Optional: enable “Autostart with Windows” in Settings
+  3. Optional: enable “Start with Windows” / Autostart in Settings
+     (HKCU Run: starts with --minimized — tray only until you show the island)
 
 Data (created on first launch):
   %AppData%\DynamicIslandLux\settings.json
@@ -20,11 +21,12 @@ Data (created on first launch):
 Uninstall:
   - Installed build: Settings → Apps → Dynamic Island for Windows Lux, or Start Menu uninstall
   - Portable: exit from the tray, delete the exe folder
-  - Optional: delete %AppData%\DynamicIslandLux\ and logs under %LocalAppData%\DynamicIslandLux\
+  - Optional: delete %AppData%\DynamicIslandLux\ and %LocalAppData%\DynamicIslandLux\
 
 Minimum OS: Windows 10 version 1809 (build 17763)+; Windows 11 recommended for acrylic backdrop.
 
 Build installer from source:
   app\build.bat
   scripts\make-installer.bat
-  (requires Inno Setup 6+: winget install JRSoftware.InnoSetup.7)
+  (requires Inno Setup 6+: winget install --id JRSoftware.InnoSetup.7 -e)
+  Version comes from app\CMakeLists.txt via scripts\_version.cmd

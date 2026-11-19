@@ -5,6 +5,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Embed RT_MANIFEST + icon from generated paths (version follows project(VERSION)).
+set(LUX_MANIFEST_FILE "${CMAKE_CURRENT_BINARY_DIR}/DynamicIslandLux.manifest")
+set(LUX_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/app.ico")
+set(LUX_RESOURCE_H "${CMAKE_CURRENT_SOURCE_DIR}/resource.h")
+file(TO_CMAKE_PATH "${LUX_MANIFEST_FILE}" LUX_MANIFEST_FILE)
+file(TO_CMAKE_PATH "${LUX_ICON_FILE}" LUX_ICON_FILE)
+file(TO_CMAKE_PATH "${LUX_RESOURCE_H}" LUX_RESOURCE_H)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/DynamicIslandLux.manifest.in
+  ${CMAKE_CURRENT_BINARY_DIR}/DynamicIslandLux.manifest
+  @ONLY
+)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/resources.rc.in
+  ${CMAKE_CURRENT_BINARY_DIR}/resources.gen.rc
+  @ONLY
+)
+
 add_executable(DynamicIslandLux WIN32
   main.cpp
   logging.cpp
@@ -13,9 +31,9 @@ add_executable(DynamicIslandLux WIN32
   menu_theme.cpp
   autostart.cpp
   lux_overlay.cpp
-  # Step A: legacy body linked for symbol resolution; full Init wired in Step B.
+  # Island implementation TU (Windhawk archive + standalone body).
   "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"
-  resources.rc
+  "${CMAKE_CURRENT_BINARY_DIR}/resources.gen.rc"
 )
 
 target_include_directories(DynamicIslandLux PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -41,8 +59,7 @@ if(MSVC)
     /EHsc
     $<$<CONFIG:Release>:/O2>
   )
-  # Phase 1: isolate legacy overlay warnings.
-  # TODO: raise lux_overlay.cpp / .wh.cpp to /W4 after port cleanup (build-smoke follow-up).
+  # Legacy overlay TUs: keep /W3 until warning cleanup is complete.
   set_source_files_properties(
     lux_overlay.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"

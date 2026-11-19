@@ -1,9 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
-// Shared process flags for lux_overlay / legacy .wh.cpp body.
-// Prefer SettingsStore "__smoke" only if many sites need it later; keep one header for now.
+// Process-wide flags shared by main / lux_overlay / .wh.cpp (LUX_STANDALONE).
+// Set from wWinMain before workers start; workers only write StuckOnExit.
 
 inline bool& LuxSmokeTestFlag() {
   static bool value = false;
@@ -22,12 +23,13 @@ inline bool LuxShouldStartWorkers() {
 }
 
 // 0 = wait forever (normal run). Smoke default is set from main when --smoke-test is parsed.
-inline DWORD& LuxSmokeTimeoutMs() {
-  static DWORD value = 0;
+inline std::uint32_t& LuxSmokeTimeoutMs() {
+  static std::uint32_t value = 0;
   return value;
 }
 
-inline bool& LuxWorkersStuckOnExit() {
-  static bool value = false;
+// Written from StopThreads wait path; read on main after Uninit.
+inline std::atomic<bool>& LuxWorkersStuckOnExit() {
+  static std::atomic<bool> value{false};
   return value;
 }

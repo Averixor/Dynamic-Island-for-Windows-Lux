@@ -1,6 +1,7 @@
 #pragma once
 
-// Makes Win32 popup menus (TrackPopupMenu) follow AppsUseLightTheme.
+// Makes Win32 popup menus (TrackPopupMenu) follow AppsUseLightTheme via
+// undocumented uxtheme ordinals (Win10 1903+ / Win11). Older builds no-op.
 namespace MenuTheme {
 
 // Call once at process start (optional but recommended).

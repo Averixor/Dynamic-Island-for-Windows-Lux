@@ -2,7 +2,10 @@
 
 #include "logging.h"
 
+#include <windows.h>
+
 #include <string>
+#include <vector>
 
 namespace {
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -11,17 +14,28 @@ constexpr wchar_t kApprovedKey[] =
 constexpr wchar_t kValueName[] = L"DynamicIslandLux";
 
 std::wstring ExePath() {
-  wchar_t path[MAX_PATH] = {};
-  const DWORD n = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
-  if (n == 0 || n >= ARRAYSIZE(path)) {
-    return {};
+  std::wstring path(MAX_PATH, L'\0');
+  for (;;) {
+    const DWORD n = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (n == 0) {
+      return {};
+    }
+    if (n < path.size()) {
+      path.resize(n);
+      return path;
+    }
+    // Truncated: grow and retry (long paths / \\?\).
+    path.resize(path.size() * 2);
   }
-  return path;
 }
 
 // Quoted path + --minimized: logon starts in tray (island hidden until tray LMB).
 std::wstring QuotedExeCommand() {
-  return L"\"" + ExePath() + L"\" --minimized";
+  const std::wstring exe = ExePath();
+  if (exe.empty()) {
+    return {};
+  }
+  return L"\"" + exe + L"\" --minimized";
 }
 
 bool ReadApprovedDisabled() {
@@ -63,13 +77,19 @@ bool AutostartIsEnabled() {
   if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
     return false;
   }
-  wchar_t value[MAX_PATH + 8] = {};
   DWORD type = 0;
-  DWORD size = sizeof(value);
-  const LONG rc = RegQueryValueExW(key, kValueName, nullptr, &type, reinterpret_cast<LPBYTE>(value),
-                                   &size);
+  DWORD size = 0;
+  LONG rc = RegQueryValueExW(key, kValueName, nullptr, &type, nullptr, &size);
+  if (rc != ERROR_SUCCESS || type != REG_SZ || size < sizeof(wchar_t)) {
+    RegCloseKey(key);
+    return false;
+  }
+  std::vector<wchar_t> value((size / sizeof(wchar_t)) + 1, L'\0');
+  DWORD bytes = static_cast<DWORD>(value.size() * sizeof(wchar_t));
+  rc = RegQueryValueExW(key, kValueName, nullptr, &type, reinterpret_cast<LPBYTE>(value.data()),
+                        &bytes);
   RegCloseKey(key);
-  if (rc != ERROR_SUCCESS || type != REG_SZ) {
+  if (rc != ERROR_SUCCESS || type != REG_SZ || value[0] == L'\0') {
     return false;
   }
   if (ReadApprovedDisabled()) {
@@ -88,6 +108,11 @@ bool AutostartSetEnabled(bool enabled) {
   LONG rc = ERROR_SUCCESS;
   if (enabled) {
     const std::wstring cmd = QuotedExeCommand();
+    if (cmd.empty()) {
+      RegCloseKey(key);
+      LUX_LOGE(L"Autostart: GetModuleFileNameW failed");
+      return false;
+    }
     rc = RegSetValueExW(key, kValueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()),
                         static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
   } else {

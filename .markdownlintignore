@@ -1,0 +1,10 @@
+# Non-Markdown / generated / packaging
+LICENSE
+**/LICENSE
+*.iss
+installer/**
+dist/**
+build/**
+dictionaries/**
+**/*.gen.rc
+**/node_modules/**

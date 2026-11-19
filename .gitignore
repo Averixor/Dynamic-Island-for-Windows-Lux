@@ -34,11 +34,11 @@ ipch/
 *.res
 *.aps
 
-# Generated VERSIONINFO (CMake configure_file → build dir)
+# Generated resources (CMake configure_file → build dir)
 **/version.gen.rc
+**/resources.gen.rc
 
-# Local / editor
-.vscode/settings.json
+# Local editor overrides (shared .vscode/settings.json is tracked)
 *.code-workspace
 .idea/
 
@@ -52,4 +52,6 @@ Desktop.ini
 DynamicIslandLux/
 settings.json
 runtime.json
-dist/
+
+# Release packaging output
+/dist/
