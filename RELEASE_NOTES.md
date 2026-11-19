@@ -3,7 +3,7 @@
 Standalone release (no Windhawk required).
 
 - **Tag:** `v1.0.3`
-- **Commit:** *(tag on release commit)*
+- **Commit:** *(filled after tag commit)*
 - **Date:** 2026-11-19
 
 ## Highlights since v1.0.2
@@ -15,6 +15,8 @@ Standalone release (no Windhawk required).
 - Fixed red privacy dots with Camera / Microphone labels when expanded
 - Settings schema cleanup: brightness / split-wheel / hex privacy colors removed; shape & theme presets added
 - Slimmer context menu (Hide / Reset / Exit / Settings)
+- Autostart checkbox remembers correctly (StartupApproved `0x02`/`0x03` read was inverted)
+- Release `.bat` scripts no longer trip Windows “Open with Write-Host” via bare `|` pipes
 
 ## Origin
 

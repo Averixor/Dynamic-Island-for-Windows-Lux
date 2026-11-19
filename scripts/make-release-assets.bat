@@ -34,12 +34,8 @@ type "%OUT%\SHA256SUMS.txt"
 echo.
 
 echo Verify VERSIONINFO (must be %VER%, not @PROJECT_VERSION@):
-powershell -NoProfile -Command ^
-  "$ver='%VER%';" ^
-  "$v=(Get-Item '%OUT%\DynamicIslandLux.exe').VersionInfo;" ^
-  "if ($v.FileVersion -match '@|PROJECT_VERSION|\$\{') { Write-Error ('Bad FileVersion: ' + $v.FileVersion); exit 1 };" ^
-  "if (-not ($v.FileVersion -like ($ver + '*'))) { Write-Error ('Expected ' + $ver + '*, got ' + $v.FileVersion); exit 1 };" ^
-  "$v | Format-List FileVersion,ProductVersion,CompanyName,ProductName"
+REM One line, no bare "|" — cmd treats | as a pipe and can pop "Open with" for leftovers.
+powershell -NoProfile -Command "$ver='%VER%'; $v=(Get-Item -LiteralPath '%OUT%\DynamicIslandLux.exe').VersionInfo; if ($v.FileVersion -like '*@*' -or $v.FileVersion -like '*PROJECT_VERSION*' -or $v.FileVersion -like '*${*') { Write-Error ('Bad FileVersion: ' + $v.FileVersion); exit 1 }; if (-not ($v.FileVersion -like ($ver + '*'))) { Write-Error ('Expected ' + $ver + '*, got ' + $v.FileVersion); exit 1 }; Write-Output ('FileVersion=' + $v.FileVersion); Write-Output ('ProductVersion=' + $v.ProductVersion); Write-Output ('CompanyName=' + $v.CompanyName); Write-Output ('ProductName=' + $v.ProductName)"
 if errorlevel 1 (
   echo VERSIONINFO check FAILED - CMake did not substitute version.rc.in
   exit /b 1

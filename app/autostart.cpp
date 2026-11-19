@@ -37,8 +37,9 @@ bool ReadApprovedDisabled() {
   if (rc != ERROR_SUCCESS || type != REG_BINARY || size < 1) {
     return false;
   }
-  // StartupApproved: low bit clear ⇒ disabled by Task Manager / Settings.
-  return (data[0] & 0x01) == 0;
+  // StartupApproved first byte: 0x02 = enabled, 0x03 = disabled (Task Manager).
+  // Odd low bit ⇒ disabled. (Was inverted: 0x02 looked "off" so the checkbox never stuck.)
+  return (data[0] & 0x01) != 0;
 }
 
 bool WriteStartupApproved(bool enabled) {
