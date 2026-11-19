@@ -164,6 +164,24 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"DirectComposition rendering", L"Рендер DirectComposition",
                 L"Рендер DirectComposition");
   }
+  if (wcscmp(key, L"Appearance.ShapeStyle") == 0) {
+    return Pick(lang, L"Island shape", L"Форма острова", L"Форма острова");
+  }
+  if (wcscmp(key, L"Themes.ThemePreset") == 0) {
+    return Pick(lang, L"Theme", L"Тема", L"Тема");
+  }
+  if (wcscmp(key, L"Modules.CollapsedLyrics") == 0) {
+    return Pick(lang, L"Lyrics on collapsed island", L"Текст пісні на згорнутому острові",
+                L"Текст песни на свёрнутом острове");
+  }
+  if (wcscmp(key, L"Modules.LyricsPinnedFirst") == 0) {
+    return Pick(lang, L"Lyrics as first tab", L"Текст пісні першою вкладкою",
+                L"Текст песни первой вкладкой");
+  }
+  if (wcscmp(key, L"Modules.MediaTabLyrics") == 0) {
+    return Pick(lang, L"Lyrics in media tab", L"Текст пісні у вкладці медіа",
+                L"Текст песни во вкладке медиа");
+  }
   if (wcscmp(key, L"Modules.TimerContourProgress") == 0) {
     return Pick(lang, L"Timer contour progress", L"Контур прогресу таймера",
                 L"Контур прогресса таймера");
@@ -176,12 +194,6 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   }
   if (wcscmp(key, L"Indicators.PrivacyDotsCam") == 0) {
     return Pick(lang, L"Camera dot", L"Точка камери", L"Точка камеры");
-  }
-  if (wcscmp(key, L"Indicators.PrivacyDotsMicHex") == 0) {
-    return Pick(lang, L"Microphone dot color", L"Колір точки мікрофона", L"Цвет точки микрофона");
-  }
-  if (wcscmp(key, L"Indicators.PrivacyDotsCamHex") == 0) {
-    return Pick(lang, L"Camera dot color", L"Колір точки камери", L"Цвет точки камеры");
   }
   if (wcscmp(key, L"Modules.LyricsVisualizer") == 0) {
     return Pick(lang, L"Lyrics visualizer", L"Візуалізатор тексту пісні", L"Визуализатор текста песни");
@@ -400,15 +412,13 @@ inline const wchar_t* TargetMonitorLabel(Lang lang, const wchar_t* value) {
 }
 
 inline const wchar_t* SplitWheelActionLabel(Lang lang, const wchar_t* value) {
-  if (_wcsicmp(value, L"off") == 0) {
+  if (_wcsicmp(value, L"off") == 0 || _wcsicmp(value, L"volume") == 0) {
+    // "volume" kept as legacy enum value; system volume is media-scale only.
     return Pick(lang, L"Off", L"Вимкнено", L"Выкл");
   }
-  if (_wcsicmp(value, L"volume") == 0) {
-    return Pick(lang, L"Volume everywhere", L"Гучність скрізь", L"Громкость везде");
-  }
   if (_wcsicmp(value, L"brightness_volume") == 0) {
-    return Pick(lang, L"Brightness left / Volume right", L"Яскравість зліва / Гучність справа",
-                L"Яркость слева / Громкость справа");
+    return Pick(lang, L"Brightness (left half)", L"Яскравість (ліва половина)",
+                L"Яркость (левая половина)");
   }
   return value;
 }
@@ -470,11 +480,23 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   if (wcscmp(def.key, L"Appearance.SpectrumStyle") == 0) {
     return SpectrumStyleLabel(lang, def.enums[index].value);
   }
+  if (wcscmp(def.key, L"Appearance.ShapeStyle") == 0) {
+    const wchar_t* v = def.enums[index].value;
+    if (_wcsicmp(v, L"pill") == 0) {
+      return Pick(lang, L"iPhone pill", L"Пігулка iPhone", L"Таблетка iPhone");
+    }
+    if (_wcsicmp(v, L"w11") == 0) {
+      return Pick(lang, L"Windows 11 flyout", L"Виліт Windows 11", L"Вылет Windows 11");
+    }
+    if (_wcsicmp(v, L"notch") == 0) {
+      return Pick(lang, L"macOS notch", L"Виріз macOS", L"Вырез macOS");
+    }
+  }
+  if (wcscmp(def.key, L"Themes.ThemePreset") == 0) {
+    return def.enums[index].label;
+  }
   if (wcscmp(def.key, L"Behavior.ClickThroughModifier") == 0) {
     return ClickThroughModifierLabel(lang, def.enums[index].value);
-  }
-  if (wcscmp(def.key, L"Behavior.SplitWheelAction") == 0) {
-    return SplitWheelActionLabel(lang, def.enums[index].value);
   }
   if (wcscmp(def.key, L"Behavior.BlacklistMode") == 0) {
     return BlacklistModeLabel(lang, def.enums[index].value);

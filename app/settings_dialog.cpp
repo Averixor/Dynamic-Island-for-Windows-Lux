@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cwchar>
 #include <cwctype>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,8 @@ struct DialogState {
   HWND okBtn = nullptr;
   HWND cancelBtn = nullptr;
   std::vector<RowRef> rows;
+  std::map<std::wstring, std::wstring> snapshot;
+  bool snapshotAutostart = false;
   wchar_t filter[128] = {};
   SettingsUiLoc::Lang lang = SettingsUiLoc::Lang::En;
   int contentHeight = 0;
@@ -569,6 +572,56 @@ void BuildControls(HWND hwnd, DialogState& st) {
   LayoutRows(hwnd, st);
 }
 
+void CaptureSchemaSnapshot(DialogState& st) {
+  st.snapshot.clear();
+  for (const SettingDef& def : kSettingSchema) {
+    st.snapshot[def.key] = SettingsGetString(def.key, def.defaultString ? def.defaultString : L"");
+  }
+  st.snapshotAutostart = AutostartIsEnabled();
+}
+
+bool RestoreSchemaSnapshot(DialogState& st) {
+  for (const auto& kv : st.snapshot) {
+    SettingsSetString(kv.first.c_str(), kv.second.c_str());
+  }
+  AutostartSetEnabled(st.snapshotAutostart);
+  if (!SettingsStoreSaveUser()) {
+    LUX_LOGE(L"Settings dialog: restore snapshot save failed");
+    return false;
+  }
+  LuxOverlay_OnSettingsChanged();
+  return true;
+}
+
+void ReloadControlsFromStore(DialogState& st) {
+  for (const RowRef& row : st.rows) {
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
+    if (!row.control) {
+      continue;
+    }
+    if (def.type == SettingType::Bool) {
+      bool on = SettingsGetBool(def.key, def.defaultString && def.defaultString[0] == L'1');
+      if (wcscmp(def.key, L"General.LaunchAtStartup") == 0) {
+        on = AutostartIsEnabled();
+      }
+      SendMessageW(row.control, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+    } else if (def.type == SettingType::Enum && def.enums && def.enumCount > 0) {
+      const std::wstring cur = SettingsGetString(def.key, def.defaultString);
+      int select = 0;
+      for (size_t e = 0; e < def.enumCount; ++e) {
+        if (_wcsicmp(def.enums[e].value, cur.c_str()) == 0) {
+          select = static_cast<int>(e);
+          break;
+        }
+      }
+      SendMessageW(row.control, CB_SETCURSEL, static_cast<WPARAM>(select), 0);
+    } else {
+      const std::wstring value = SettingsGetString(def.key, def.defaultString);
+      SetWindowTextW(row.control, value.c_str());
+    }
+  }
+}
+
 bool SaveFromControls(HWND hwnd, DialogState& st) {
   (void)hwnd;
   for (const RowRef& row : st.rows) {
@@ -623,6 +676,7 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     st->lang = SettingsUiLoc::ResolveLang();
     SetWindowTextW(hwnd, SettingsUiLoc::WindowTitle(st->lang));
     BuildControls(hwnd, *st);
+    CaptureSchemaSnapshot(*st);
     return TRUE;
   }
   case WM_CTLCOLORDLG:
@@ -688,7 +742,14 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       if (schemaChanged && id != kIdSearch) {
         for (const RowRef& row : st->rows) {
           if (GetDlgCtrlID(row.control) == static_cast<int>(id)) {
-            SaveFromControls(hwnd, *st);
+            if (!SaveFromControls(hwnd, *st)) {
+              LUX_LOGE(L"Immediate settings save failed");
+              RestoreSchemaSnapshot(*st);
+              ReloadControlsFromStore(*st);
+            } else {
+              // Keep snapshot in sync so Cancel never undoes a successful save.
+              CaptureSchemaSnapshot(*st);
+            }
             break;
           }
         }
@@ -697,13 +758,14 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     if (id == IDOK) {
       if (DialogState* st = State(hwnd)) {
         if (SaveFromControls(hwnd, *st)) {
+          CaptureSchemaSnapshot(*st);
           EndDialog(hwnd, IDOK);
         }
       }
       return TRUE;
     }
     if (id == IDCANCEL) {
-      // Already flushed on each change; Cancel just closes without reverting.
+      // Settings already persist on each successful change; Cancel only closes.
       EndDialog(hwnd, IDCANCEL);
       return TRUE;
     }

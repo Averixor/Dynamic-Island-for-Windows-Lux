@@ -376,12 +376,24 @@ bool SettingsStoreInit() {
       schemaFilled = true;
     }
   }
-  // One-shot only: never rewrite Appearance.UseDirectComposition again after the flag is set.
+  // One-shot only: set ULW default if the key is absent. Never overwrite an explicit user choice.
   {
     auto mig = g_user.find(L"app.migrate.ulwDefault");
     if (mig == g_user.end() || mig->second != L"1") {
-      g_user[L"Appearance.UseDirectComposition"] = L"0";
+      auto it = g_user.find(L"Appearance.UseDirectComposition");
+      if (it == g_user.end()) {
+        g_user[L"Appearance.UseDirectComposition"] = L"0";
+      }
       g_user[L"app.migrate.ulwDefault"] = L"1";
+      schemaFilled = true;
+    }
+  }
+  // One-shot: adopt WheelStep=2 as the new product default (was 5).
+  {
+    auto mig = g_user.find(L"app.migrate.wheelStep2");
+    if (mig == g_user.end() || mig->second != L"1") {
+      g_user[L"Behavior.WheelStep"] = L"2";
+      g_user[L"app.migrate.wheelStep2"] = L"1";
       schemaFilled = true;
     }
   }

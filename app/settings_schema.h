@@ -77,12 +77,6 @@ inline constexpr SettingEnumOption kTargetMonitorEnums[] = {
     {L"3", L"Monitor 3"},
 };
 
-inline constexpr SettingEnumOption kSplitWheelActionEnums[] = {
-    {L"off", L"Off"},
-    {L"volume", L"Volume"},
-    {L"brightness_volume", L"Brightness / Volume"},
-};
-
 inline constexpr SettingEnumOption kBlacklistModeEnums[] = {
     {L"foreground", L"Foreground"},
     {L"running", L"Running"},
@@ -93,6 +87,18 @@ inline constexpr SettingEnumOption kSpectrumStyleEnums[] = {
     {L"orb", L"Orb"},
     {L"plasma", L"Plasma"},
     {L"led", L"LED"},
+};
+
+inline constexpr SettingEnumOption kShapeStyleEnums[] = {
+    {L"pill", L"iPhone pill"},
+    {L"w11", L"Windows 11 flyout"},
+    {L"notch", L"macOS notch"},
+};
+
+inline constexpr SettingEnumOption kThemePresetEnums[] = {
+    {L"obsidian", L"Obsidian"},  {L"graphite", L"Graphite"}, {L"slate", L"Slate"},
+    {L"nord", L"Nord"},          {L"evergreen", L"Evergreen"}, {L"espresso", L"Espresso"},
+    {L"plum", L"Plum"},          {L"porcelain", L"Porcelain"}, {L"custom", L"Custom"},
 };
 
 inline constexpr SettingEnumOption kClickThroughModifierEnums[] = {
@@ -164,6 +170,8 @@ inline constexpr SettingDef kSettingSchema[] = {
      kAppearanceBackdropEnums, sizeof(kAppearanceBackdropEnums) / sizeof(kAppearanceBackdropEnums[0])},
     {L"Appearance.UseDirectComposition", SettingType::Bool, SettingGroup::Appearance, L"0", 0, 1,
      nullptr, 0},
+    {L"Appearance.ShapeStyle", SettingType::Enum, SettingGroup::Appearance, L"pill", 0, 0,
+     kShapeStyleEnums, sizeof(kShapeStyleEnums) / sizeof(kShapeStyleEnums[0])},
     {L"Behavior.AlwaysOnTop", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideIdleSeconds", SettingType::Int, SettingGroup::Behavior, L"0", -1, 3600,
      nullptr, 0},
@@ -172,9 +180,6 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Behavior.AllowDragMove", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr, 0},
     {L"Behavior.AutoHideFullscreen", SettingType::Bool, SettingGroup::Behavior, L"1", 0, 1, nullptr,
      0},
-    {L"Behavior.SplitWheelAction", SettingType::Enum, SettingGroup::Behavior, L"brightness_volume",
-     0, 0, kSplitWheelActionEnums,
-     sizeof(kSplitWheelActionEnums) / sizeof(kSplitWheelActionEnums[0])},
     {L"Behavior.WheelStep", SettingType::Int, SettingGroup::Behavior, L"2", 1, 20, nullptr, 0},
     {L"Behavior.AppBlacklist", SettingType::String, SettingGroup::Behavior, L"", 0, 0, nullptr, 0},
     {L"Behavior.BlacklistMode", SettingType::Enum, SettingGroup::Behavior, L"foreground", 0, 0,
@@ -193,21 +198,18 @@ inline constexpr SettingDef kSettingSchema[] = {
      sizeof(kAuraStyleEnums) / sizeof(kAuraStyleEnums[0])},
     {L"Themes.AuraIntensity", SettingType::Int, SettingGroup::Themes, L"70", 0, 100, nullptr, 0},
     {L"Themes.AdaptiveTheme", SettingType::Bool, SettingGroup::Themes, L"1", 0, 1, nullptr, 0},
+    {L"Themes.ThemePreset", SettingType::Enum, SettingGroup::Themes, L"obsidian", 0, 0,
+     kThemePresetEnums, sizeof(kThemePresetEnums) / sizeof(kThemePresetEnums[0])},
     {L"Indicators.PrivacyDots", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr, 0},
     {L"Indicators.PrivacyDotsMic", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr,
      0},
     {L"Indicators.PrivacyDotsCam", SettingType::Bool, SettingGroup::Indicators, L"1", 0, 1, nullptr,
      0},
-    {L"Indicators.PrivacyDotsMicHex", SettingType::String, SettingGroup::Indicators, L"#FF9500", 0, 0,
-     nullptr, 0},
-    {L"Indicators.PrivacyDotsCamHex", SettingType::String, SettingGroup::Indicators, L"#22C63D", 0, 0,
-     nullptr, 0},
     {L"General.Language", SettingType::Enum, SettingGroup::General, L"uk", 0, 0, kLanguageEnums,
      sizeof(kLanguageEnums) / sizeof(kLanguageEnums[0])},
     {L"General.LaunchAtStartup", SettingType::Bool, SettingGroup::General, L"0", 0, 1, nullptr, 0},
     {L"Modules.Media", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.Volume", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
-    {L"Modules.Brightness", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.Clipboard", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.Battery", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.Progress", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
@@ -235,6 +237,9 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Modules.DateFirst", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
     {L"Modules.QuickLookup", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.LyricsVisualizer", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
+    {L"Modules.CollapsedLyrics", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
+    {L"Modules.LyricsPinnedFirst", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
+    {L"Modules.MediaTabLyrics", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Shortcuts.LookupModifiers", SettingType::Enum, SettingGroup::Shortcuts, L"ctrl_alt", 0, 0,
      kLookupModifierEnums, sizeof(kLookupModifierEnums) / sizeof(kLookupModifierEnums[0])},
     {L"Shortcuts.LookupKey", SettingType::String, SettingGroup::Shortcuts, L"Space", 0, 0, nullptr,

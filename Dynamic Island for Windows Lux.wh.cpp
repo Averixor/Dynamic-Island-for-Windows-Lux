@@ -7,7 +7,7 @@
 // @author Himanshu
 // @github https://github.com/Averixor
 // @include windhawk.exe
-// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -ld3d11 -ldxgi -ldcomp -ldxva2 -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lpropsys -lwbemuuid
+// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -ld3d11 -ldxgi -ldcomp -ldxva2 -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lpropsys -lwbemuuid -liphlpapi -lws2_32
 // @license MIT
 // ==/WindhawkMod==
 //
@@ -398,6 +398,8 @@
 #ifndef _UNICODE
 #define _UNICODE
 #endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #ifndef WM_WTSSESSION_CHANGE
 #define WM_WTSSESSION_CHANGE 0x02B1
@@ -443,6 +445,8 @@
 #include <winhttp.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
 #include <tlhelp32.h>
 #include <wbemidl.h>
 #include <algorithm>
@@ -517,9 +521,19 @@ namespace MediaLayout {
     constexpr float kScrubInsetRight = kScrubMargin + kScrubBarRightInset;
     constexpr float kControlsY = 148.0f;
     constexpr float kControlSpacing = 64.0f;
+    constexpr float kSideControlSpacing = 112.0f;  // queue mode left / volume anchor right
+    // Lyrics button center: left of queue-mode (gap ≈ 48px between centers).
+    constexpr float kLyricsButtonSpacing = 160.0f;
     constexpr float kNavButtonRadius = 16.0f;
     constexpr float kPlayButtonRadius = 22.0f;
+    constexpr float kCycleButtonRadius = 14.0f;
     constexpr float kControlHitPad = 6.0f;
+    constexpr float kInlineVolTrackW = 52.0f;
+    constexpr float kInlineVolTrackH = 4.0f;
+    constexpr float kInlineVolGap = 36.0f;  // from next-button center to track left
+    constexpr float kInlineVolHitHalfH = 14.0f;
+    constexpr float kInlineVolHitPadX = 6.0f;
+    constexpr DWORD kInlineVolDigitsHoldMs = 1100;
     constexpr float kArtInsetX = 24.0f;
     constexpr float kArtInsetY = 20.0f;
     constexpr float kArtSize = 64.0f;
@@ -546,7 +560,6 @@ namespace MediaLayout {
     }
 }
 namespace ImmersiveLayout {
-    constexpr float kBtnInsetRight = 24.0f;
     constexpr float kBtnRadius = 14.0f;
     constexpr float kBtnHitPad = 6.0f;
     constexpr float kArtLeft = 38.0f;
@@ -666,6 +679,9 @@ std::atomic<float> g_mediaCenterHitLeft{0.0f};
 std::atomic<float> g_mediaCenterHitTop{0.0f};
 std::atomic<float> g_mediaCenterHitRight{0.0f};
 std::atomic<float> g_mediaCenterHitBottom{0.0f};
+// Bitmap/stage origin of HWND client (0 under ULW; pill bounds under DComp clip).
+std::atomic<float> g_clientContentOriginX{0.0f};
+std::atomic<float> g_clientContentOriginY{0.0f};
 // Hit-testing in content space, plus every island kind and live snapshot
 // that worker threads publish into SharedState.
 struct MediaContentPoint {
@@ -885,8 +901,8 @@ struct Settings {
     UINT lookupVk = VK_SPACE;
     bool bluetoothIndicator = true;
     bool bluetoothShowBattery = true;
-    D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f);
-    D2D1_COLOR_F privacyDotsCamHex = D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f);
+    D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.231f, 0.188f, 1.0f);
+    D2D1_COLOR_F privacyDotsCamHex = D2D1::ColorF(1.0f, 0.231f, 0.188f, 1.0f);
     float tintOpacity = 0.72f;
     float pillOpacity = 0.96f;
     bool gameOverlay = false;
@@ -909,7 +925,7 @@ struct Settings {
     bool mediaTabLyrics = false;
     int autoHideIdleSeconds = 0;
     bool autoHideFullscreen = true;
-    SplitWheelAction splitWheelAction = SplitWheelAction::BrightnessVolume;
+    SplitWheelAction splitWheelAction = SplitWheelAction::Off;
     int wheelStep = 2;
     std::wstring appBlacklist;
     BlacklistMode blacklistMode = BlacklistMode::Foreground;
@@ -991,6 +1007,11 @@ private:
     }
     std::shared_ptr<const BitmapPixels> p_;
 };
+enum class MediaQueueMode : int {
+    Sequential = 0,  // in order
+    RepeatOne = 1,   // repeat current track
+    Shuffle = 2,     // random
+};
 struct MediaSnapshot {
     bool available = false;
     bool playing = false;
@@ -1009,6 +1030,8 @@ struct MediaSnapshot {
     int64_t positionTicks = 0;
     int64_t endTicks = 0;
     int64_t lastUpdatedTicks = 0;
+    MediaQueueMode queueMode = MediaQueueMode::Sequential;
+    bool canChangeQueueMode = false;
 };
 struct MediaSourceInfo {
     std::wstring aumid;
@@ -1403,6 +1426,8 @@ std::atomic<int> g_lyricsEffectiveOffsetBtMs{0};
 std::atomic<bool> g_volumeEndpointStale{true};
 // Interactive system-volume UI (mute badge + slider on the volume pill).
 std::atomic<bool> g_volumeDragging{false};
+std::atomic<bool> g_mediaInlineVolumeDragging{false};
+std::atomic<unsigned long long> g_mediaInlineVolumeDigitsUntil{0};
 std::atomic<bool> g_volumeHovering{false};
 std::atomic<unsigned> g_volumeHitSeq{0};
 std::atomic<float> g_volumeHitLeft{0.0f};
@@ -1686,6 +1711,14 @@ int CalendarTabIndex(const Settings& settings) {
     }
     return MediaTabIndex(settings) + 1;
 }
+int WeatherTabIndex(const Settings& settings) {
+    if (!settings.weather) {
+        return -1;
+    }
+    const int origin = settings.calendarModule ? CalendarTabIndex(settings)
+                                               : MediaTabIndex(settings);
+    return origin + 1;
+}
 int HardwareMonitorTabIndex(const Settings& settings) {
     if (!settings.hardwareMonitorModule) {
         return -1;
@@ -1928,6 +1961,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"COM Device", L"COM-пристрій"},
         {L"System audio", L"Системний звук"},
         {L"Local Weather", L"Місцева погода"},
+        {L"Camera", L"Камера"},
+        {L"Microphone", L"Мікрофон"},
         {L"Camera in use", L"Камера використовується"},
         {L"Microphone in use", L"Мікрофон використовується"},
         {L"Camera & microphone in use", L"Камера і мікрофон використовуються"},
@@ -2068,6 +2103,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"COM Device", L"Устройство COM"},
         {L"System audio", L"Системный звук"},
         {L"Local Weather", L"Местная погода"},
+        {L"Camera", L"Камера"},
+        {L"Microphone", L"Микрофон"},
         {L"Camera in use", L"Камера используется"},
         {L"Microphone in use", L"Микрофон используется"},
         {L"Camera & microphone in use", L"Камера и микрофон используются"},
@@ -2263,10 +2300,15 @@ MediaContentPoint MediaContentFromClient(int clientX, int clientY, bool allowSta
     if (width <= 1.0f || height <= 1.0f) {
         return out;
     }
+    // Adjust client point into the same space as the published hit rects.
+    const float ox = g_clientContentOriginX.load(std::memory_order_relaxed);
+    const float oy = g_clientContentOriginY.load(std::memory_order_relaxed);
+    const float stageX = static_cast<float>(clientX) + ox;
+    const float stageY = static_cast<float>(clientY) + oy;
     const float centerX = (left + right) * 0.5f;
     const float centerY = (top + bottom) * 0.5f;
-    const float contentX = (static_cast<float>(clientX) - centerX) / scale + centerX;
-    const float contentY = (static_cast<float>(clientY) - centerY) / scale + centerY;
+    const float contentX = (stageX - centerX) / scale + centerX;
+    const float contentY = (stageY - centerY) / scale + centerY;
     out.valid = true;
     out.x = contentX - left;
     out.y = contentY - top;
@@ -2286,6 +2328,8 @@ MediaContentPoint MediaPlayerZonePoint(const MediaContentPoint& pt) {
     out.y = ImmersiveLayout::kPlayerPivotY + (pt.y - ImmersiveLayout::kPlayerPivotY) / s;
     return out;
 }
+bool MediaLyricsButtonHitTest(const MediaContentPoint& rawPt);
+bool MediaInlineVolumeTrackX(float playerWidth, float* outLeft, float* outRight);
 int MediaTransportHitTest(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
     if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
@@ -2298,7 +2342,9 @@ int MediaTransportHitTest(const MediaContentPoint& rawPt) {
         float radius;
         int command;
     };
+    // 0=prev 1=play/pause 2=next 3=queue mode (left of prev)
     const Target targets[] = {
+        {-MediaLayout::kSideControlSpacing, MediaLayout::kCycleButtonRadius, 3},
         {-MediaLayout::kControlSpacing, MediaLayout::kNavButtonRadius, 0},
         {0.0f, MediaLayout::kPlayButtonRadius, 1},
         {MediaLayout::kControlSpacing, MediaLayout::kNavButtonRadius, 2},
@@ -2310,6 +2356,50 @@ int MediaTransportHitTest(const MediaContentPoint& rawPt) {
         }
     }
     return -1;
+}
+bool MediaInlineVolumeTrackX(float playerWidth, float* outLeft, float* outRight) {
+    if (!outLeft || !outRight || playerWidth < 80.0f) {
+        return false;
+    }
+    const float centerX = playerWidth * 0.5f;
+    const float left = centerX + MediaLayout::kControlSpacing + MediaLayout::kInlineVolGap;
+    const float right = left + MediaLayout::kInlineVolTrackW;
+    if (right - left < 20.0f) {
+        return false;
+    }
+    *outLeft = left;
+    *outRight = right;
+    return true;
+}
+float MediaInlineVolumeFractionFromContent(const MediaContentPoint& rawPt, bool padHit) {
+    const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
+    // Only on a near-fully expanded player — not mid-morph collapsed pill.
+    if (!pt.valid || pt.height < MediaLayout::kExpandedHeight * 0.75f) {
+        return -1.0f;
+    }
+    float trackLeft = 0.0f;
+    float trackRight = 0.0f;
+    if (!MediaInlineVolumeTrackX(pt.width, &trackLeft, &trackRight)) {
+        return -1.0f;
+    }
+    const float padY = padHit ? MediaLayout::kInlineVolHitHalfH : MediaLayout::kInlineVolTrackH;
+    const float padX = padHit ? MediaLayout::kInlineVolHitPadX : 0.0f;
+    if (pt.y < MediaLayout::kControlsY - padY || pt.y > MediaLayout::kControlsY + padY ||
+        pt.x < trackLeft - padX || pt.x > trackRight + padX) {
+        return -1.0f;
+    }
+    return Clamp((Clamp(pt.x, trackLeft, trackRight) - trackLeft) / (trackRight - trackLeft), 0.0f,
+                 1.0f);
+}
+void PulseMediaInlineVolumeDigits(DWORD holdMs = MediaLayout::kInlineVolDigitsHoldMs) {
+    g_mediaInlineVolumeDigitsUntil.store(GetTickCount64() + holdMs, std::memory_order_relaxed);
+    g_layoutDirty = true;
+}
+bool MediaInlineVolumeDigitsVisible() {
+    if (g_mediaInlineVolumeDragging.load(std::memory_order_relaxed)) {
+        return true;
+    }
+    return GetTickCount64() < g_mediaInlineVolumeDigitsUntil.load(std::memory_order_relaxed);
 }
 float MediaScrubFractionFromContent(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
@@ -2457,23 +2547,22 @@ void ClearSpectrumHitRect() {
 void ClearMediaCenterHitRect() {
     g_mediaCenterHitValid.store(false, std::memory_order_release);
 }
-void PublishMediaCenterHitRect(float contentHeight) {
-    if (!g_mediaArtHitValid.load(std::memory_order_relaxed) ||
-        !g_spectrumHitValid.load(std::memory_order_relaxed) || contentHeight < 2.0f) {
-        ClearMediaCenterHitRect();
-        return;
-    }
-    // Between mediaIconHitRect.right and spectrumHitRect.left, full pill height.
-    const float left = g_mediaArtHitRight.load(std::memory_order_relaxed);
-    const float right = g_spectrumHitLeft.load(std::memory_order_relaxed);
-    if (right <= left + 2.0f) {
+// stageRect: absolute draw-space rect of the title/artist text strip between art and spectrum.
+void PublishMediaCenterHitRect(const D2D1_RECT_F& stageRect) {
+    const float ox = g_mediaHitLeft.load(std::memory_order_relaxed);
+    const float oy = g_mediaHitTop.load(std::memory_order_relaxed);
+    const float left = stageRect.left - ox;
+    const float top = stageRect.top - oy;
+    const float right = stageRect.right - ox;
+    const float bottom = stageRect.bottom - oy;
+    if (right <= left + 2.0f || bottom <= top + 2.0f) {
         ClearMediaCenterHitRect();
         return;
     }
     g_mediaCenterHitLeft.store(left, std::memory_order_relaxed);
-    g_mediaCenterHitTop.store(0.0f, std::memory_order_relaxed);
+    g_mediaCenterHitTop.store(top, std::memory_order_relaxed);
     g_mediaCenterHitRight.store(right, std::memory_order_relaxed);
-    g_mediaCenterHitBottom.store(contentHeight, std::memory_order_relaxed);
+    g_mediaCenterHitBottom.store(bottom, std::memory_order_relaxed);
     g_mediaCenterHitValid.store(true, std::memory_order_release);
 }
 bool MediaCenterHitTest(const MediaContentPoint& pt) {
@@ -2499,7 +2588,7 @@ bool MediaLyricsButtonHitTest(const MediaContentPoint& rawPt) {
     if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
         return false;
     }
-    const float cx = pt.width - ImmersiveLayout::kBtnInsetRight - ImmersiveLayout::kBtnRadius;
+    const float cx = pt.width * 0.5f - MediaLayout::kLyricsButtonSpacing;
     const float reach = ImmersiveLayout::kBtnRadius + ImmersiveLayout::kBtnHitPad;
     return std::fabs(pt.x - cx) <= reach &&
            std::fabs(pt.y - MediaLayout::kControlsY) <= reach;
@@ -3188,8 +3277,9 @@ void LoadSettings() {
         std::lock_guard lock(g_stateMutex);
         g_state.volume.active = false;
     }
-    next.brightness = Wh_GetIntSetting(L"Modules.Brightness") != 0;
-    if (!next.brightness) {
+    // Brightness module removed — never surface brightness UI / wheel control.
+    next.brightness = false;
+    {
         std::lock_guard lock(g_stateMutex);
         g_state.brightness.active = false;
         g_brightnessInitialized = false;
@@ -3455,8 +3545,10 @@ void LoadSettings() {
     next.alwaysOnTop = Wh_GetIntSetting(L"Behavior.AlwaysOnTop") != 0;
     const int localExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1);
     next.expandOnHover = localExpandOnHover >= 0 ? (localExpandOnHover != 0) : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-    next.collapsedLyrics = Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
-    next.lyricsPinnedFirst = Wh_GetIntValue(L"LyricsPinnedFirst", 0) != 0;
+    next.collapsedLyrics = Wh_GetIntSetting(L"Modules.CollapsedLyrics") != 0 ||
+                           Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
+    next.lyricsPinnedFirst = Wh_GetIntSetting(L"Modules.LyricsPinnedFirst") != 0 ||
+                             Wh_GetIntValue(L"LyricsPinnedFirst", 0) != 0;
     {
         const int mediaTabLyricsSetting = Wh_GetIntSetting(L"Modules.MediaTabLyrics") != 0 ? 1 : 0;
         int mediaTabLyricsOverride = Wh_GetIntValue(L"MediaTabLyricsOverride", -1);
@@ -3595,14 +3687,7 @@ void LoadSettings() {
     next.borderMergedMode = Wh_GetIntSetting(L"Appearance.BorderMergedMode") != 0;
     next.autoHideFullscreen = Wh_GetIntSetting(L"Behavior.AutoHideFullscreen") != 0;
     {
-        const std::wstring split = GetStringSettingCopy(L"Behavior.SplitWheelAction");
-        if (EqualsNoCase(split, L"off")) {
-            next.splitWheelAction = SplitWheelAction::Off;
-        } else if (EqualsNoCase(split, L"volume")) {
-            next.splitWheelAction = SplitWheelAction::Volume;
-        } else {
-            next.splitWheelAction = SplitWheelAction::BrightnessVolume;
-        }
+        next.splitWheelAction = SplitWheelAction::Off;
     }
     next.wheelStep = ClampInt(Wh_GetIntSetting(L"Behavior.WheelStep"), 1, 20);
     next.appBlacklist = GetStringSettingCopy(L"Behavior.AppBlacklist");
@@ -3665,14 +3750,14 @@ void LoadSettings() {
     next.privacyDotsMic = Wh_GetIntSetting(L"Indicators.PrivacyDotsMic") != 0;
     next.privacyDotsCam = Wh_GetIntSetting(L"Indicators.PrivacyDotsCam") != 0;
     next.privacyDotsPulse = true;
-    std::wstring micHexStr = GetStringSettingWithFallback(L"Indicators.PrivacyDotsMicHex", L"Indicators.MicDotHex", L"Modules.PrivacyDotsMicHex");
-    next.privacyDotsMicHex = ColorFromHex(micHexStr, D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f));
-    std::wstring camHexStr = GetStringSettingWithFallback(L"Indicators.PrivacyDotsCamHex", L"Indicators.CamDotHex", L"Modules.PrivacyDotsCamHex");
-    next.privacyDotsCamHex = ColorFromHex(camHexStr, D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f));
+    // Fixed red privacy dots — color is not user-configurable (#FF3B30).
+    const D2D1_COLOR_F privacyDotRed = D2D1::ColorF(1.0f, 0.231f, 0.188f, 1.0f);
+    next.privacyDotsMicHex = privacyDotRed;
+    next.privacyDotsCamHex = privacyDotRed;
     next.privacyDotsEnabled = next.privacyDots;
     next.privacyDotPulsing = next.privacyDotsPulse;
-    next.micDotColor = next.privacyDotsMicHex;
-    next.camDotColor = next.privacyDotsCamHex;
+    next.micDotColor = privacyDotRed;
+    next.camDotColor = privacyDotRed;
     // Empty WindhawkModSettings → every Wh_GetIntSetting returns 0 and would
     // disable AlwaysOnTop/modules. Keep struct defaults until a real schema exists.
     if (GetStringSettingCopy(L"Appearance.Position").empty() &&
@@ -5674,6 +5759,30 @@ DWORD WINAPI MediaThreadProc(void*) {
                     next.title = properties.Title().c_str();
                     next.artist = properties.Artist().c_str();
                     next.albumTitle = properties.AlbumTitle().c_str();
+                    try {
+                        using AutoRepeat = winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+                        const auto controls = playback.Controls();
+                        next.canChangeQueueMode =
+                            controls.IsShuffleEnabled() || controls.IsRepeatEnabled();
+                        bool shuffle = false;
+                        AutoRepeat repeat = AutoRepeat::None;
+                        if (const auto shuffleRef = playback.IsShuffleActive()) {
+                            shuffle = shuffleRef.Value();
+                        }
+                        if (const auto repeatRef = playback.AutoRepeatMode()) {
+                            repeat = repeatRef.Value();
+                        }
+                        if (shuffle) {
+                            next.queueMode = MediaQueueMode::Shuffle;
+                        } else if (repeat == AutoRepeat::Track) {
+                            next.queueMode = MediaQueueMode::RepeatOne;
+                        } else {
+                            next.queueMode = MediaQueueMode::Sequential;
+                        }
+                    } catch (...) {
+                        next.queueMode = MediaQueueMode::Sequential;
+                        next.canChangeQueueMode = true;
+                    }
                     if (timeline) {
                         const int64_t rawPos = timeline.Position().count();
                         int64_t np = rawPos;
@@ -8513,76 +8622,77 @@ static int GetGpuUsage() {
     }
     return 0;
 }
-static PDH_HQUERY g_netQuery = NULL;
-static PDH_HCOUNTER g_netUpCounter = NULL;
-static PDH_HCOUNTER g_netDownCounter = NULL;
-static void InitNetQuery() {
-    if (g_netQuery == NULL) {
-        if (PdhOpenQueryW(NULL, 0, &g_netQuery) == ERROR_SUCCESS) {
-            PdhAddEnglishCounterW(g_netQuery, L"\\Network Interface(*)\\Bytes Sent/sec", 0, &g_netUpCounter);
-            PdhAddEnglishCounterW(g_netQuery, L"\\Network Interface(*)\\Bytes Received/sec", 0, &g_netDownCounter);
-            PdhCollectQueryData(g_netQuery);
-        }
-    }
-}
 static void GetNetworkUsage(float& outUpMbps, float& outDownMbps) {
+    // PDH Network Interface(*) English counters often stay at 0 on localized Windows;
+    // MIB_IF_TABLE2 octet deltas are reliable across adapters/languages (incl. VPN tunnels).
     outUpMbps = 0.0f;
     outDownMbps = 0.0f;
-    InitNetQuery();
-    if (!g_netQuery || !g_netUpCounter || !g_netDownCounter)
+    static ULONG64 s_prevIn = 0;
+    static ULONG64 s_prevOut = 0;
+    static ULONGLONG s_prevTick = 0;
+    static float s_lastUp = 0.0f;
+    static float s_lastDown = 0.0f;
+
+    PMIB_IF_TABLE2 table = nullptr;
+    if (GetIfTable2(&table) != NO_ERROR || !table) {
+        outUpMbps = s_lastUp;
+        outDownMbps = s_lastDown;
         return;
-    PdhCollectQueryData(g_netQuery);
-    auto getSum = [](PDH_HCOUNTER counter) -> double {
-        DWORD bufferSize = 0;
-        DWORD itemCount = 0;
-        PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, NULL);
-        if (bufferSize > 0) {
-            std::vector<BYTE> buffer(bufferSize);
-            PDH_FMT_COUNTERVALUE_ITEM_W* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
-            if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, items) == ERROR_SUCCESS) {
-                double total = 0;
-                for (DWORD i = 0; i < itemCount; i++) {
-                    if (items[i].szName) {
-                        if (wcsstr(items[i].szName, L"Loopback") == nullptr) {
-                            total += items[i].FmtValue.doubleValue;
-                        }
-                    }
-                }
-                return total;
+    }
+
+    ULONG64 inOctets = 0;
+    ULONG64 outOctets = 0;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const MIB_IF_ROW2& row = table->Table[i];
+        if (row.InterfaceAndOperStatusFlags.FilterInterface) {
+            continue;
+        }
+        if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        if (row.OperStatus != IfOperStatusUp) {
+            continue;
+        }
+        inOctets += row.InOctets;
+        outOctets += row.OutOctets;
+    }
+    FreeMibTable(table);
+
+    const ULONGLONG nowTick = GetTickCount64();
+    if (s_prevTick > 0 && nowTick > s_prevTick && inOctets >= s_prevIn && outOctets >= s_prevOut) {
+        const double dtSec = static_cast<double>(nowTick - s_prevTick) / 1000.0;
+        if (dtSec >= 0.2) {
+            s_lastDown = static_cast<float>((inOctets - s_prevIn) * 8.0 / 1000000.0 / dtSec);
+            s_lastUp = static_cast<float>((outOctets - s_prevOut) * 8.0 / 1000000.0 / dtSec);
+            if (s_lastDown < 0.0f) {
+                s_lastDown = 0.0f;
+            }
+            if (s_lastUp < 0.0f) {
+                s_lastUp = 0.0f;
             }
         }
-        return 0.0;
-    };
-    outUpMbps = static_cast<float>(getSum(g_netUpCounter) * 8.0 / 1000000.0);
-    outDownMbps = static_cast<float>(getSum(g_netDownCounter) * 8.0 / 1000000.0);
-}
-void ApplyVolumeReading(float level, bool muted, bool canSurface) {
-    const int percent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
-    bool flyoutEnabled = false;
-    {
-        std::lock_guard settingsLock(g_settingsMutex);
-        flyoutEnabled = g_settings.volume;
     }
-    bool surfaced = false;
+    s_prevIn = inOctets;
+    s_prevOut = outOctets;
+    s_prevTick = nowTick;
+    outUpMbps = s_lastUp;
+    outDownMbps = s_lastDown;
+}
+void ApplyVolumeReading(float level, bool muted, bool /*canSurface*/) {
+    // External volume pill removed — keep system level in sync only.
+    // Interactive UI is the media inline scale (digits while adjusting).
+    const int percent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
     {
         std::lock_guard lock(g_stateMutex);
-        const bool changed = percent != g_state.system.volumePercent ||
-                             muted != g_state.system.volumeMuted;
         g_state.system.volumePercent = percent;
         g_state.system.volumeMuted = muted;
         g_state.muted = muted;
-        if (canSurface && changed && flyoutEnabled) {
-            surfaced = !g_state.volume.active;
-            g_state.volume.active = true;
-            g_state.volume.percent = percent;
-            g_state.volume.muted = muted;
-            g_state.volume.deviceName = Loc(L"System audio");
-            g_state.volume.expiresAt = NowSeconds() + 1.8;
-        }
+        g_state.volume.active = false;
+        g_state.volume.percent = percent;
+        g_state.volume.muted = muted;
+        g_state.volume.displayPercent = static_cast<float>(percent);
     }
-    if (surfaced) {
-        TriggerNudge();
-    }
+    g_layoutDirty = true;
 }
 class VolumeNotifyClient final : public IAudioEndpointVolumeCallback, public IMMNotificationClient {
 public:
@@ -9740,8 +9850,8 @@ bool ClipboardActionHitTest(int clientX, int clientY) {
     if (!g_clipActionHitValid.load(std::memory_order_relaxed)) {
         return false;
     }
-    const float x = static_cast<float>(clientX);
-    const float y = static_cast<float>(clientY);
+    const float x = static_cast<float>(clientX) + g_clientContentOriginX.load(std::memory_order_relaxed);
+    const float y = static_cast<float>(clientY) + g_clientContentOriginY.load(std::memory_order_relaxed);
     return x >= g_clipActionL.load(std::memory_order_relaxed) &&
            x <= g_clipActionR.load(std::memory_order_relaxed) &&
            y >= g_clipActionT.load(std::memory_order_relaxed) &&
@@ -9751,8 +9861,8 @@ bool PrivacyDotsHitTest(int clientX, int clientY) {
     if (!g_privacyHitValid.load(std::memory_order_relaxed)) {
         return false;
     }
-    const float x = static_cast<float>(clientX);
-    const float y = static_cast<float>(clientY);
+    const float x = static_cast<float>(clientX) + g_clientContentOriginX.load(std::memory_order_relaxed);
+    const float y = static_cast<float>(clientY) + g_clientContentOriginY.load(std::memory_order_relaxed);
     return x >= g_privacyHitL.load(std::memory_order_relaxed) &&
            x <= g_privacyHitR.load(std::memory_order_relaxed) &&
            y >= g_privacyHitT.load(std::memory_order_relaxed) &&
@@ -10903,13 +11013,62 @@ void SetClickThrough(HWND hwnd, bool clickThrough) {
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 void OpenRelevantApp();
+void OpenWeatherApp();
+bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments = nullptr);
 void ToggleEndpointMute();
 void SeekMediaToTicks(int64_t targetTicks);
 void PasteIntoFileTray(HWND hwnd);
 void SaveFileTray();
 void LoadFileTray();
 void HandleStatusClickAtPoint(HWND hwnd, LPARAM lParam) {
-    return;
+    (void)hwnd;
+    (void)lParam;
+}
+void OpenWeatherApp() {
+    std::wstring city;
+    {
+        std::lock_guard lock(g_stateMutex);
+        city = g_state.weather.city;
+    }
+    // Never use ms-weather: — without Bing Weather it opens the Store "get an app" dialog
+    // and ShellExecute still reports success, so the browser fallback never runs.
+    static const wchar_t* kWeatherAumids[] = {
+        L"Microsoft.BingWeather_8wekyb3d8bbwe!App",
+        L"Microsoft.BingWeather_8wekyb3d8bbwe!Core",
+    };
+    for (const wchar_t* aumid : kWeatherAumids) {
+        if (ActivatePackagedApp(aumid)) {
+            return;
+        }
+    }
+    std::wstring url = L"https://wttr.in/";
+    if (!city.empty()) {
+        for (wchar_t ch : city) {
+            if (ch == L' ') {
+                url.push_back(L'+');
+            } else {
+                url.push_back(ch);
+            }
+        }
+    }
+    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+void OpenIdleTabTarget(const Settings& settings, bool mediaActive) {
+    const int tab = NormalizedTabIndex(settings);
+    if (tab == MediaTabIndex(settings)) {
+        if (mediaActive) {
+            OpenRelevantApp();
+        }
+        return;
+    }
+    if (tab == WeatherTabIndex(settings)) {
+        OpenWeatherApp();
+        return;
+    }
+    if (tab == CalendarTabIndex(settings)) {
+        ShellExecuteW(nullptr, L"open", L"outlookcal:", nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
 }
 void StartFocusTimer(int minutes, bool isBreak) {
     {
@@ -10950,14 +11109,11 @@ void StopFocusTimer() {
     }
     TriggerNudge();
 }
-void KeepVolumePanelAlive(double seconds = 2.8) {
-    std::lock_guard lock(g_stateMutex);
-    if (!g_state.volume.active) {
-        return;
-    }
-    g_state.volume.expiresAt = NowSeconds() + seconds;
+void KeepVolumePanelAlive(double /*seconds*/ = 2.8) {
+    // External volume pill removed — no-op retained for call-site compatibility.
 }
 void ShowVolumeControlPanel() {
+    // Sync endpoint → system.volumePercent only. No separate volume island.
     BindVolumeEndpoint();
     float level = 0.0f;
     BOOL muted = FALSE;
@@ -10969,21 +11125,7 @@ void ShowVolumeControlPanel() {
         level = Clamp(g_state.system.volumePercent / 100.0f, 0.0f, 1.0f);
         muted = g_state.system.volumeMuted ? TRUE : FALSE;
     }
-    const int percent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
-    {
-        std::lock_guard lock(g_stateMutex);
-        g_state.system.volumePercent = percent;
-        g_state.system.volumeMuted = muted != FALSE;
-        g_state.muted = muted != FALSE;
-        g_state.volume.active = true;
-        g_state.volume.percent = percent;
-        g_state.volume.muted = muted != FALSE;
-        g_state.volume.deviceName = Loc(L"System audio");
-        g_state.volume.expiresAt = NowSeconds() + 4.0;
-        g_state.volume.displayPercent = static_cast<float>(percent);
-    }
-    g_layoutDirty = true;
-    TriggerNudge();
+    ApplyVolumeReading(level, muted != FALSE, false);
 }
 // Core Audio wrapper: get/set master level in [0,1] + mute; UI follows via OnNotify.
 class SystemVolumeController {
@@ -11121,10 +11263,15 @@ VolumeContentPoint VolumeContentFromClient(int clientX, int clientY) {
     if (width <= 1.0f || height <= 1.0f) {
         return out;
     }
+    // Adjust client point into the same space as the published hit rects.
+    const float ox = g_clientContentOriginX.load(std::memory_order_relaxed);
+    const float oy = g_clientContentOriginY.load(std::memory_order_relaxed);
+    const float stageX = static_cast<float>(clientX) + ox;
+    const float stageY = static_cast<float>(clientY) + oy;
     const float centerX = (left + right) * 0.5f;
     const float centerY = (top + bottom) * 0.5f;
-    const float contentX = (static_cast<float>(clientX) - centerX) / scale + centerX;
-    const float contentY = (static_cast<float>(clientY) - centerY) / scale + centerY;
+    const float contentX = (stageX - centerX) / scale + centerX;
+    const float contentY = (stageY - centerY) / scale + centerY;
     out.valid = true;
     out.x = contentX - left;
     out.y = contentY - top;
@@ -11270,6 +11417,59 @@ void SendMediaTransportCommand(int cmd) {
         }
     });
 }
+void CycleMediaQueueMode() {
+    LaunchBackgroundTask([]() {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        try {
+            auto session = ResolveMediaSession();
+            if (!session) {
+                return;
+            }
+            auto playback = session.GetPlaybackInfo();
+            using AutoRepeat = winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+            MediaQueueMode current = MediaQueueMode::Sequential;
+            try {
+                bool shuffle = false;
+                AutoRepeat repeat = AutoRepeat::None;
+                if (const auto shuffleRef = playback.IsShuffleActive()) {
+                    shuffle = shuffleRef.Value();
+                }
+                if (const auto repeatRef = playback.AutoRepeatMode()) {
+                    repeat = repeatRef.Value();
+                }
+                if (shuffle) {
+                    current = MediaQueueMode::Shuffle;
+                } else if (repeat == AutoRepeat::Track) {
+                    current = MediaQueueMode::RepeatOne;
+                }
+            } catch (...) {
+            }
+            const MediaQueueMode nextMode =
+                current == MediaQueueMode::Sequential
+                    ? MediaQueueMode::RepeatOne
+                    : (current == MediaQueueMode::RepeatOne ? MediaQueueMode::Shuffle
+                                                            : MediaQueueMode::Sequential);
+            bool shuffle = nextMode == MediaQueueMode::Shuffle;
+            AutoRepeat repeat = nextMode == MediaQueueMode::RepeatOne ? AutoRepeat::Track
+                                                                      : AutoRepeat::None;
+            try {
+                session.TryChangeShuffleActiveAsync(shuffle).get();
+            } catch (...) {
+            }
+            try {
+                session.TryChangeAutoRepeatModeAsync(repeat).get();
+            } catch (...) {
+            }
+            {
+                std::lock_guard lock(g_stateMutex);
+                g_state.media.queueMode = nextMode;
+            }
+            g_layoutDirty = true;
+        } catch (...) {
+            Wh_Log(L"CycleMediaQueueMode failed.");
+        }
+    });
+}
 struct WindowSearch {
     std::wstring targetTitle;
     std::wstring targetApp;
@@ -11399,7 +11599,7 @@ BOOL CALLBACK HuntMediaSourceWindowProc(HWND hwnd, LPARAM lParam) {
     }
     return TRUE;
 }
-bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments = nullptr) {
+bool ActivatePackagedApp(const std::wstring& aumid, const wchar_t* arguments) {
     if (aumid.empty() || (aumid.find(L'!') == std::wstring::npos &&
                           aumid.find(L'_') == std::wstring::npos)) {
         return false;
@@ -11716,14 +11916,7 @@ void ShowMediaSourcePopup(HWND hwnd, POINT screenPoint) {
     ApplyMediaSourceMenuCommand(cmd, items);
 }
 void ShowContextMenu(HWND hwnd, POINT screenPoint) {
-    const Settings settings = GetSettingsCopy();
-    bool timerActive = false;
-    bool timerRunning = false;
-    {
-        std::lock_guard lock(g_stateMutex);
-        timerActive = g_state.timer.active;
-        timerRunning = g_state.timer.running;
-    }
+    // Context menu = quick actions only. All configuration lives in Settings dialog.
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 40,
                 g_manuallyHidden.load() ? Loc(L"Show island") : Loc(L"Hide island"));
@@ -11733,160 +11926,6 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
 #else
     AppendMenuW(menu, MF_STRING, 1, Loc(L"Close"));
 #endif
-    HMENU timerMenu = CreatePopupMenu();
-    AppendMenuW(timerMenu, MF_STRING, 30, Loc(L"Start 25 min focus"));
-    AppendMenuW(timerMenu, MF_STRING, 31, Loc(L"Start 50 min focus"));
-    AppendMenuW(timerMenu, MF_STRING, 32, Loc(L"Start 5 min break"));
-    if (timerActive) {
-        AppendMenuW(timerMenu, MF_STRING, 33,
-                    timerRunning ? Loc(L"Pause timer") : Loc(L"Resume timer"));
-        AppendMenuW(timerMenu, MF_STRING, 34, Loc(L"Stop timer"));
-    }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), Loc(L"Focus Timer"));
-    std::vector<MediaSourceMenuItem> mediaSourceItems;
-    {
-        HMENU sourceMenu = CreatePopupMenu();
-        mediaSourceItems = AppendMediaSourceItems(sourceMenu);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sourceMenu), Loc(L"Media source"));
-    }
-    if (settings.fileTrayModule) {
-        size_t trayCount = 0;
-        {
-            std::lock_guard lock(g_stateMutex);
-            trayCount = g_state.fileTrayItems.size();
-        }
-        HMENU trayMenu = CreatePopupMenu();
-        AppendMenuW(trayMenu, MF_STRING, 42, Loc(L"Paste from clipboard"));
-        std::wstring clearLabel = Loc(L"Clear tray");
-        if (trayCount > 0) {
-            clearLabel += L" (" + std::to_wstring(trayCount) + L")";
-        }
-        AppendMenuW(trayMenu, MF_STRING | (trayCount == 0 ? (MF_GRAYED | MF_DISABLED) : 0), 41,
-                    clearLabel.c_str());
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), Loc(L"File Tray"));
-    }
-    AppendMenuW(menu, MF_STRING, 2, Loc(L"Pin expanded"));
-    AppendMenuW(menu, MF_STRING, 3,
-                g_gameOverlayPinned.load() ? Loc(L"Hide game overlay") : Loc(L"Show game overlay"));
-    if (settings.quickLookup) {
-        AppendMenuW(menu, MF_STRING, 45, Loc(L"Look up"));
-    }
-    {
-        const int currentShape = settings.notchStyle ? 2 : (settings.w11Style ? 1 : 0);
-        HMENU shapeMenu = CreatePopupMenu();
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase, Loc(L"iPhone pill"));
-        AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 1, Loc(L"Windows 11 flyout"));
-        if (IsBottomPosition(settings.position)) {
-            AppendMenuW(shapeMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kShapeMenuIdBase + 2,
-                        Loc(L"macOS notch (unavailable at bottom)"));
-        } else {
-            AppendMenuW(shapeMenu, MF_STRING, kShapeMenuIdBase + 2, Loc(L"macOS notch"));
-        }
-        CheckMenuRadioItem(shapeMenu, kShapeMenuIdBase, kShapeMenuIdBase + 2,
-                           kShapeMenuIdBase + static_cast<UINT>(currentShape), MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), Loc(L"Shape"));
-    }
-    const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
-                                        ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
-                                        : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-    AppendMenuW(menu, MF_STRING, 11,
-                activeExpandOnHover ? Loc(L"Expand on click") : Loc(L"Expand on hover"));
-    AppendMenuW(menu, MF_STRING | (Wh_GetIntValue(L"CollapsedLyrics", 0) ? MF_CHECKED : 0), 13,
-                Loc(L"Lyrics on collapsed island"));
-    AppendMenuW(menu,
-                MF_STRING | (Wh_GetIntValue(L"LyricsPinnedFirst", 0) ? MF_CHECKED : 0) |
-                    (settings.lyrics ? 0 : (MF_GRAYED | MF_DISABLED)),
-                14, Loc(L"Lyrics as first tab"));
-    AppendMenuW(menu,
-                MF_STRING | (settings.mediaTabLyrics ? MF_CHECKED : 0),
-                15, Loc(L"Lyrics in media tab"));
-    {
-        bool cacheOn = false;
-        {
-            std::lock_guard lock(g_settingsMutex);
-            cacheOn = settings.lyricsCache && settings.lyricsCacheMaxMB > 0;
-        }
-        std::wstring cacheLabel = Loc(L"Clear lyrics cache");
-        if (g_lyricsCacheCountsValid.load(std::memory_order_relaxed)) {
-            const int songs = g_lyricsCacheFileCount.load(std::memory_order_relaxed);
-            const uint64_t bytes = g_lyricsCacheBytes.load(std::memory_order_relaxed);
-            wchar_t detail[96] = {};
-            if (bytes >= 1048576ull) {
-                swprintf_s(detail, L" (%d %s, %.1f %s)", songs, Loc(L"songs"),
-                           static_cast<double>(bytes) / 1048576.0, Loc(L"MB"));
-            } else {
-                swprintf_s(detail, L" (%d %s, %llu %s)", songs, Loc(L"songs"),
-                           static_cast<unsigned long long>((bytes + 1023ull) / 1024ull), Loc(L"KB"));
-            }
-            cacheLabel += detail;
-        }
-        AppendMenuW(menu, MF_STRING | (cacheOn ? 0 : (MF_GRAYED | MF_DISABLED)), 43, cacheLabel.c_str());
-        {
-            const bool bt = g_defaultOutputIsBluetooth.load(std::memory_order_relaxed);
-            const int effective = bt ? g_lyricsEffectiveOffsetBtMs.load(std::memory_order_relaxed)
-                                     : g_lyricsEffectiveOffsetMs.load(std::memory_order_relaxed);
-            wchar_t header[96] = {};
-            swprintf_s(header, L"%s: %+d %s", bt ? Loc(L"Bluetooth") : Loc(L"Speakers"), effective,
-                       Loc(L"ms"));
-            HMENU lyricsSyncMenu = CreatePopupMenu();
-            AppendMenuW(lyricsSyncMenu, MF_STRING | MF_GRAYED | MF_DISABLED, kLyricsSyncMenuIdBase, header);
-            AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 1, Loc(L"Earlier +10 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 2, Loc(L"Earlier +50 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 3, Loc(L"Earlier +250 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 4, Loc(L"Later -10 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 5, Loc(L"Later -50 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 6, Loc(L"Later -250 ms"));
-            AppendMenuW(lyricsSyncMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(lyricsSyncMenu, MF_STRING, kLyricsSyncMenuIdBase + 7, Loc(L"Reset this profile"));
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(lyricsSyncMenu), Loc(L"Lyrics sync"));
-        }
-    }
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    const int activeOpacity = g_pillOpacityOverride.load();
-    HMENU opacityMenu = CreatePopupMenu();
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 100 ? MF_CHECKED : 0), 4, Loc(L"100% (opaque)"));
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 85 ? MF_CHECKED : 0), 5, L"85%");
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 70 ? MF_CHECKED : 0), 6, L"70%");
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity == 55 ? MF_CHECKED : 0), 7, L"55%");
-    AppendMenuW(opacityMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(opacityMenu, MF_STRING | (activeOpacity < 0 ? MF_CHECKED : 0), 8, Loc(L"Match theme"));
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(opacityMenu), Loc(L"Transparency"));
-    const int activeTheme = Wh_GetIntValue(kThemeValueName, static_cast<int>(settings.themePreset));
-    HMENU themeMenu = CreatePopupMenu();
-    for (int i = 0; i < kCustomThemeIndex; ++i) {
-        AppendMenuW(themeMenu, MF_STRING | (activeTheme == i ? MF_CHECKED : 0),
-                    kThemeMenuIdBase + static_cast<UINT>(i), kThemePalettes[i].label);
-    }
-    AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(themeMenu, MF_STRING | (activeTheme >= kCustomThemeIndex ? MF_CHECKED : 0),
-                kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex), Loc(L"Custom colors"));
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), Loc(L"Theme"));
-    AppendMenuW(menu, MF_STRING | (settings.adaptiveTheme ? MF_CHECKED : 0), 16,
-                Loc(L"Adaptive theme"));
-    {
-        HMENU auraMenu = CreatePopupMenu();
-        const UINT auraCmd = kAuraMenuIdBase + static_cast<UINT>(settings.auraStyle);
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase, Loc(L"Disabled"));
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 1, Loc(L"Glow"));
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 2, Loc(L"Equalizer"));
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 3, Loc(L"Rays"));
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 4, Loc(L"Rings"));
-        AppendMenuW(auraMenu, MF_STRING, kAuraMenuIdBase + 5, Loc(L"Orbit"));
-        CheckMenuRadioItem(auraMenu, kAuraMenuIdBase, kAuraMenuIdBase + 5, auraCmd, MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(auraMenu), Loc(L"Aura"));
-    }
-    {
-        HMENU backdropMenu = CreatePopupMenu();
-        const UINT backdropCmd = kBackdropMenuIdBase + static_cast<UINT>(settings.backdropMaterial);
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase, Loc(L"No blur"));
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 1, Loc(L"Blur"));
-        AppendMenuW(backdropMenu, MF_STRING, kBackdropMenuIdBase + 2, Loc(L"Acrylic"));
-        CheckMenuRadioItem(backdropMenu, kBackdropMenuIdBase, kBackdropMenuIdBase + 2, backdropCmd,
-                           MF_BYCOMMAND);
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backdropMenu), Loc(L"DWM backdrop"));
-    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 #ifdef LUX_STANDALONE
     AppendMenuW(menu, MF_STRING, 9, Loc(L"Settings..."));
@@ -11904,30 +11943,9 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     PostMessageW(hwnd, WM_NULL, 0, 0);
     DwmBackdrop::EnsureBehind(hwnd);
     g_layoutDirty = true;
-    if (cmd >= kThemeMenuIdBase &&
-        cmd <= kThemeMenuIdBase + static_cast<UINT>(kCustomThemeIndex)) {
-        Wh_SetIntValue(kThemeValueName, static_cast<int>(cmd - kThemeMenuIdBase));
-        LoadSettings();
-        return;
-    }
-    if (cmd >= kAuraMenuIdBase && cmd <= kAuraMenuIdBase + 5) {
-        Wh_SetIntValue(L"AuraStyleOverride", static_cast<int>(cmd - kAuraMenuIdBase));
-        LoadSettings();
-        return;
-    }
-    if (cmd >= kBackdropMenuIdBase && cmd <= kBackdropMenuIdBase + 2) {
-        Wh_SetIntValue(L"BackdropMaterialOverride", static_cast<int>(cmd - kBackdropMenuIdBase));
-        LoadSettings();
-        return;
-    }
-    if (cmd >= kMediaSourceMenuIdBase) {
-        ApplyMediaSourceMenuCommand(cmd, mediaSourceItems);
-        return;
-    }
     switch (cmd) {
     case 1:
 #ifdef LUX_STANDALONE
-        // Standalone: Close = exit app (same as tray Exit). Windhawk keeps collapse-only.
         {
             HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
             if (host) {
@@ -11943,46 +11961,8 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         TriggerNudge();
 #endif
         break;
-    case 2: {
-        const bool nextVal = !g_pinnedExpanded.load();
-        g_pinnedExpanded.store(nextVal);
-        Wh_SetIntValue(L"PinnedExpanded", nextVal ? 1 : 0);
-        break;
-    }
-    case 3: {
-        const bool nextVal = !g_gameOverlayPinned.load();
-        g_gameOverlayPinned.store(nextVal);
-        Wh_SetIntValue(L"GameOverlayPinned", nextVal ? 1 : 0);
-        break;
-    }
-    case 4:
-        g_pillOpacityOverride.store(100);
-        Wh_SetIntValue(L"PillOpacityOverride", 100);
-        LoadSettings();
-        break;
-    case 5:
-        g_pillOpacityOverride.store(85);
-        Wh_SetIntValue(L"PillOpacityOverride", 85);
-        LoadSettings();
-        break;
-    case 6:
-        g_pillOpacityOverride.store(70);
-        Wh_SetIntValue(L"PillOpacityOverride", 70);
-        LoadSettings();
-        break;
-    case 7:
-        g_pillOpacityOverride.store(55);
-        Wh_SetIntValue(L"PillOpacityOverride", 55);
-        LoadSettings();
-        break;
-    case 8:
-        g_pillOpacityOverride.store(-1);
-        Wh_SetIntValue(L"PillOpacityOverride", -1);
-        LoadSettings();
-        break;
     case 9: {
 #ifdef LUX_STANDALONE
-        // Host (message-only) owns the settings dialog — do not ShellExecute windhawk.exe.
         HWND host = FindWindowExW(HWND_MESSAGE, nullptr, L"DynamicIslandLux.Host", nullptr);
         if (host) {
             PostMessageW(host, WM_APP_OPEN_SETTINGS, 0, 0);
@@ -12008,85 +11988,14 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             Wh_Log(L"Windhawk directory path is too long to append the executable name.");
             break;
         }
-        HINSTANCE result = ShellExecuteW(nullptr, L"open",
-                                         windhawkPath,
-                                         nullptr,
-                                         nullptr, SW_SHOWNORMAL);
+        HINSTANCE result = ShellExecuteW(nullptr, L"open", windhawkPath, nullptr, nullptr,
+                                         SW_SHOWNORMAL);
         if (reinterpret_cast<INT_PTR>(result) <= 32) {
             Wh_Log(L"Failed to open Windhawk settings (%s).", windhawkPath);
         }
 #endif
         break;
     }
-    case kShapeMenuIdBase:
-    case kShapeMenuIdBase + 1:
-    case kShapeMenuIdBase + 2: {
-        const bool wantW11 = (cmd == kShapeMenuIdBase + 1);
-        const bool wantNotch = (cmd == kShapeMenuIdBase + 2);
-        if (wantNotch && IsBottomPosition(settings.position)) {
-            break;
-        }
-        Wh_SetIntValue(L"W11StyleOverride", wantW11 ? 1 : 0);
-        Wh_SetIntValue(L"NotchStyleOverride", wantNotch ? 1 : 0);
-        LoadSettings();
-        g_layoutDirty = true;
-        TriggerNudge();
-        break;
-    }
-    case 11: {
-        const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
-                                            ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
-                                            : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-        Wh_SetIntValue(L"ExpandOnHoverOverride", activeExpandOnHover ? 0 : 1);
-        LoadSettings();
-        g_layoutDirty = true;
-        break;
-    }
-    case 13: {
-        Wh_SetIntValue(L"CollapsedLyrics", Wh_GetIntValue(L"CollapsedLyrics", 0) ? 0 : 1);
-        LoadSettings();
-        g_layoutDirty = true;
-        TriggerNudge();
-        break;
-    }
-    case 14: {
-        Wh_SetIntValue(L"LyricsPinnedFirst", Wh_GetIntValue(L"LyricsPinnedFirst", 0) ? 0 : 1);
-        LoadSettings();
-        g_idleTab = 0;
-        g_layoutDirty = true;
-        TriggerNudge();
-        break;
-    }
-    case 15: {
-        const int mediaTabLyricsSetting = Wh_GetIntSetting(L"Modules.MediaTabLyrics") != 0 ? 1 : 0;
-        Wh_SetIntValue(L"MediaTabLyricsOverride", GetSettingsCopy().mediaTabLyrics ? 0 : 1);
-        Wh_SetIntValue(L"MediaTabLyricsOverrideBase", mediaTabLyricsSetting);
-        LoadSettings();
-        g_layoutDirty = true;
-        TriggerNudge();
-        break;
-    }
-    case 16: {
-        Wh_SetIntValue(L"AdaptiveThemeOverride", settings.adaptiveTheme ? 0 : 1);
-        LoadSettings();
-        g_layoutDirty = true;
-        break;
-    }
-    case 30:
-        StartFocusTimer(25, false);
-        break;
-    case 31:
-        StartFocusTimer(50, false);
-        break;
-    case 32:
-        StartFocusTimer(5, true);
-        break;
-    case 33:
-        ToggleTimerPause();
-        break;
-    case 34:
-        StopFocusTimer();
-        break;
     case 40: {
         const bool nowHidden = !g_manuallyHidden.load();
         g_manuallyHidden = nowHidden;
@@ -12102,38 +12011,8 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         g_layoutDirty = true;
         TriggerNudge();
         break;
-    case 45:
-        StartQuickLookup(hwnd);
+    default:
         break;
-    case kLyricsSyncMenuIdBase + 1:
-    case kLyricsSyncMenuIdBase + 2:
-    case kLyricsSyncMenuIdBase + 3:
-    case kLyricsSyncMenuIdBase + 4:
-    case kLyricsSyncMenuIdBase + 5:
-    case kLyricsSyncMenuIdBase + 6: {
-        static const int kLyricsSteps[] = {10, 50, 250, -10, -50, -250};
-        AdjustLyricsNudge(kLyricsSteps[cmd - kLyricsSyncMenuIdBase - 1]);
-        break;
-    }
-    case kLyricsSyncMenuIdBase + 7:
-        ResetLyricsNudge();
-        break;
-    case 43:
-        g_lyricsCacheClearRequested.store(true);
-        break;
-    case 42:
-        PasteIntoFileTray(hwnd);
-        break;
-    case 41: {
-        {
-            std::lock_guard lock(g_stateMutex);
-            g_state.fileTrayItems.clear();
-        }
-        SaveFileTray();
-        g_hoveredFileTrayRow = -1;
-        g_layoutDirty = true;
-        break;
-    }
     }
 }
 enum class WeatherVisual {
@@ -12339,6 +12218,8 @@ public:
         d3dContext_.Reset();
         d3dDevice_.Reset();
         compositionActive_ = false;
+        g_clientContentOriginX.store(0.0f, std::memory_order_relaxed);
+        g_clientContentOriginY.store(0.0f, std::memory_order_relaxed);
         if (hwnd_ && IsWindow(hwnd_)) {
             LONG_PTR ex = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
             ex &= ~WS_EX_NOREDIRECTIONBITMAP;
@@ -12525,6 +12406,14 @@ public:
         Wh_Log(L"DirectComposition device lost — falling back to UpdateLayeredWindow");
         ReleaseComposition();
         CreateBackingBitmap((std::max)(bitmapWidth_, 520), (std::max)(bitmapHeight_, 140));
+        g_clientContentOriginX.store(0.0f, std::memory_order_relaxed);
+        g_clientContentOriginY.store(0.0f, std::memory_order_relaxed);
+        stageValid_ = false;
+        g_layoutDirty = true;
+        if (hwnd_ && IsWindow(hwnd_) && bitmapWidth_ > 0 && bitmapHeight_ > 0) {
+            SetWindowPos(hwnd_, nullptr, 0, 0, bitmapWidth_, bitmapHeight_,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
     bool Render(const SharedState& state, const Settings& settings, const Activity& primary,
                 const std::optional<Activity>& secondary, float width, float height,
@@ -12708,8 +12597,14 @@ public:
                                                   left + width - static_cast<float>(bounds.left),
                                                   top + height - static_cast<float>(bounds.top),
                                                   true};
+                g_clientContentOriginX.store(static_cast<float>(bounds.left),
+                                            std::memory_order_relaxed);
+                g_clientContentOriginY.store(static_cast<float>(bounds.top),
+                                            std::memory_order_relaxed);
             } else {
                 g_pillClientRect = PillClientRect{left, top, left + width, top + height, true};
+                g_clientContentOriginX.store(0.0f, std::memory_order_relaxed);
+                g_clientContentOriginY.store(0.0f, std::memory_order_relaxed);
             }
         } else {
             stageValid_ = false;
@@ -14064,17 +13959,56 @@ private:
     }
     void DrawPrivacyDots(const SharedState& state, const Settings& settings, D2D1_RECT_F rect, double now) {
         UNREFERENCED_PARAMETER(now);
-        const float height = rect.bottom - rect.top;
-        if (height > 55.0f) {
-            g_privacyHitValid.store(false, std::memory_order_relaxed);
-            return;
-        }
         const bool mic = state.system.micActive && settings.privacyDots && settings.privacyDotsMic;
         const bool cam = state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam;
         if (!mic && !cam) {
             g_privacyHitValid.store(false, std::memory_order_relaxed);
             return;
         }
+        const D2D1_COLOR_F privacyDotRed = D2D1::ColorF(1.0f, 0.231f, 0.188f, 1.0f);
+        const float height = rect.bottom - rect.top;
+        // Expanded island: plain labels under the pill (camera left, microphone right).
+        if (height > 55.0f) {
+            g_privacyHitValid.store(false, std::memory_order_relaxed);
+            IDWriteTextFormat* fmt =
+                smallTextFormat_ ? smallTextFormat_.Get()
+                                 : (textFormat_ ? textFormat_.Get() : nullptr);
+            if (!fmt || !textBrush_) {
+                return;
+            }
+            D2D1_COLOR_F labelColor = settings.textPrimaryColor;
+            labelColor.a = settingsOpacity_;
+            textBrush_->SetColor(labelColor);
+            textBrush_->SetOpacity(0.92f);
+            fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            const float labelTop = rect.bottom + 6.0f;
+            const float labelBottom = labelTop + 18.0f;
+            const float sidePad = 10.0f;
+            const float halfW = (rect.right - rect.left) * 0.5f - sidePad;
+            if (cam) {
+                fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                const D2D1_RECT_F camRect =
+                    D2D1::RectF(rect.left + sidePad, labelTop, rect.left + sidePad + halfW,
+                                labelBottom);
+                const wchar_t* camLabel = Loc(L"Camera");
+                target_->DrawTextW(camLabel, static_cast<UINT32>(wcslen(camLabel)), fmt, camRect,
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+            if (mic) {
+                fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                const D2D1_RECT_F micRect =
+                    D2D1::RectF(rect.right - sidePad - halfW, labelTop, rect.right - sidePad,
+                                labelBottom);
+                const wchar_t* micLabel = Loc(L"Microphone");
+                target_->DrawTextW(micLabel, static_cast<UINT32>(wcslen(micLabel)), fmt, micRect,
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            textBrush_->SetOpacity(0.90f);
+            return;
+        }
+        // Collapsed pill: fixed red dots on the right.
         const float dotR = 4.0f;
         const float margin = 16.0f;
         const float dotY = rect.top + (rect.bottom - rect.top) * 0.5f;
@@ -14086,39 +14020,24 @@ private:
         g_privacyHitR.store(x + hitPad, std::memory_order_relaxed);
         g_privacyHitB.store(dotY + hitPad, std::memory_order_relaxed);
         g_privacyHitValid.store(true, std::memory_order_relaxed);
-        if (cam) {
-            D2D1_COLOR_F camColor = settings.privacyDotsCamHex;
-            camColor.a = settingsOpacity_;
-            if (!camDotBrush_)
-                target_->CreateSolidColorBrush(camColor, &camDotBrush_);
+        auto paintDot = [&](float cx, ComPtr<ID2D1SolidColorBrush>& brush) {
+            D2D1_COLOR_F c = privacyDotRed;
+            c.a = settingsOpacity_;
+            if (!brush)
+                target_->CreateSolidColorBrush(c, &brush);
             else
-                camDotBrush_->SetColor(camColor);
-            if (camDotBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR), camDotBrush_.Get());
+                brush->SetColor(c);
+            if (brush) {
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, dotY), dotR, dotR), brush.Get());
             }
+        };
+        if (cam) {
+            paintDot(x, camDotBrush_);
             if (mic) {
-                D2D1_COLOR_F micColor = settings.privacyDotsMicHex;
-                micColor.a = settingsOpacity_;
-                if (!micDotBrush_)
-                    target_->CreateSolidColorBrush(micColor, &micDotBrush_);
-                else
-                    micDotBrush_->SetColor(micColor);
-                if (micDotBrush_) {
-                    target_->FillEllipse(
-                        D2D1::Ellipse(D2D1::Point2F(x - (dotR * 2.0f + 6.0f), dotY), dotR, dotR),
-                        micDotBrush_.Get());
-                }
+                paintDot(x - (dotR * 2.0f + 6.0f), micDotBrush_);
             }
         } else if (mic) {
-            D2D1_COLOR_F micColor = settings.privacyDotsMicHex;
-            micColor.a = settingsOpacity_;
-            if (!micDotBrush_)
-                target_->CreateSolidColorBrush(micColor, &micDotBrush_);
-            else
-                micDotBrush_->SetColor(micColor);
-            if (micDotBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR), micDotBrush_.Get());
-            }
+            paintDot(x, micDotBrush_);
         }
         if (g_privacyHovering.load(std::memory_order_relaxed) && smallTextFormat_) {
             std::wstring label;
@@ -15865,8 +15784,8 @@ private:
         if (camActive || micActive) {
             std::wstring label;
             D2D1_COLOR_F dotColor;
+            dotColor = D2D1::ColorF(1.0f, 0.231f, 0.188f, 1.0f);
             if (camActive && micActive) {
-                dotColor = settings.privacyDotsCamHex;
                 if (!state.system.cameraApp.empty() && !state.system.micApp.empty() && state.system.cameraApp == state.system.micApp) {
                     label = FormatWithName(Loc(L"%s is using camera & microphone"), state.system.cameraApp);
                 } else if (!state.system.cameraApp.empty() && !state.system.micApp.empty()) {
@@ -15882,14 +15801,12 @@ private:
                     label = Loc(L"Camera & microphone in use");
                 }
             } else if (camActive) {
-                dotColor = settings.privacyDotsCamHex;
                 if (!state.system.cameraApp.empty()) {
                     label = FormatWithName(Loc(L"%s is using your camera"), state.system.cameraApp);
                 } else {
                     label = Loc(L"Camera in use");
                 }
             } else {
-                dotColor = settings.privacyDotsMicHex;
                 if (!state.system.micApp.empty()) {
                     label = FormatWithName(Loc(L"%s is using your microphone"), state.system.micApp);
                 } else {
@@ -16578,6 +16495,9 @@ private:
                             }
                             const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 88.0f);
                             DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 18.0f), now);
+                            // Volume wheel zone = title/artist/album/source text strip only (not scrub/controls).
+                            PublishMediaCenterHitRect(
+                                D2D1::RectF(textLeft, rect.top + 18.0f, textRight, srcLineTop + 18.0f));
                         }
                         EndImmersiveFade(normalFaded);
                         DrawImmersiveLyricsView(state, rect, settings, now, immersiveMix);
@@ -16681,10 +16601,12 @@ private:
                     const float cy = rect.top + MediaLayout::kControlsY;
                     const float cx = (rect.left + rect.right) * 0.5f;
                     DrawMediaControls(state.media.playing,
+                                      D2D1::Point2F(cx - MediaLayout::kSideControlSpacing, cy),
                                       D2D1::Point2F(cx - MediaLayout::kControlSpacing, cy),
                                       D2D1::Point2F(cx, cy),
                                       D2D1::Point2F(cx + MediaLayout::kControlSpacing, cy),
-                                      now);
+                                      state.media.queueMode, state.media.canChangeQueueMode,
+                                      state.system.volumePercent, state.system.volumeMuted, now);
                     DrawSourceDock(state, rect, now);
                     if (settings.mediaTabLyrics) {
                         DrawImmersiveLyricsButton(rect, immersiveMix);
@@ -16751,6 +16673,9 @@ private:
             D2D1_RECT_F waveRect = D2D1::RectF(rect.right - 42.0f - shiftX, cy - 10.0f,
                                                rect.right - 14.0f - shiftX, cy + 10.0f);
             PublishSpectrumHitRect(waveRect);
+            // Collapsed: volume wheel between art and spectrum (title strip).
+            PublishMediaCenterHitRect(D2D1::RectF(artRect.right + 8.0f, rect.top + 2.0f,
+                                                  waveRect.left - 8.0f, rect.bottom - 2.0f));
             if (state.media.playing) {
                 DrawSpectrum(state, waveRect, settings, now);
             } else {
@@ -16923,7 +16848,7 @@ private:
                 }
             }
         }
-        PublishMediaCenterHitRect(height);
+        // mediaCenterHitRect is published from expanded text strip / collapsed title strip above.
     }
     float UpdateImmersiveMix(const Settings& settings, float height, double now) {
         if (!settings.mediaTabLyrics) {
@@ -16979,8 +16904,9 @@ private:
         if (!EnsureRoundJoinStyle())
             return;
         const float r = ImmersiveLayout::kBtnRadius;
-        const D2D1_POINT_2F c = D2D1::Point2F(rect.right - ImmersiveLayout::kBtnInsetRight - r,
-                                              rect.top + MediaLayout::kControlsY);
+        const D2D1_POINT_2F c =
+            D2D1::Point2F((rect.left + rect.right) * 0.5f - MediaLayout::kLyricsButtonSpacing,
+                          rect.top + MediaLayout::kControlsY);
         const bool hovered = g_hoveredLyricsBtn.load(std::memory_order_relaxed);
         const D2D1_COLOR_F restBg = D2D1::ColorF(1.0f, 1.0f, 1.0f, hovered ? 0.09f : 0.040f);
         const D2D1_COLOR_F onBg = D2D1::ColorF(currentAccent_.r, currentAccent_.g, currentAccent_.b,
@@ -17893,7 +17819,7 @@ private:
         lastMediaBtnTime_ = now;
         const int pressedCmd = g_pressedMediaButton.load();
         bool isStillAnimating = false;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             const float target = (pressedCmd == i) ? 1.0f : 0.0f;
             const float tau = ((target > mediaBtnPress_[i]) ? 0.025f : 0.075f) / AnimSpeedOf(frameSettings_);
             const float k = 1.0f - std::exp(-dt / tau);
@@ -18079,16 +18005,110 @@ private:
         target_->SetTransform(oldTransform);
         accentBrush_->SetOpacity(1.0f);
     }
-    void DrawMediaControls(bool playing, D2D1_POINT_2F prev, D2D1_POINT_2F play, D2D1_POINT_2F next, double now) {
+    void DrawMediaQueueModeButton(D2D1_POINT_2F center, MediaQueueMode mode, bool enabled) {
+        const int buttonCmd = 3;
+        const bool isHovered = g_hoveredMediaButton.load() == buttonCmd;
+        const float press = mediaBtnPress_[3];
+        const float r = MediaLayout::kCycleButtonRadius * (1.0f - 0.13f * press);
+        const float alpha = enabled ? (isHovered ? 0.12f : 0.05f) : 0.03f;
+        if (ID2D1SolidColorBrush* bg =
+                AcquireBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha))) {
+            target_->FillEllipse(D2D1::Ellipse(center, r, r), bg);
+        }
+        const wchar_t* glyph = L"\uE8B1";  // shuffle default
+        if (mode == MediaQueueMode::Sequential) {
+            glyph = usingFluentIcons_ ? L"\uE8EE" : L"\uE149";  // repeat all / list order
+        } else if (mode == MediaQueueMode::RepeatOne) {
+            glyph = usingFluentIcons_ ? L"\uE8ED" : L"\uE1CC";  // repeat one
+        } else {
+            glyph = usingFluentIcons_ ? L"\uE8B1" : L"\uE14B";  // shuffle
+        }
+        IDWriteTextFormat* fmt =
+            mediaNavIconFormat_ ? mediaNavIconFormat_.Get()
+                                : (iconFormat_ ? iconFormat_.Get() : smallTextFormat_.Get());
+        if (fmt) {
+            textBrush_->SetOpacity(enabled ? (isHovered ? 0.95f : 0.72f) : 0.35f);
+            if (mode != MediaQueueMode::Sequential) {
+                accentBrush_->SetOpacity(enabled ? 0.95f : 0.35f);
+            }
+            ID2D1SolidColorBrush* brush =
+                (mode != MediaQueueMode::Sequential && accentBrush_) ? accentBrush_.Get()
+                                                                     : textBrush_.Get();
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            const D2D1_RECT_F glyphRect =
+                D2D1::RectF(center.x - r, center.y - r, center.x + r, center.y + r);
+            target_->DrawTextW(glyph, 1, fmt, glyphRect, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            textBrush_->SetOpacity(0.90f);
+            if (accentBrush_) {
+                accentBrush_->SetOpacity(1.0f);
+            }
+        }
+    }
+    void DrawMediaInlineVolume(D2D1_POINT_2F nextCenter, int volumePercent, bool muted) {
+        const float trackLeft = nextCenter.x + MediaLayout::kInlineVolGap;
+        const float trackRight = trackLeft + MediaLayout::kInlineVolTrackW;
+        const float cy = nextCenter.y;
+        if (MediaInlineVolumeDigitsVisible()) {
+            // Keep painting until the hold expires so the track returns automatically.
+            g_layoutDirty = true;
+            wchar_t value[16] = {};
+            if (muted) {
+                wcscpy_s(value, L"0");
+            } else {
+                swprintf_s(value, L"%d", ClampInt(volumePercent, 0, 100));
+            }
+            IDWriteTextFormat* valueFmt =
+                boldTextFormat_ ? boldTextFormat_.Get()
+                                : (textFormat_ ? textFormat_.Get() : smallTextFormat_.Get());
+            if (valueFmt && textBrush_) {
+                const D2D1_RECT_F valueRect =
+                    D2D1::RectF(trackLeft - 2.0f, cy - 11.0f, trackRight + 2.0f, cy + 11.0f);
+                valueFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(0.98f);
+                target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), valueFmt, valueRect,
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                valueFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                textBrush_->SetOpacity(0.90f);
+            }
+            return;
+        }
+        const float halfH = MediaLayout::kInlineVolTrackH * 0.5f;
+        const D2D1_RECT_F track =
+            D2D1::RectF(trackLeft, cy - halfH, trackRight, cy + halfH);
+        const float pct = muted ? 0.0f : Clamp(volumePercent / 100.0f, 0.0f, 1.0f);
+        if (ID2D1SolidColorBrush* rail =
+                AcquireBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f))) {
+            target_->FillRoundedRectangle(D2D1::RoundedRect(track, halfH, halfH), rail);
+        }
+        if (pct > 0.001f) {
+            DrawAccentTrack(track, pct, halfH);
+        }
+        const float thumbX = track.left + (track.right - track.left) * pct;
+        const float thumbR = 4.5f;
+        if (ID2D1SolidColorBrush* thumb =
+                AcquireBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f))) {
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, cy), thumbR, thumbR), thumb);
+        }
+    }
+    void DrawMediaControls(bool playing, D2D1_POINT_2F cycle, D2D1_POINT_2F prev, D2D1_POINT_2F play,
+                           D2D1_POINT_2F next, MediaQueueMode queueMode, bool queueEnabled,
+                           int volumePercent, bool muted, double now) {
         UpdateMediaButtonAnimations(now, playing);
+        DrawMediaQueueModeButton(cycle, queueMode, queueEnabled);
         DrawMediaButton(prev, MediaLayout::kNavButtonRadius, 0, false);
         DrawMediaButton(play, MediaLayout::kPlayButtonRadius, playing ? 1 : 2, true);
         DrawMediaButton(next, MediaLayout::kNavButtonRadius, 3, false);
+        DrawMediaInlineVolume(next, volumePercent, muted);
     }
     void DrawMediaButton(D2D1_POINT_2F center, float radius, int kind, bool primary) {
         int buttonCmd = (kind == 0) ? 0 : ((kind == 1 || kind == 2) ? 1 : 2);
         bool isHovered = (g_hoveredMediaButton.load() == buttonCmd);
-        const float press = (buttonCmd >= 0 && buttonCmd < 3) ? mediaBtnPress_[buttonCmd] : 0.0f;
+        const float press = (buttonCmd >= 0 && buttonCmd < 4) ? mediaBtnPress_[buttonCmd] : 0.0f;
         const float r = radius * (1.0f - 0.13f * press);
         const D2D1_COLOR_F restingBg = D2D1::ColorF(
             1.0f, 1.0f, 1.0f,
@@ -19799,22 +19819,21 @@ private:
         mutedBrush_->SetOpacity(0.50f);
     }
     void DrawVolume(const SharedState& state, D2D1_RECT_F rect) {
-        if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 80.0f)
+        if (rect.bottom - rect.top < 20.0f || rect.right - rect.left < 56.0f)
             return;
         const int shownPct = ClampInt(
             static_cast<int>(std::lround(state.volume.displayPercent)), 0, 100);
         const bool muted = state.volume.muted || shownPct == 0 || state.volume.percent == 0;
         const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float badgeSz = (std::min)((rect.bottom - rect.top) - 12.0f, 36.0f);
-        D2D1_RECT_F badge = D2D1::RectF(rect.left + 12.0f, cy - badgeSz * 0.5f,
-                                        rect.left + 12.0f + badgeSz, cy + badgeSz * 0.5f);
+        const float badgeSz = (std::min)((rect.bottom - rect.top) - 10.0f, 26.0f);
+        D2D1_RECT_F badge = D2D1::RectF(rect.left + 8.0f, cy - badgeSz * 0.5f,
+                                        rect.left + 8.0f + badgeSz, cy + badgeSz * 0.5f);
         const float br = badgeSz * 0.35f;
         ComPtr<ID2D1SolidColorBrush> badgeBg;
         target_->CreateSolidColorBrush(material_.raisedStrong, &badgeBg);
         if (badgeBg) {
             target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), badgeBg.Get());
         }
-        // Mute glyph when muted / 0%; speaker otherwise.
         const wchar_t* glyph = muted ? L"\uE74F" : (usingFluentIcons_ ? L"\uE767" : L"\uE993");
         textBrush_->SetOpacity(0.95f);
         if (iconFormat_) {
@@ -19829,13 +19848,13 @@ private:
         if (muted && state.volume.muted) {
             wcscpy_s(value, ARRAYSIZE(value), Loc(L"Muted"));
         } else {
-            swprintf_s(value, L"%d%%", shownPct);
+            swprintf_s(value, L"%d", shownPct);
         }
         IDWriteTextFormat* valueFmt =
             boldTextFormat_ ? boldTextFormat_.Get()
                             : (textFormat_ ? textFormat_.Get() : smallTextFormat_.Get());
         D2D1_RECT_F valueRect =
-            D2D1::RectF(badge.right + 8.0f, rect.top + 4.0f, rect.right - 12.0f, rect.bottom - 4.0f);
+            D2D1::RectF(badge.right + 4.0f, rect.top + 2.0f, rect.right - 8.0f, rect.bottom - 2.0f);
         if (valueFmt) {
             valueFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -19846,7 +19865,6 @@ private:
             valueFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
         textBrush_->SetOpacity(0.90f);
-        // No slider/track — mute badge remains clickable; track hit disabled.
         const D2D1_RECT_F noTrack = D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
         PublishVolumeHitLayout(rect, badge, noTrack, frameSettings_.sizeScale);
         accentBrush_->SetOpacity(1.0f);
@@ -21119,7 +21137,7 @@ private:
     MaterialTokens material_{};
     D2D1_COLOR_F currentAccent_ = D2D1::ColorF(0x4cc9f0);
     double lastAccentTime_ = -1.0;
-    float mediaBtnPress_[3] = {0.0f, 0.0f, 0.0f};
+    float mediaBtnPress_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     double lastMediaBtnTime_ = -1.0;
     ComPtr<ID2D1PathGeometry> skipTriFull_;
     ComPtr<ID2D1PathGeometry> skipTriNotch_;
@@ -21264,6 +21282,10 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
         activity.height = 58.0f;
         break;
     case IslandKind::Volume:
+        // Compact numeric OSD (icon + percent only).
+        activity.width = 104.0f;
+        activity.height = 40.0f;
+        break;
     case IslandKind::Brightness:
         activity.width = 300.0f;
         activity.height = 54.0f;
@@ -21333,12 +21355,6 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
         now < state.doNotDisturb.expiresAt) {
         activities.push_back(IslandKind::DoNotDisturb);
     }
-    if (settings.volume && state.volume.active && now < state.volume.expiresAt) {
-        activities.push_back(IslandKind::Volume);
-    }
-    if (settings.brightness && state.brightness.active && now < state.brightness.expiresAt) {
-        activities.push_back(IslandKind::Brightness);
-    }
     if (state.notification.active && now < state.notification.expiresAt) {
         activities.push_back(IslandKind::Notification);
     }
@@ -21353,6 +21369,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
          state.timer.active)) {
         activities.push_back(IslandKind::Timer);
     }
+    // Media owns volume UI (inline transport scale). External Volume pill disabled.
     if (settings.media && state.media.available) {
         activities.push_back(IslandKind::Media);
     }
@@ -22403,6 +22420,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const MediaContentPoint cp = MediaContentFromClient(pt.x, pt.y);
                 const bool hoverClickable = MediaArtHitTest(cp) || SpectrumHitTest(cp) ||
                                             MediaTransportHitTest(cp) != -1 ||
+                                            MediaInlineVolumeFractionFromContent(cp, true) >= 0.0f ||
                                             MediaScrubFractionFromContent(cp) >= 0.0f ||
                                             g_hoveredSourceSlot.load(std::memory_order_relaxed) >= 0 ||
                                             (settings.mediaTabLyrics && MediaLyricsButtonHitTest(cp));
@@ -22430,34 +22448,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         s_trayPressActive = false;
-        // Interactive system volume: mute badge / slider drag on the volume pill.
-        if (settings.volume) {
-            bool volumeUi = false;
-            {
-                std::lock_guard lock(g_stateMutex);
-                volumeUi = g_state.volume.active && NowSeconds() < g_state.volume.expiresAt;
-            }
-            if (volumeUi) {
-                const VolumeContentPoint vpt = VolumeContentFromClient(xPos, yPos);
-                if (VolumeMuteHitTest(vpt)) {
-                    ToggleEndpointMute();
-                    SetCapture(hwnd);
-                    g_layoutDirty = true;
-                    return 0;
-                }
-                const float frac = VolumeTrackFractionFromContent(vpt, true);
-                if (frac >= 0.0f) {
-                    g_volumeDragging = true;
-                    SetSystemVolumePercent(static_cast<int>(frac * 100.0f + 0.5f));
-                    SetCapture(hwnd);
-                    g_layoutDirty = true;
-                    return 0;
-                }
-            } else if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
-                ShowVolumeControlPanel();
-                return 0;
-            }
-        }
         if (settings.fileTrayModule &&
             NormalizedTabIndex(settings) == FileTrayTabIndex(settings)) {
             const MediaContentPoint tcp = MediaContentFromClient(xPos, yPos);
@@ -22494,6 +22484,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 SetCapture(hwnd);
                 g_layoutDirty = true;
                 return 0;
+            }
+            if (settings.volume) {
+                const float volFrac = MediaInlineVolumeFractionFromContent(cp, true);
+                if (volFrac >= 0.0f) {
+                    g_mediaInlineVolumeDragging = true;
+                    SetSystemVolumePercent(static_cast<int>(volFrac * 100.0f + 0.5f));
+                    PulseMediaInlineVolumeDigits();
+                    SetCapture(hwnd);
+                    return 0;
+                }
             }
             const float fraction = MediaScrubFractionFromContent(cp);
             if (fraction >= 0.0f) {
@@ -22567,6 +22567,28 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             if (frac >= 0.0f) {
                 SetSystemVolumePercent(static_cast<int>(frac * 100.0f + 0.5f));
+            }
+            return 0;
+        }
+        if (g_mediaInlineVolumeDragging.load(std::memory_order_relaxed)) {
+            const MediaContentPoint cp = MediaContentFromClient(xPos, yPos, true);
+            float frac = MediaInlineVolumeFractionFromContent(cp, true);
+            // Horizontal drag only while still near the controls row — never map whole island.
+            if (frac < 0.0f && cp.valid) {
+                const MediaContentPoint z = MediaPlayerZonePoint(cp);
+                if (z.height >= MediaLayout::kExpandedHeight * 0.75f &&
+                    std::fabs(z.y - MediaLayout::kControlsY) <=
+                        MediaLayout::kInlineVolHitHalfH * 2.5f) {
+                    float trackLeft = 0.0f;
+                    float trackRight = 0.0f;
+                    if (MediaInlineVolumeTrackX(z.width, &trackLeft, &trackRight)) {
+                        frac = Clamp((z.x - trackLeft) / (trackRight - trackLeft), 0.0f, 1.0f);
+                    }
+                }
+            }
+            if (frac >= 0.0f) {
+                SetSystemVolumePercent(static_cast<int>(frac * 100.0f + 0.5f));
+                PulseMediaInlineVolumeDigits();
             }
             return 0;
         }
@@ -22706,6 +22728,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (g_volumeDragging.exchange(false)) {
                 g_layoutDirty = true;
             }
+            if (g_mediaInlineVolumeDragging.exchange(false)) {
+                PulseMediaInlineVolumeDigits();
+            }
             if (g_scrubbing.exchange(false)) {
                 g_layoutDirty = true;
             }
@@ -22725,6 +22750,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ReleaseCapture();
             KeepVolumePanelAlive(2.8);
             g_layoutDirty = true;
+            return 0;
+        }
+        if (g_mediaInlineVolumeDragging.exchange(false)) {
+            ReleaseCapture();
+            PulseMediaInlineVolumeDigits();
             return 0;
         }
         if (g_islandDragging.load(std::memory_order_relaxed)) {
@@ -22836,17 +22866,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         const bool gameMetricsPresent =
             !kinds.empty() && kinds[0] == IslandKind::Idle &&
             (settings.gameOverlay || g_gameOverlayPinned.load());
+        const int currentTab = NormalizedTabIndex(settings);
+        const bool onMediaTab = currentTab == MediaTabIndex(settings);
         const MediaContentPoint cpEarly = MediaContentFromClient(xPos, yPos);
-        if (mediaActive && SpectrumHitTest(cpEarly)) {
-            g_clickExpanded = true;
-            g_pinnedExpanded.store(true, std::memory_order_relaxed);
-            ShowVolumeControlPanel();
+        // Media hit-zones only while the media tab is active — never on weather/calendar/etc.
+        if (mediaActive && onMediaTab && SpectrumHitTest(cpEarly)) {
             OpenSystemSoundSettings();
             g_layoutDirty = true;
             return 0;
         }
-        if (mediaActive && MediaArtHitTest(cpEarly)) {
-            // mediaIconHitRect → foreground the GSMTC source app (AUMID / window hunt).
+        if (mediaActive && onMediaTab && MediaArtHitTest(cpEarly)) {
             OpenRelevantApp();
             return 0;
         }
@@ -22859,7 +22888,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
         const float height = static_cast<float>(clientRect.bottom - clientRect.top);
-        const int currentTab = NormalizedTabIndex(settings);
         const MediaContentPoint cp = cpEarly.valid ? cpEarly : MediaContentFromClient(xPos, yPos);
         if (settings.fileTrayModule && currentTab == FileTrayTabIndex(settings)) {
             const bool wasPressed = s_trayPressActive;
@@ -22918,11 +22946,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             return 0;
         }
-        if (mediaActive && currentTab == MediaTabIndex(settings)) {
+        if (mediaActive && onMediaTab) {
             if (SpectrumHitTest(cp)) {
-                g_clickExpanded = true;
-                g_pinnedExpanded.store(true, std::memory_order_relaxed);
-                ShowVolumeControlPanel();
                 OpenSystemSoundSettings();
                 g_layoutDirty = true;
                 return 0;
@@ -22954,6 +22979,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             const int cmd = MediaTransportHitTest(cp);
             if (cmd != -1) {
+                if (cmd == 3) {
+                    CycleMediaQueueMode();
+                    g_layoutDirty = true;
+                    return 0;
+                }
                 if (cmd == 0)
                     g_skipTriggerPrev.fetch_add(1);
                 else if (cmd == 2)
@@ -22962,31 +22992,52 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 SendMediaTransportCommand(cmd);
                 return 0;
             }
+            if (MediaInlineVolumeFractionFromContent(cp, true) >= 0.0f) {
+                return 0;
+            }
             if (MediaScrubFractionFromContent(cp) >= 0.0f) {
                 return 0;
             }
+            // Empty expanded area: collapse (unpin / click-expand), do not steal volume.
+            if (g_pinnedExpanded.exchange(false) || g_clickExpanded.exchange(false)) {
+                Wh_SetIntValue(L"PinnedExpanded", 0);
+                g_layoutDirty = true;
+                return 0;
+            }
+            if (!settings.expandOnHover && height > 50.0f) {
+                g_clickExpanded = false;
+                g_layoutDirty = true;
+                return 0;
+            }
+            OpenRelevantApp();
+            return 0;
+        }
+        // Non-media tabs (weather / calendar / …): open the matching app, never the player.
+        if (currentTab == WeatherTabIndex(settings) || currentTab == CalendarTabIndex(settings) ||
+            currentTab == HardwareMonitorTabIndex(settings) ||
+            currentTab == FileTrayTabIndex(settings)) {
+            OpenIdleTabTarget(settings, mediaActive);
+            return 0;
         }
         if (height > 50.0f) {
-            if (mediaActive) {
-                if (currentTab == MediaTabIndex(settings)) {
-                    OpenRelevantApp();
+            if (onMediaTab && mediaActive) {
+                if (g_pinnedExpanded.exchange(false) || g_clickExpanded.exchange(false)) {
+                    Wh_SetIntValue(L"PinnedExpanded", 0);
+                    g_layoutDirty = true;
+                    return 0;
                 }
+                OpenRelevantApp();
             } else if (kinds.empty() || kinds[0] != IslandKind::Idle) {
                 HandleStatusClickAtPoint(hwnd, lParam);
             }
         } else {
-            if (mediaActive) {
-                OpenRelevantApp();
-            } else {
-                HandleStatusClickAtPoint(hwnd, lParam);
-            }
+            OpenIdleTabTarget(settings, mediaActive);
         }
     }
         return 0;
     case WM_MBUTTONUP:
         if (settings.volume) {
             ToggleEndpointMute();
-            ShowVolumeControlPanel();
         }
         return 0;
     case WM_LBUTTONDBLCLK: {
@@ -23015,9 +23066,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             mediaActive = settings.media && g_state.media.available;
         }
         const int currentTab = NormalizedTabIndex(settings);
-        const bool onMediaPlayer =
-            mediaActive && currentTab == MediaTabIndex(settings) && wheelMediaPt.valid;
-        // Progress/scrub line: wheel seeks. Elsewhere on the player keeps volume unless split-wheel.
+        // Media tab owns wheel: scrub / inline volume only — never split-wheel volume on the pill.
+        const bool onMediaTab =
+            mediaActive && currentTab == MediaTabIndex(settings);
+        const bool onMediaPlayer = onMediaTab && wheelMediaPt.valid;
         if (onMediaPlayer) {
             const float scrubFrac = MediaScrubFractionFromContent(wheelMediaPt);
             if (scrubFrac >= 0.0f) {
@@ -23064,62 +23116,14 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 cur = g_state.system.volumePercent;
             }
             SetSystemVolumePercent(cur + wheelDeltaSteps);
-            ShowVolumeControlPanel();
             return true;
         };
-        auto adjustBrightnessByWheel = [&]() {
-            if (!settings.brightness) {
-                return false;
-            }
-            const int cur = GetCurrentBrightnessPercent();
-            SetSystemBrightnessPercent(cur + wheelDeltaSteps);
-            return true;
-        };
-        // Media mode: volume wheel only in mediaCenterHitRect (between art and spectrum).
-        if (onMediaPlayer) {
-            if (settings.volume && MediaCenterHitTest(wheelMediaPt)) {
-                adjustVolumeByWheel();
-                return 0;
-            }
-            // Brightness still allowed on the left half outside icon/spectrum/center text.
-            if (settings.splitWheelAction == SplitWheelAction::BrightnessVolume &&
-                g_pillClientRect.valid && settings.brightness) {
-                const float midX =
-                    g_pillClientRect.left +
-                    (g_pillClientRect.right - g_pillClientRect.left) * 0.5f;
-                if (static_cast<float>(wheelClient.x) < midX &&
-                    !MediaArtHitTest(wheelMediaPt) && !SpectrumHitTest(wheelMediaPt) &&
-                    adjustBrightnessByWheel()) {
-                    return 0;
-                }
-            }
-        } else if (settings.splitWheelAction == SplitWheelAction::BrightnessVolume &&
-                   g_pillClientRect.valid) {
-            // Non-media: split left=brightness, right=volume.
-            const float midX =
-                g_pillClientRect.left +
-                (g_pillClientRect.right - g_pillClientRect.left) * 0.5f;
-            if (static_cast<float>(wheelClient.x) < midX) {
-                if (adjustBrightnessByWheel()) {
-                    return 0;
-                }
-            } else if (adjustVolumeByWheel()) {
-                return 0;
-            }
-        } else if (settings.splitWheelAction == SplitWheelAction::Volume) {
+        // Volume: ONLY media tab + ONLY inline scale.
+        if (onMediaTab && onMediaPlayer && settings.volume &&
+            MediaInlineVolumeFractionFromContent(wheelMediaPt, true) >= 0.0f) {
             if (adjustVolumeByWheel()) {
-                return 0;
+                PulseMediaInlineVolumeDigits();
             }
-        }
-        // Ctrl+Wheel, volume pill, or hovering the volume control → OS volume.
-        bool volumeUi = false;
-        if (settings.volume) {
-            std::lock_guard lock(g_stateMutex);
-            volumeUi = g_state.volume.active && NowSeconds() < g_state.volume.expiresAt;
-        }
-        const bool ctrlWheel = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
-        if (settings.volume && (volumeUi || ctrlWheel || g_volumeHovering.load())) {
-            adjustVolumeByWheel();
             return 0;
         }
         if (wheelNow - s_lastWheelEvent > 220 ||
@@ -23647,10 +23651,6 @@ DWORD WINAPI RenderThreadProc(void*) {
                                       !isFullscreen && !gameMetricsPresent && (pinned || isHoverExpanded) && onHardwareMonitorTab;
         const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen;
         const bool systemMetricsVisible = hwMonitorVisible || gameOverlayVisible;
-        if (frame.brightness && !pollBusy && now >= nextBrightnessPoll) {
-            UpdateBrightnessSnapshot();
-            nextBrightnessPoll = now + 0.25;
-        }
         if (!pollBusy && now >= nextSystemPoll) {
             const bool needGpuStats = gameOverlayVisible || hwMonitorVisible;
             const bool needNetStats = hwMonitorVisible;

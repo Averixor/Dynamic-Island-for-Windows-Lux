@@ -78,6 +78,8 @@ target_link_libraries(DynamicIslandLux PRIVATE
   advapi32
   comdlg32
   wbemuuid
+  iphlpapi
+  ws2_32
 )
 
 set_target_properties(DynamicIslandLux PROPERTIES
