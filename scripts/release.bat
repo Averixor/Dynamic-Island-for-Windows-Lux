@@ -3,7 +3,7 @@ REM Strict release gate: build+smoke -> package assets -> print tag command.
 REM Do NOT tag before this script exits 0. Do NOT run make-release-assets before build.
 setlocal EnableExtensions
 cd /d "%~dp0\.."
-set VER=1.0.3
+set VER=1.0.4
 
 echo ========== 1/2 app\build.bat (Release + smoke) ==========
 call app\build.bat

@@ -14,7 +14,7 @@
 // STANDALONE NOTE: This file is also linked into app/ (LUX_STANDALONE). Keep it —
 // it is the island implementation TU, not leftover junk. Windhawk @version stays
 // 1.9.1 for the mod channel; the exe product version is CMake project(VERSION)
-// (see app/version.rc.in → 1.0.3 for the current standalone release).
+// (see app/version.rc.in → 1.0.4 for the current standalone release).
 //
 // ==WindhawkModReadme==
 /*
