@@ -75,7 +75,6 @@ void ResolveApis() {
     auto* ord135 = GetProcAddress(ux, MAKEINTRESOURCEA(135));
     auto* ord136 = GetProcAddress(ux, MAKEINTRESOURCEA(136));
     g_flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(ord136);
-    const DWORD build = WindowsBuildNumber();
     if (ord136 && (build == 0 || build >= 18362)) {
       // FlushMenuThemes exists ⇒ 1903+ SetPreferredAppMode ABI.
       g_setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFn>(ord135);
