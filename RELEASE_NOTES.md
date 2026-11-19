@@ -3,7 +3,7 @@
 Standalone release (no Windhawk required).
 
 - **Tag:** `v1.0.5`
-- **Commit:** *(filled after tag commit)*
+- **Commit:** d5f1b151a0c6b6a8df259da51c32d2623bbe626b
 - **Date:** 2026-11-19
 
 ## Highlights since v1.0.4
