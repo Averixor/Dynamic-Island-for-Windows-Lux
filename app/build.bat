@@ -28,7 +28,7 @@ if not defined CMAKE (
 echo Using CMake: %CMAKE%
 
 rem Fail before CMake/MSBuild emits a long, misleading list of missing standard headers.
-rem Nested wildcards need nested for /d loops (cmd does not expand 2022\*\VC\Tools\MSVC\*).
+rem Nested wildcards need nested for /d loops (cmd does not expand VS\*\*\VC\Tools\MSVC\*).
 set "HAS_WINDOWS_SDK="
 for /d %%I in ("%ProgramFiles(x86)%\Windows Kits\10\Include\*") do (
   if exist "%%~fI\um\windows.h" set "HAS_WINDOWS_SDK=1"
@@ -51,12 +51,15 @@ if exist "%VSWHERE%" (
   )
 )
 if not defined HAS_MSVC_CRT (
-  for %%R in ("%ProgramFiles%\Microsoft Visual Studio\2022" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022") do (
-    for /d %%E in ("%%~R\*") do (
-      for /d %%I in ("%%~fE\VC\Tools\MSVC\*") do (
-        rem crtdbg.h lives in Universal CRT (Windows Kits\...\ucrt); MSVC ships vcruntime.h.
-        if exist "%%~fI\include\vcruntime.h" set "HAS_MSVC_CRT=1"
-        if exist "%%~fI\include\crtdbg.h" set "HAS_MSVC_CRT=1"
+  rem VS 2022 lives under ...\2022\<edition>, VS 2026 under ...\18\<edition>.
+  for %%R in ("%ProgramFiles%\Microsoft Visual Studio" "%ProgramFiles(x86)%\Microsoft Visual Studio") do (
+    for /d %%Y in ("%%~R\*") do (
+      for /d %%E in ("%%~fY\*") do (
+        for /d %%I in ("%%~fE\VC\Tools\MSVC\*") do (
+          rem crtdbg.h lives in Universal CRT (Windows Kits\...\ucrt); MSVC ships vcruntime.h.
+          if exist "%%~fI\include\vcruntime.h" set "HAS_MSVC_CRT=1"
+          if exist "%%~fI\include\crtdbg.h" set "HAS_MSVC_CRT=1"
+        )
       )
     )
   )
@@ -84,7 +87,29 @@ if not errorlevel 1 (
 rem ping instead of timeout: timeout prints "Input redirection is not supported" under redirected stdin.
 ping -n 2 127.0.0.1 >nul
 
-"%CMAKE%" -S app -B build -G "Visual Studio 17 2022" -A x64
+rem Match the generator to the newest VS with the C++ toolset.
+rem 17 = Visual Studio 2022, 18 = Visual Studio 2026 (needs CMake 4.2+).
+rem Any other major (or vswhere missing) lets CMake pick with -A x64.
+set "VS_VER="
+set "VS_MAJOR="
+set "CMAKE_GEN="
+if exist "%VSWHERE%" (
+  for /f "usebackq delims=" %%V in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion`) do (
+    if not defined VS_VER set "VS_VER=%%V"
+  )
+)
+for /f "tokens=1 delims=." %%M in ("%VS_VER%") do set "VS_MAJOR=%%M"
+if "%VS_MAJOR%"=="17" set "CMAKE_GEN=Visual Studio 17 2022"
+if "%VS_MAJOR%"=="18" set "CMAKE_GEN=Visual Studio 18 2026"
+if "%VS_MAJOR%"=="18" echo NOTE: Visual Studio 2026 requires CMake 4.2 or newer.
+if defined CMAKE_GEN (
+  echo CMake generator: %CMAKE_GEN% ^(Visual Studio %VS_VER%^)
+  "%CMAKE%" -S app -B build -G "%CMAKE_GEN%" -A x64
+) else (
+  echo CMake generator: default Visual Studio ^(-A x64^)
+  if defined VS_VER echo Visual Studio %VS_VER%
+  "%CMAKE%" -S app -B build -A x64
+)
 if errorlevel 1 exit /b 1
 "%CMAKE%" --build build --config Release
 if errorlevel 1 exit /b 1

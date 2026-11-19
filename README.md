@@ -77,7 +77,7 @@ Weather, lyrics, and Quick Lookup send the city or the query you type to third-p
 
 ## Build from source
 
-Needs **Visual Studio 2022** (Desktop C++) and **CMake ≥ 3.20**.
+Needs **Visual Studio 2022 or 2026** (Desktop C++) and **CMake ≥ 3.20** (CMake ≥ 4.2 for Visual Studio 2026).
 
 ```bat
 app\build.bat

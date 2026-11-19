@@ -7,7 +7,7 @@ Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive**
 
 ## Збірка
 
-Потрібні Visual Studio 2022 (C++ Desktop) і CMake ≥ 3.20.
+Потрібні Visual Studio 2022 або 2026 (C++ Desktop) і CMake ≥ 3.20 (CMake ≥ 4.2 для Visual Studio 2026).
 
 ```bat
 app\build.bat
