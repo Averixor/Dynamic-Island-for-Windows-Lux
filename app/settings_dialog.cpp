@@ -15,8 +15,6 @@
 #include <commdlg.h>
 #include <uxtheme.h>
 
-#include <windowsx.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -222,7 +220,7 @@ HFONT CreateWeightFont(HFONT base, int dpi, int weight, int dip) {
                      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 }
 
-void DeleteBrush(HBRUSH& brush) {
+void ReleaseBrush(HBRUSH& brush) {
   if (brush) {
     DeleteObject(brush);
     brush = nullptr;
@@ -230,12 +228,12 @@ void DeleteBrush(HBRUSH& brush) {
 }
 
 void FreeBrushes(DialogState& st) {
-  DeleteBrush(st.windowBrush);
-  DeleteBrush(st.navBrush);
-  DeleteBrush(st.navSelectedBrush);
-  DeleteBrush(st.elevatedBrush);
-  DeleteBrush(st.controlBrush);
-  DeleteBrush(st.bannerBrush);
+  ReleaseBrush(st.windowBrush);
+  ReleaseBrush(st.navBrush);
+  ReleaseBrush(st.navSelectedBrush);
+  ReleaseBrush(st.elevatedBrush);
+  ReleaseBrush(st.controlBrush);
+  ReleaseBrush(st.bannerBrush);
 }
 
 void RebuildBrushes(DialogState& st) {
@@ -516,14 +514,16 @@ LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       data->dragging = true;
       RECT rc = {};
       GetClientRect(hwnd, &rc);
-      SetSliderValue(hwnd, *data, SliderValueFromX(*data, rc, GET_X_LPARAM(lParam), st->dpi), true);
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lParam)));
+      SetSliderValue(hwnd, *data, SliderValueFromX(*data, rc, x, st->dpi), true);
     }
     return 0;
   case WM_MOUSEMOVE:
     if (data && st && data->dragging) {
       RECT rc = {};
       GetClientRect(hwnd, &rc);
-      SetSliderValue(hwnd, *data, SliderValueFromX(*data, rc, GET_X_LPARAM(lParam), st->dpi), true);
+      const int x = static_cast<int>(static_cast<short>(LOWORD(lParam)));
+      SetSliderValue(hwnd, *data, SliderValueFromX(*data, rc, x, st->dpi), true);
       return 0;
     }
     if (data && !data->hot) {
@@ -669,8 +669,8 @@ void PaintCheckbox(HWND hwnd, HDC hdc, const DialogState& st) {
   }
   const int dpi = st.dpi > 0 ? st.dpi : 96;
   const int box = (std::max)(14, MulDiv(16, dpi, 96));
-  RECT boxRc = {rc.left, rc.top + (std::max)(0, (rc.bottom - rc.top - box) / 2), rc.left + box,
-                rc.top + (std::max)(0, (rc.bottom - rc.top - box) / 2) + box};
+  const int boxTop = (std::max)(0, static_cast<int>(rc.bottom - rc.top - box) / 2);
+  RECT boxRc = {rc.left, rc.top + boxTop, rc.left + box, rc.top + boxTop + box};
   const bool enabled = IsWindowEnabled(hwnd) != FALSE;
   const bool checked = SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
   const bool hot = GetPropW(hwnd, kHotProp) != nullptr;
@@ -2397,7 +2397,7 @@ void BuildControls(HWND hwnd, DialogState& st) {
       SubclassEdit(row.control);
       if (IsColorKey(def.key)) {
         row.swatch = CreateWindowExW(
-            0, L"BUTTON", SettingsUiLoc::ChooseColor(st.lang), WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0,
+            0, L"BUTTON", SettingsUiLoc::ColorPickerLabel(st.lang), WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0,
             st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSwatchIdBase + static_cast<int>(i))),
             instance, nullptr);
         SetPropW(row.swatch, kSwatchProp, row.control);
@@ -2548,7 +2548,7 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ScrollTo(*st, pos);
     return 0;
   }
-  case WM_MOUSEWHEEL:
+  case WM_MOUSEWHEEL: {
     if (!st) {
       break;
     }
@@ -2559,6 +2559,7 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       ScrollTo(*st, st->scrollY - steps * Px(*st, 48));
     }
     return 0;
+  }
   case WM_SIZE:
     if (st) {
       UpdateScrollBar(*st);

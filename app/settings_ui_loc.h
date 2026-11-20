@@ -871,7 +871,7 @@ inline const wchar_t* PreviewTitle(Lang lang) {
   return Pick(lang, L"Preview", L"Попередній перегляд", L"Предпросмотр");
 }
 
-inline const wchar_t* ChooseColor(Lang lang) {
+inline const wchar_t* ColorPickerLabel(Lang lang) {
   return Pick(lang, L"Choose color", L"Обрати колір", L"Выбрать цвет");
 }
 
