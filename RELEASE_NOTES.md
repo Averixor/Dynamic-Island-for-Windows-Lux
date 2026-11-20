@@ -1,19 +1,22 @@
-# Dynamic Island for Windows Lux — v1.0.6
+# Dynamic Island for Windows Lux — v1.0.7
 
 Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.6`
-- **Date:** 2026-11-19
+- **Tag:** `v1.0.7`
+- **Date:** 2026-11-20
 
 The git tag is the source of truth for the release commit. Do not paste a commit hash here — editing the notes after the tag moves HEAD off the tag.
 
-## Highlights since v1.0.5
+## Highlights since v1.0.6
 
-- Host IPC: top-level host HWND + `FindWindowW` first; `SignalAppReady` after workers; COPYDATA send retries
-- Settings store: refuse overwrite when `settings.json` is locked/unreadable; validated Int JSON emit; UTF-8 `\u` surrogates; trailing commas tolerated
-- Settings UI: Cancel after Apply keeps Apply; unknown enums preserved; Appearance backdrop `none`/`blur`; Tab stops; combo no longer deadens Apply/OK
-- Island: honor `--minimized` / manual hide; Caps Lock does not force-unhide; blacklist park no longer 1.5s flicker; render ready only after `Renderer::Initialize`; standalone `StopThreads` bounded; Bluetooth WinRT lifetime hardened
-- Packaging: SHA256 via `_sha256.ps1` (no `Get-FileHash` dependency)
+- MIT attribution restored for Himanshu (devcode90) alongside Averixor (`LICENSE`, `NOTICE`)
+- Installer “Start with Windows” survives first launch (JSON adopts live HKCU Run)
+- Weather HTTP via `HttpGetEx` (timeouts, 4 MB cap, status 200)
+- Settings dialog: PerMonitorV2 DPI scale + `WM_DPICHANGED`
+- Runtime overrides cleaned; Reset clears `runtime.json`; uninstall removes Run + StartupApproved
+- Tray/settings reentrancy and outside-click menu dismiss; autostart path sync
+- Windows CI (MSVC configure/build/`--test-json`/`--smoke-test --no-workers`); hardened `release.bat` / `build.bat`
+- Security hardening: no `WH_KEYBOARD_LL`, COPYDATA path checks, mutex DACL, `/guard:cf` + `/sdl`
 
 ## Origin
 
@@ -41,7 +44,7 @@ The original single-file mod body remains at the repo root as
 | Injected / tool-mod process | Own Win32 exe + tray |
 | Windhawk YAML settings | Flat `settings.json` + schema-driven dialog |
 | Windhawk storage API | `%AppData%\DynamicIslandLux\` |
-| No CI hook | GitHub Actions: Release build, `--test-json`, `--smoke-test --no-workers` |
+| No CI hook | `--smoke-test`, `--test-json`, exit codes 0–4 |
 
 ## Minimum OS
 
@@ -54,9 +57,10 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.6.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.7.exe` (Inno Setup, per-user, no admin)
 - `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
+- `NOTICE`
 - `INSTALL.txt`
 - `RELEASE_NOTES.md`
 - `SHA256SUMS.txt` (`sha256sum -c` compatible)
@@ -72,4 +76,4 @@ app\build.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.6.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.7.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

@@ -74,7 +74,7 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 - **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
 - **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
-## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.6**)
+## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.7**)
 
 ### Автоматичні (`app\build.bat`)
 
@@ -113,9 +113,9 @@ scripts\release.bat
 1. `app\build.bat` — Release + smoke (exit ≠ 0 → стоп)
 2. Cold-start чекліст вище (corrupt JSON обовʼязково)
 3. `scripts\make-release-assets.bat` — копіює **той самий** `.exe`, SHA256, VERSIONINFO≠`@PROJECT_VERSION@` (exit ≠ 0 → стоп)
-4. `git tag -a v1.0.6 -m "Dynamic Island Lux standalone v1.0.6"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
+4. `git tag -a v1.0.7 -m "Dynamic Island Lux standalone v1.0.7"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
 
-Assets: `dist\v1.0.6\` (папка = `scripts\_version.cmd`).
+Assets: `dist\v1.0.7\` (папка = `scripts\_version.cmd`).
 
 ## Архітектурні інваріанти
 
