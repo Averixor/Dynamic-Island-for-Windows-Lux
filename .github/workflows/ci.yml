@@ -24,3 +24,11 @@ jobs:
 
       - name: Smoke without workers
         run: .\build\Release\DynamicIslandLux.exe --smoke-test --no-workers
+
+      - name: Validate YouTube bridge extension
+        shell: pwsh
+        run: |
+          node --check extensions/youtube-bridge/content.js
+          node --check extensions/youtube-bridge/background.js
+          node --check extensions/youtube-bridge/popup.js
+          node -e "for (const name of ['extensions/youtube-bridge/manifest.json','extensions/youtube-bridge/manifest.firefox.json']) { const m = JSON.parse(require('fs').readFileSync(name,'utf8')); if (m.manifest_version !== 3) throw new Error(name + ' is not MV3'); }"

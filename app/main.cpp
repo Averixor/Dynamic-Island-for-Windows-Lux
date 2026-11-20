@@ -10,6 +10,7 @@
 #include "settings_dialog.h"
 #include "settings_schema.h"
 #include "settings_store.h"
+#include "media_like_bridge.h"
 #include "settings_ui_loc.h"
 
 #include <shellapi.h>
@@ -685,7 +686,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   if (options.testJson) {
-    const bool ok = SettingsStoreSelfTestJson() && SettingsThemeSelfTest();
+    const bool ok = SettingsStoreSelfTestJson() && SettingsThemeSelfTest() && MediaLikeBridgeSelfTest();
     SettingsStoreShutdown();
     CleanupProcessHandles(g_app);
     LuxLogShutdown();

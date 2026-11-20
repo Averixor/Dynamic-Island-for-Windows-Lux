@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dynamic Island Lux Bridge</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        width: 300px;
+        background: #12141a;
+        color: #f4f5f7;
+      }
+      main {
+        padding: 14px 14px 12px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 15px;
+        font-weight: 650;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-size: 13px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #8b8e98;
+      }
+      .dot.on {
+        background: #3dd68c;
+      }
+      .dot.off {
+        background: #e05a5a;
+      }
+      .track {
+        margin: 0 0 12px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #1c1f28;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .track strong {
+        display: block;
+        font-size: 13px;
+      }
+      .muted {
+        color: #a7abb6;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+        color: #c5c8d1;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      input {
+        flex: 1;
+        border: 1px solid #343846;
+        border-radius: 6px;
+        background: #0e1016;
+        color: inherit;
+        padding: 6px 8px;
+        font: inherit;
+      }
+      button {
+        border: 0;
+        border-radius: 6px;
+        background: #4cc9f0;
+        color: #081016;
+        font: inherit;
+        font-weight: 650;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      p {
+        margin: 10px 0 0;
+        font-size: 11px;
+        line-height: 1.4;
+        color: #9aa0ad;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>YouTube bridge</h1>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status">Checking…</span>
+      </div>
+      <div class="track">
+        <strong id="title">No track yet</strong>
+        <span id="meta" class="muted">Open YouTube or YouTube Music.</span>
+      </div>
+      <label for="port">Loopback port</label>
+      <div class="row">
+        <input id="port" type="number" min="1024" max="65535" value="18473" />
+        <button id="save" type="button">Save</button>
+      </div>
+      <p id="hint">
+        Dynamic Island Lux must be running with the like bridge enabled. The default port is 18473.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
