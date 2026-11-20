@@ -1,7 +1,7 @@
 Dynamic Island for Windows Lux — install
 
 Recommended (installer):
-  1. Run DynamicIslandLux-Setup-1.0.7.exe
+  1. Run DynamicIslandLux-Setup-1.0.8.exe
   2. Finish the wizard (installs to %LOCALAPPDATA%\DynamicIslandLux\, no admin)
   3. Optional: enable “Start with Windows” in the wizard or later in Settings
   4. Tray icon appears; right-click → Settings… / Show island

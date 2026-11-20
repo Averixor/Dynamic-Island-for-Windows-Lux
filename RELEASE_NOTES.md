@@ -1,22 +1,18 @@
-# Dynamic Island for Windows Lux — v1.0.7
+# Dynamic Island for Windows Lux — v1.0.8
 
 Standalone release (no Windhawk required).
 
-- **Tag:** `v1.0.7`
+- **Tag:** `v1.0.8`
 - **Date:** 2026-11-20
 
 The git tag is the source of truth for the release commit. Do not paste a commit hash here — editing the notes after the tag moves HEAD off the tag.
 
-## Highlights since v1.0.6
+## Highlights since v1.0.7
 
-- MIT attribution restored for Himanshu (devcode90) alongside Averixor (`LICENSE`, `NOTICE`)
-- Installer “Start with Windows” survives first launch (JSON adopts live HKCU Run)
-- Weather HTTP via `HttpGetEx` (timeouts, 4 MB cap, status 200)
-- Settings dialog: PerMonitorV2 DPI scale + `WM_DPICHANGED`
-- Runtime overrides cleaned; Reset clears `runtime.json`; uninstall removes Run + StartupApproved
-- Tray/settings reentrancy and outside-click menu dismiss; autostart path sync
-- Windows CI (MSVC configure/build/`--test-json`/`--smoke-test --no-workers`); hardened `release.bat` / `build.bat`
-- Security hardening: no `WH_KEYBOARD_LL`, COPYDATA path checks, mutex DACL, `/guard:cf` + `/sdl`
+- Settings dialog paint restored: `PaintSession` flushes the off-screen buffer before `EndPaint`; child controls redraw after layout/resize (`RDW_ALLCHILDREN`); themed labels; closed combo height fixed
+- Like / Dislike for desktop players when `Modules.MediaLikeBridge` is on — browser bridge plus Pear Desktop / ytmdesktop loopback APIs and UI Automation for Spotify, TIDAL, Deezer, Apple Music, YouTube Music desktop/PWA
+- Expanded player: session switcher no longer overlaps Repeat; dislike glyph stays in its circle; clear thumbs-up / thumbs-down icons
+- Self-tests: paint probe on a real monitor (DWM-safe `GetPixel`); like-bridge label checks match updated UI strings; clangd C++17 config
 
 ## Origin
 
@@ -57,7 +53,7 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.7.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.8.exe` (Inno Setup, per-user, no admin)
 - `DynamicIslandLux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `NOTICE`
@@ -76,4 +72,4 @@ app\build.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.7.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.8.0**, CompanyName Averixor, ProductName Dynamic Island for Windows Lux.

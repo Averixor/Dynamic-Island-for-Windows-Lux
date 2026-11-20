@@ -4,7 +4,7 @@
 
 #ifndef LUX_APP_VERSION_STR
 // Fallback when not compiling via CMake (CMake overrides with project VERSION).
-#define LUX_APP_VERSION_STR "1.0.7"
+#define LUX_APP_VERSION_STR "1.0.8"
 #endif
 #define LUX_WIDEN_HELPER(x) L##x
 #define LUX_WIDEN(x) LUX_WIDEN_HELPER(x)
