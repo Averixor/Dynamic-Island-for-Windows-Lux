@@ -28,6 +28,7 @@ add_executable(DynamicIslandLux WIN32
   logging.cpp
   settings_store.cpp
   settings_dialog.cpp
+  settings_theme.cpp
   menu_theme.cpp
   autostart.cpp
   lux_overlay.cpp

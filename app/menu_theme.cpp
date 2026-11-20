@@ -1,5 +1,7 @@
 #include "menu_theme.h"
 
+#include "settings_theme.h"
+
 #include <windows.h>
 
 #include <mutex>
@@ -23,18 +25,6 @@ SetPreferredAppModeFn g_setPreferredAppMode = nullptr;
 FlushMenuThemesFn g_flushMenuThemes = nullptr;
 AllowDarkModeForAppFn g_allowDarkModeForApp = nullptr;
 std::once_flag g_resolveOnce;
-
-bool AppsUseLightTheme() {
-  DWORD value = 1;
-  DWORD size = sizeof(value);
-  const LSTATUS st =
-      RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                   L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size);
-  if (st != ERROR_SUCCESS) {
-    return true;
-  }
-  return value != 0;
-}
 
 DWORD WindowsBuildNumber() {
   using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
@@ -86,7 +76,7 @@ void ResolveApis() {
 
 void ApplyPreferredMode() {
   ResolveApis();
-  const bool light = AppsUseLightTheme();
+  const bool light = SettingsThemeActiveMenuIsLight();
   if (g_setPreferredAppMode) {
     g_setPreferredAppMode(light ? kForceLight : kForceDark);
     if (g_flushMenuThemes) {
