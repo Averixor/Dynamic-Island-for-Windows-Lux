@@ -17,3 +17,6 @@
 // offsets), refreshes the controls, and updates the island without closing.
 // Enter in a field does not press OK. Escape closes without writing new edits.
 void OpenSettingsDialog(HWND owner);
+
+// Layout, localization, and paint-order checks used by --test-json.
+bool SettingsDialogSelfTest();

@@ -687,7 +687,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   if (options.testJson) {
-    const bool jsonOk = SettingsStoreSelfTestJson() && SettingsThemeSelfTest() && MediaLikeBridgeSelfTest();
+    const bool jsonOk = SettingsStoreSelfTestJson() && SettingsThemeSelfTest() && MediaLikeBridgeSelfTest() &&
+                        SettingsDialogSelfTest();
     const wchar_t* zoneFailure = nullptr;
     const bool zoneOk = IslandZoneSelfTest(&zoneFailure);
     if (!zoneOk) {

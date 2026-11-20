@@ -513,6 +513,12 @@ bool SettingsControlIsEnabled(const wchar_t* key, const SettingsValueLookup& loo
   if (KeyIs(key, L"Shortcuts.HideShowModifiers") || KeyIs(key, L"Shortcuts.HideShowKey")) {
     return EnabledFlag(lookup, L"Shortcuts.HideShowHotkeyEnabled");
   }
+  if (KeyIs(key, L"Modules.MediaLikeBridgePort")) {
+    return EnabledFlag(lookup, L"Modules.MediaLikeBridge");
+  }
+  if (KeyIs(key, L"Modules.MessengerApps")) {
+    return EnabledFlag(lookup, L"Modules.Notifications");
+  }
   return true;
 }
 
@@ -712,6 +718,8 @@ bool SettingsThemeSelfTest() {
     check(!SettingsControlIsEnabled(L"Shortcuts.HideShowKey", off), L"hide key off");
     check(!SettingsControlIsEnabled(L"Modules.WeatherCity", off), L"weather city off");
     check(!SettingsControlIsEnabled(L"Modules.ShowMetricText", off), L"metric text off");
+    check(!SettingsControlIsEnabled(L"Modules.MediaLikeBridgePort", off), L"like bridge port off");
+    check(!SettingsControlIsEnabled(L"Modules.MessengerApps", off), L"messenger apps off");
   }
   {
     MapLookup on({
@@ -750,6 +758,16 @@ bool SettingsThemeSelfTest() {
     check(SettingsControlIsEnabled(L"Shortcuts.HideShowModifiers", on), L"hide modifiers on");
     check(SettingsControlIsEnabled(L"Modules.FirstDayOfWeek", on), L"first day on");
     check(SettingsControlIsEnabled(L"Modules.AlwaysOnTop", on), L"unknown key stays enabled");
+  }
+  {
+    MapLookup bridgeOn({{L"Modules.MediaLikeBridge", L"1"}, {L"Modules.Notifications", L"0"}});
+    check(SettingsControlIsEnabled(L"Modules.MediaLikeBridgePort", bridgeOn), L"like bridge port follows bridge");
+    check(!SettingsControlIsEnabled(L"Modules.MessengerApps", bridgeOn), L"messenger apps follow notifications");
+  }
+  {
+    MapLookup notesOn({{L"Modules.MediaLikeBridge", L"0"}, {L"Modules.Notifications", L"1"}});
+    check(!SettingsControlIsEnabled(L"Modules.MediaLikeBridgePort", notesOn), L"like bridge port off when bridge is off");
+    check(SettingsControlIsEnabled(L"Modules.MessengerApps", notesOn), L"messenger apps on");
   }
   {
     MapLookup automatic({{L"Themes.ContourBorderMode", L"auto"}});
