@@ -47,7 +47,7 @@
 
 Центр острова завжди лишає плеєр або годинник. Короткі технічні події з’являються ліворуч, сповіщення месенджерів — праворуч:
 
-- відтворення: назва, виконавець, обкладинка, спектр, попередній / play / наступний, смуга перемотки, Like/Dislike для YouTube і YouTube Music (локальний міст і розширення `extensions/youtube-bridge`);
+- відтворення: назва, виконавець, обкладинка, спектр, попередній / play / наступний, смуга перемотки, Like/Dislike для браузера (розширення `extensions/youtube-bridge`) і десктопних плеєрів (YouTube Music Desktop / Pear, ytmdesktop, Spotify, TIDAL, Deezer, Apple Music — локальний API або UI Automation);
 - гучність і яскравість;
 - копіювання тексту або зображення;
 - заряд батареї і живлення;
@@ -266,11 +266,11 @@
     $name: Медіа
     $description: Показує плеєр, обкладинку та керування відтворенням
   - MediaLikeBridge: true
-    $name: Міст лайків YouTube
-    $description: Локальний міст Like/Dislike для YouTube і YouTube Music (лише 127.0.0.1). Потрібне розширення extensions/youtube-bridge
+    $name: Лайк і дизлайк плеєрів
+    $description: Браузерний міст (розширення extensions/youtube-bridge), локальні API YouTube Music Desktop (Pear / ytmdesktop) і кнопки робочого столу через UI Automation. Лише 127.0.0.1
   - MediaLikeBridgePort: 18473
-    $name: Порт моста лайків
-    $description: Порт петлі 127.0.0.1 для розширення браузера (від 1024 до 65535)
+    $name: Порт браузерного моста
+    $description: Порт 127.0.0.1 для розширення браузера (1024–65535). Десктопні плеєри працюють без цього порту
   - Volume: true
     $name: Гучність
     $description: Показує пігулку зміни гучності системи
@@ -563,9 +563,9 @@ namespace MediaLayout {
     constexpr float kArtSize = 64.0f;
     constexpr float kHeaderRightInset = 24.0f;
     constexpr float kWaveWidth = 32.0f;
-    constexpr float kRateButtonRadius = 11.0f;
-    constexpr float kRateHitPad = 4.0f;
-    constexpr float kRateCenterGap = 30.0f;
+    constexpr float kRateButtonRadius = 13.0f;
+    constexpr float kRateHitPad = 0.0f;
+    constexpr float kRateCenterGap = 34.0f;
     constexpr float kRateTextGap = 10.0f;
     constexpr float kRateEqualizerGap = 12.0f;
     constexpr float kRateButtonY = 32.0f;
@@ -702,6 +702,8 @@ std::atomic<float> g_mediaArtHitTop{0.0f};
 std::atomic<float> g_mediaArtHitRight{0.0f};
 std::atomic<float> g_mediaArtHitBottom{0.0f};
 // spectrumHitRect — waveform/spectrum click zone (content-relative).
+std::atomic<int> g_transportDockSlots{0};
+std::atomic<bool> g_transportLyrics{false};
 std::atomic<bool> g_spectrumHitValid{false};
 std::atomic<float> g_spectrumHitLeft{0.0f};
 std::atomic<float> g_spectrumHitTop{0.0f};
@@ -2044,8 +2046,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Paused in %s", L"Пауза в %s"},
         {L"Like", L"Подобається"},
         {L"Dislike", L"Не подобається"},
-        {L"YouTube / YouTube Music like bridge", L"Міст лайків YouTube і YouTube Music"},
-        {L"Like bridge loopback port", L"Порт моста лайків (127.0.0.1)"},
+        {L"Like / Dislike for players", L"Лайк / дизлайк для плеєрів"},
+        {L"Browser bridge port (127.0.0.1)", L"Порт браузерного моста (127.0.0.1)"},
         {L"Focus Complete", L"Фокус завершено"},
         {L"Break Complete", L"Перерву завершено"},
         {L"Focus Timer", L"Таймер фокусу"},
@@ -2193,8 +2195,8 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Paused in %s", L"Пауза в %s"},
         {L"Like", L"Нравится"},
         {L"Dislike", L"Не нравится"},
-        {L"YouTube / YouTube Music like bridge", L"Мост лайков YouTube и YouTube Music"},
-        {L"Like bridge loopback port", L"Порт моста лайков (127.0.0.1)"},
+        {L"Like / Dislike for players", L"Лайк / дизлайк для плееров"},
+        {L"Browser bridge port (127.0.0.1)", L"Порт браузерного моста (127.0.0.1)"},
         {L"Focus Complete", L"Фокус завершён"},
         {L"Break Complete", L"Перерыв завершён"},
         {L"Focus Timer", L"Таймер фокуса"},
@@ -2501,8 +2503,8 @@ bool MediaLikeButtonsEnabled(const Settings& settings) {
 #endif
 }
 bool CopyActiveMediaIdentity(std::wstring* title, std::wstring* artist, std::wstring* source,
-                             bool* playing) {
-    if (!title || !artist || !source || !playing) {
+                             std::wstring* appUserModelId, bool* playing) {
+    if (!title || !artist || !source || !appUserModelId || !playing) {
         return false;
     }
     std::lock_guard lock(g_stateMutex);
@@ -2512,9 +2514,45 @@ bool CopyActiveMediaIdentity(std::wstring* title, std::wstring* artist, std::wst
     *title = g_state.media.title;
     *artist = g_state.media.artist;
     *source = g_state.media.sourceName;
+    *appUserModelId = g_state.media.sourceAppUserModelId;
     *playing = g_state.media.playing;
     return true;
 }
+#ifdef LUX_STANDALONE
+struct MediaRateButtons {
+    bool drawLike = false;
+    bool drawDislike = false;
+    bool enabledLike = false;
+    bool enabledDislike = false;
+};
+MediaRateButtons MediaRateButtonsFor(const MediaLikeBridgeView& view) {
+    MediaRateButtons buttons;
+    const bool locked = view.connected && !view.canLike && !view.canDislike;
+    buttons.drawLike = view.connected ? (view.canLike || locked) : view.reserveButtons;
+    buttons.drawDislike = view.connected ? (view.canDislike || locked) : view.reserveButtons;
+    buttons.enabledLike = view.connected && view.canLike;
+    buttons.enabledDislike = view.connected && view.canDislike;
+    return buttons;
+}
+bool MediaRateCommandDrawn(int command, const MediaRateButtons& buttons) {
+    if (command == MediaLayout::kRateLikeCommand) {
+        return buttons.drawLike;
+    }
+    if (command == MediaLayout::kRateDislikeCommand) {
+        return buttons.drawDislike;
+    }
+    return false;
+}
+bool MediaRateCommandEnabled(int command, const MediaRateButtons& buttons) {
+    if (command == MediaLayout::kRateLikeCommand) {
+        return buttons.enabledLike;
+    }
+    if (command == MediaLayout::kRateDislikeCommand) {
+        return buttons.enabledDislike;
+    }
+    return false;
+}
+#endif
 bool MediaRateActionableAt(const MediaContentPoint& pt, const Settings& settings) {
 #ifdef LUX_STANDALONE
     if (!MediaLikeButtonsEnabled(settings) || MediaRateHitTest(pt) < 0) {
@@ -2523,12 +2561,15 @@ bool MediaRateActionableAt(const MediaContentPoint& pt, const Settings& settings
     std::wstring title;
     std::wstring artist;
     std::wstring source;
+    std::wstring appUserModelId;
     bool playing = false;
-    if (!CopyActiveMediaIdentity(&title, &artist, &source, &playing)) {
+    if (!CopyActiveMediaIdentity(&title, &artist, &source, &appUserModelId, &playing)) {
         return false;
     }
-    const MediaLikeBridgeView view = MediaLikeBridgeQuery(title, artist, source, playing);
-    return view.connected && view.canRate;
+    const int hit = MediaRateHitTest(pt);
+    const MediaRateButtons buttons =
+        MediaRateButtonsFor(MediaLikeBridgeQuery(title, artist, source, playing, appUserModelId));
+    return MediaRateCommandEnabled(hit, buttons);
 #else
     (void)pt;
     (void)settings;
@@ -2544,28 +2585,174 @@ void SyncMediaLikeBridge() {
     MediaLikeBridgeApply(copy.mediaLikeBridge, copy.mediaLikeBridgePort);
 #endif
 }
+struct MediaControlRow {
+    float lyricsX = 0.0f;
+    float cycleX = 0.0f;
+    float prevX = 0.0f;
+    float playX = 0.0f;
+    float nextX = 0.0f;
+    float volLeft = 0.0f;
+    float volRight = 0.0f;
+    bool showLyrics = false;
+};
+// Bottom transport row. The classic centered row is kept when it clears the
+// session dock. Otherwise the cluster is packed into the free span so the
+// dock, repeat control, transport buttons, and volume track never overlap.
+bool ComputeMediaControlRow(float playerWidth, int dockSlots, bool wantLyrics, MediaControlRow* out) {
+    if (!out || playerWidth < 200.0f) {
+        return false;
+    }
+    const int slots = dockSlots < 2 ? 0 : (dockSlots > MediaLayout::kDockMaxSlots ? MediaLayout::kDockMaxSlots : dockSlots);
+    const float edge = 12.0f;
+    const float dockClear = 10.0f;
+    const float dockRight = slots == 0 ? 0.0f : MediaLayout::kDockLeft + MediaLayout::DockWidth(slots);
+    const float minLeft = slots == 0 ? edge : dockRight + dockClear;
+    const float maxRight = playerWidth - edge;
+    const float cycleR = MediaLayout::kCycleButtonRadius;
+    const float navR = MediaLayout::kNavButtonRadius;
+    const float playR = MediaLayout::kPlayButtonRadius;
+    const float lyricsR = ImmersiveLayout::kBtnRadius;
+    auto fits = [&](const MediaControlRow& row, bool lyrics) {
+        const float left = (lyrics ? row.lyricsX - lyricsR : row.cycleX - cycleR);
+        if (left < minLeft - 0.05f || row.volRight > maxRight + 0.05f) {
+            return false;
+        }
+        if (lyrics && row.cycleX - cycleR < row.lyricsX + lyricsR + 8.0f) {
+            return false;
+        }
+        if (row.prevX - navR < row.cycleX + cycleR + 8.0f) {
+            return false;
+        }
+        if (row.playX - playR < row.prevX + navR + 8.0f) {
+            return false;
+        }
+        if (row.nextX - navR < row.playX + playR + 8.0f) {
+            return false;
+        }
+        if (row.volLeft < row.nextX + navR + 8.0f) {
+            return false;
+        }
+        return row.volRight > row.volLeft + 20.0f;
+    };
+    const float center = playerWidth * 0.5f;
+    MediaControlRow classic;
+    classic.showLyrics = wantLyrics;
+    classic.lyricsX = center - MediaLayout::kLyricsButtonSpacing;
+    classic.cycleX = center - MediaLayout::kSideControlSpacing;
+    classic.prevX = center - MediaLayout::kControlSpacing;
+    classic.playX = center;
+    classic.nextX = center + MediaLayout::kControlSpacing;
+    classic.volLeft = classic.nextX + MediaLayout::kInlineVolGap;
+    classic.volRight = classic.volLeft + MediaLayout::kInlineVolTrackW;
+    if (fits(classic, wantLyrics)) {
+        *out = classic;
+        return true;
+    }
+    struct Gaps {
+        float lyrics = 20.0f;
+        float cycle = 18.0f;
+        float prev = 26.0f;
+        float play = 26.0f;
+        float next = 20.0f;
+        float volume = MediaLayout::kInlineVolTrackW;
+    };
+    auto measure = [&](const Gaps& gaps, bool lyrics) {
+        float width = cycleR * 2.0f + gaps.cycle + navR * 2.0f + gaps.prev + playR * 2.0f + gaps.play +
+                      navR * 2.0f + gaps.next + gaps.volume;
+        if (lyrics) {
+            width += lyricsR * 2.0f + gaps.lyrics;
+        }
+        return width;
+    };
+    bool lyrics = wantLyrics;
+    Gaps gaps;
+    auto shrinkToFit = [&](bool withLyrics) {
+        float overflow = measure(gaps, withLyrics) - (maxRight - minLeft);
+        auto take = [&](float* gap, float minimum) {
+            if (overflow <= 0.0f) {
+                return;
+            }
+            const float room = *gap - minimum;
+            const float used = room > 0.0f ? (overflow < room ? overflow : room) : 0.0f;
+            *gap -= used;
+            overflow -= used;
+        };
+        if (withLyrics) {
+            take(&gaps.lyrics, 8.0f);
+        }
+        take(&gaps.cycle, 8.0f);
+        take(&gaps.prev, 8.0f);
+        take(&gaps.play, 8.0f);
+        take(&gaps.next, 8.0f);
+        take(&gaps.volume, 36.0f);
+        return overflow;
+    };
+    float overflow = shrinkToFit(lyrics);
+    if (overflow > 0.5f && lyrics) {
+        lyrics = false;
+        gaps = {};
+        overflow = shrinkToFit(false);
+    }
+    if (overflow > 0.5f) {
+        gaps.volume = (std::max)(24.0f, gaps.volume - overflow);
+    }
+    const float used = measure(gaps, lyrics);
+    const float slack = (std::max)(0.0f, (maxRight - minLeft) - used);
+    float cursor = minLeft + slack * 0.5f;
+    auto place = [&](float radius, float gapAfter) {
+        const float at = cursor + radius;
+        cursor = at + radius + gapAfter;
+        return at;
+    };
+    MediaControlRow packed;
+    packed.showLyrics = lyrics;
+    if (lyrics) {
+        packed.lyricsX = place(lyricsR, gaps.lyrics);
+    }
+    packed.cycleX = place(cycleR, gaps.cycle);
+    packed.prevX = place(navR, gaps.prev);
+    packed.playX = place(playR, gaps.play);
+    packed.nextX = place(navR, gaps.next);
+    packed.volLeft = cursor;
+    packed.volRight = cursor + gaps.volume;
+    if (packed.volRight > maxRight) {
+        packed.volRight = maxRight;
+    }
+    *out = packed;
+    return packed.volRight > packed.volLeft + 16.0f;
+}
+D2D1::Matrix3x2F RateGlyphTransform(D2D1_POINT_2F center, bool thumbsUp, float scale) {
+    // Geometry is authored around the origin. Scale there (Y flip for dislike),
+    // then move it onto the button. Scaling around `center` first throws the
+    // flipped glyph down the control row.
+    const float sy = thumbsUp ? scale : -scale;
+    return D2D1::Matrix3x2F::Scale(scale, sy) * D2D1::Matrix3x2F::Translation(center.x, center.y);
+}
 int MediaTransportHitTest(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
     if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
         return -1;
     }
-    const float centerX = pt.width * 0.5f;
+    MediaControlRow row;
+    if (!ComputeMediaControlRow(pt.width, g_transportDockSlots.load(std::memory_order_relaxed),
+                                g_transportLyrics.load(std::memory_order_relaxed), &row)) {
+        return -1;
+    }
     const float dy = pt.y - MediaLayout::kControlsY;
     struct Target {
-        float offsetX;
+        float x;
         float radius;
         int command;
     };
-    // 0=prev 1=play/pause 2=next 3=queue mode (left of prev)
     const Target targets[] = {
-        {-MediaLayout::kSideControlSpacing, MediaLayout::kCycleButtonRadius, 3},
-        {-MediaLayout::kControlSpacing, MediaLayout::kNavButtonRadius, 0},
-        {0.0f, MediaLayout::kPlayButtonRadius, 1},
-        {MediaLayout::kControlSpacing, MediaLayout::kNavButtonRadius, 2},
+        {row.cycleX, MediaLayout::kCycleButtonRadius, 3},
+        {row.prevX, MediaLayout::kNavButtonRadius, 0},
+        {row.playX, MediaLayout::kPlayButtonRadius, 1},
+        {row.nextX, MediaLayout::kNavButtonRadius, 2},
     };
     for (const Target& t : targets) {
         const float reach = t.radius + MediaLayout::kControlHitPad;
-        if (std::fabs(dy) <= reach && std::fabs(pt.x - (centerX + t.offsetX)) <= reach) {
+        if (std::fabs(dy) <= reach && std::fabs(pt.x - t.x) <= reach) {
             return t.command;
         }
     }
@@ -2575,14 +2762,14 @@ bool MediaInlineVolumeTrackX(float playerWidth, float* outLeft, float* outRight)
     if (!outLeft || !outRight || playerWidth < 80.0f) {
         return false;
     }
-    const float centerX = playerWidth * 0.5f;
-    const float left = centerX + MediaLayout::kControlSpacing + MediaLayout::kInlineVolGap;
-    const float right = left + MediaLayout::kInlineVolTrackW;
-    if (right - left < 20.0f) {
+    MediaControlRow row;
+    if (!ComputeMediaControlRow(playerWidth, g_transportDockSlots.load(std::memory_order_relaxed),
+                                g_transportLyrics.load(std::memory_order_relaxed), &row) ||
+        row.volRight - row.volLeft < 20.0f) {
         return false;
     }
-    *outLeft = left;
-    *outRight = right;
+    *outLeft = row.volLeft;
+    *outRight = row.volRight;
     return true;
 }
 float MediaInlineVolumeFractionFromContent(const MediaContentPoint& rawPt, bool padHit) {
@@ -2799,12 +2986,17 @@ void OpenSystemSoundSettings() {
 }
 bool MediaLyricsButtonHitTest(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
-    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
+    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight ||
+        !g_transportLyrics.load(std::memory_order_relaxed)) {
         return false;
     }
-    const float cx = pt.width * 0.5f - MediaLayout::kLyricsButtonSpacing;
+    MediaControlRow row;
+    if (!ComputeMediaControlRow(pt.width, g_transportDockSlots.load(std::memory_order_relaxed), true, &row) ||
+        !row.showLyrics) {
+        return false;
+    }
     const float reach = ImmersiveLayout::kBtnRadius + ImmersiveLayout::kBtnHitPad;
-    return std::fabs(pt.x - cx) <= reach &&
+    return std::fabs(pt.x - row.lyricsX) <= reach &&
            std::fabs(pt.y - MediaLayout::kControlsY) <= reach;
 }
 struct DockSlots {
@@ -5669,6 +5861,65 @@ bool RunSelfTest(const wchar_t** failure) {
         rightEdgeBoth.messenger.present || !Near(rightEdgeBoth.center.left, 750.0f) ||
         !InsideStage(topRight, rightEdgeBoth.technical)) {
         return fail(L"top-right anchor let the messenger pill push the center island");
+    }
+    auto transportClear = [&](float width, int slots, bool lyrics, const wchar_t* message) {
+        MediaControlRow row;
+        if (!ComputeMediaControlRow(width, slots, lyrics, &row)) {
+            return fail(message);
+        }
+        const float cycleR = MediaLayout::kCycleButtonRadius;
+        const float navR = MediaLayout::kNavButtonRadius;
+        const float playR = MediaLayout::kPlayButtonRadius;
+        const float lyricsR = ImmersiveLayout::kBtnRadius;
+        const float dockRight =
+            slots < 2 ? 0.0f : MediaLayout::kDockLeft + MediaLayout::DockWidth(slots > 3 ? 3 : slots);
+        const float leftEdge = row.showLyrics ? row.lyricsX - lyricsR : row.cycleX - cycleR;
+        if (slots >= 2 && leftEdge < dockRight + 8.0f) {
+            return fail(message);
+        }
+        if (row.showLyrics && row.cycleX - cycleR < row.lyricsX + lyricsR + 6.0f) {
+            return fail(message);
+        }
+        if (row.prevX - navR < row.cycleX + cycleR + 6.0f ||
+            row.playX - playR < row.prevX + navR + 6.0f ||
+            row.nextX - navR < row.playX + playR + 6.0f ||
+            row.volLeft < row.nextX + navR + 6.0f || row.volRight > width - 8.0f ||
+            row.volRight < row.volLeft + 16.0f) {
+            return fail(message);
+        }
+        return true;
+    };
+    if (!transportClear(380.0f, 0, false, L"transport row overlaps itself with no session dock") ||
+        !transportClear(380.0f, 2, false, L"session dock overlaps the repeat button") ||
+        !transportClear(380.0f, 3, false, L"three-session dock overlaps transport") ||
+        !transportClear(380.0f, 2, true, L"lyrics button overlaps the session dock") ||
+        !transportClear(380.0f, 3, true, L"lyrics and three-session dock overlap transport")) {
+        return false;
+    }
+    MediaControlRow centeredTransport;
+    if (!ComputeMediaControlRow(380.0f, 0, false, &centeredTransport) ||
+        std::fabs(centeredTransport.playX - 190.0f) > 0.1f) {
+        return fail(L"transport row left the play button when no dock is showing");
+    }
+    MediaRateLayout rate{};
+    const float waveLeft = 380.0f - MediaLayout::kHeaderRightInset - MediaLayout::kWaveWidth;
+    if (!ComputeMediaRateLayout(380.0f, &rate) ||
+        rate.dislikeCx - rate.likeCx < rate.radius * 2.0f + 2.0f ||
+        rate.dislikeCx + rate.radius > waveLeft - 2.0f ||
+        rate.likeCx - rate.radius < MediaLayout::kArtInsetX + MediaLayout::kArtSize) {
+        return fail(L"like and dislike buttons overlap each other or the title row");
+    }
+    const D2D1_POINT_2F glyphCenter = D2D1::Point2F(340.0f, 48.0f);
+    const D2D1_POINT_2F localTip = D2D1::Point2F(-3.4f, -6.4f);
+    const D2D1::Matrix3x2F downMatrix = RateGlyphTransform(glyphCenter, false, 1.0f);
+    const D2D1::Matrix3x2F upMatrix = RateGlyphTransform(glyphCenter, true, 1.0f);
+    const D2D1_POINT_2F downTip = downMatrix.TransformPoint(localTip);
+    const D2D1_POINT_2F upTip = upMatrix.TransformPoint(localTip);
+    const D2D1_POINT_2F downOrigin = downMatrix.TransformPoint(D2D1::Point2F(0.0f, 0.0f));
+    if (std::fabs(downOrigin.x - glyphCenter.x) > 0.05f || std::fabs(downOrigin.y - glyphCenter.y) > 0.05f ||
+        upTip.y > glyphCenter.y - 4.0f || downTip.y < glyphCenter.y + 4.0f || downTip.y > glyphCenter.y + 10.0f ||
+        std::fabs(downTip.x - (glyphCenter.x + localTip.x)) > 0.2f) {
+        return fail(L"dislike glyph transform does not stay inside its button");
     }
     if (failure) {
         *failure = nullptr;
@@ -18030,8 +18281,40 @@ private:
                                                                rect.top + 20.0f + (artSize + waveH) * 0.5f);
                             const float textLeft = artRect.right + 18.0f;
                             float textRight = waveRect.left - 16.0f;
+                            bool drawLike = false;
+                            bool drawDislike = false;
+                            bool enabledLike = false;
+                            bool enabledDislike = false;
+                            int rateLike = 0;
+                            int rateFeedback = 0;
+                            int rateFeedbackAction = 0;
+#ifdef LUX_STANDALONE
+                            if (MediaLikeButtonsEnabled(settings)) {
+                                static_assert(static_cast<int>(BridgeLikeState::None) == 0, "like none");
+                                static_assert(static_cast<int>(BridgeLikeState::Liked) == 1, "like liked");
+                                static_assert(static_cast<int>(BridgeLikeState::Disliked) == 2, "like disliked");
+                                static_assert(static_cast<int>(RateFeedback::None) == 0, "rate feedback");
+                                static_assert(static_cast<int>(RateFeedback::Pending) == 1, "rate pending");
+                                static_assert(static_cast<int>(RateFeedback::Error) == 2, "rate error");
+                                static_assert(static_cast<int>(RateAction::Like) == 0, "rate like");
+                                static_assert(static_cast<int>(RateAction::Dislike) == 1, "rate dislike");
+                                const MediaLikeBridgeView rateView = MediaLikeBridgeQuery(
+                                    state.media.title, state.media.artist, state.media.sourceName,
+                                    state.media.playing, state.media.sourceAppUserModelId);
+                                const bool locked =
+                                    rateView.connected && !rateView.canLike && !rateView.canDislike;
+                                drawLike = rateView.connected ? (rateView.canLike || locked) : rateView.reserveButtons;
+                                drawDislike =
+                                    rateView.connected ? (rateView.canDislike || locked) : rateView.reserveButtons;
+                                enabledLike = rateView.connected && rateView.canLike;
+                                enabledDislike = rateView.connected && rateView.canDislike;
+                                rateLike = static_cast<int>(rateView.like);
+                                rateFeedback = static_cast<int>(rateView.feedback);
+                                rateFeedbackAction = static_cast<int>(rateView.feedbackAction);
+                            }
+#endif
                             MediaRateLayout rateLayout{};
-                            const bool showRate = MediaLikeButtonsEnabled(settings) &&
+                            const bool showRate = (drawLike || drawDislike) &&
                                                   ComputeMediaRateLayout(rect.right - rect.left, &rateLayout);
                             if (showRate) {
                                 textRight = std::min(textRight, rect.left + rateLayout.textRight);
@@ -18096,23 +18379,10 @@ private:
                             const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 88.0f);
                             DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 18.0f), now, showRate);
                             if (showRate) {
-                                bool rateConnected = false;
-                                bool rateCan = false;
-                                int rateLike = 0;
-#ifdef LUX_STANDALONE
-                                static_assert(static_cast<int>(BridgeLikeState::None) == 0, "like none");
-                                static_assert(static_cast<int>(BridgeLikeState::Liked) == 1, "like liked");
-                                static_assert(static_cast<int>(BridgeLikeState::Disliked) == 2, "like disliked");
-                                const MediaLikeBridgeView rateView = MediaLikeBridgeQuery(
-                                    state.media.title, state.media.artist, state.media.sourceName,
-                                    state.media.playing);
-                                rateConnected = rateView.connected;
-                                rateCan = rateView.canRate;
-                                rateLike = static_cast<int>(rateView.like);
-#endif
                                 DrawMediaRateButtons(D2D1::Point2F(rect.left + rateLayout.likeCx, rect.top + rateLayout.cy),
                                                      D2D1::Point2F(rect.left + rateLayout.dislikeCx, rect.top + rateLayout.cy),
-                                                     rateConnected, rateCan, rateLike);
+                                                     drawLike, drawDislike, enabledLike, enabledDislike, rateLike,
+                                                     rateFeedback, rateFeedbackAction);
                             }
                             // Volume wheel zone = title/artist/album/source text strip only (not scrub/controls).
                             PublishMediaCenterHitRect(
@@ -18217,18 +18487,27 @@ private:
                         }
                     }
                     EndSwapGroup(timelineGrouped);
-                    const float cy = rect.top + MediaLayout::kControlsY;
-                    const float cx = (rect.left + rect.right) * 0.5f;
-                    DrawMediaControls(state.media.playing,
-                                      D2D1::Point2F(cx - MediaLayout::kSideControlSpacing, cy),
-                                      D2D1::Point2F(cx - MediaLayout::kControlSpacing, cy),
-                                      D2D1::Point2F(cx, cy),
-                                      D2D1::Point2F(cx + MediaLayout::kControlSpacing, cy),
-                                      state.media.queueMode, state.media.canChangeQueueMode,
-                                      state.system.volumePercent, state.system.volumeMuted, now);
+                    const int dockSlots = ComputeDockSlots(static_cast<int>(state.mediaSources.size()),
+                                                          ActiveMediaSourceIndex(state))
+                                             .count;
+                    g_transportDockSlots.store(dockSlots, std::memory_order_relaxed);
+                    g_transportLyrics.store(settings.mediaTabLyrics, std::memory_order_relaxed);
+                    MediaControlRow controls;
+                    const float playerWidth = rect.right - rect.left;
+                    if (ComputeMediaControlRow(playerWidth, dockSlots, settings.mediaTabLyrics, &controls)) {
+                        const float cy = rect.top + MediaLayout::kControlsY;
+                        DrawMediaControls(state.media.playing,
+                                          D2D1::Point2F(rect.left + controls.cycleX, cy),
+                                          D2D1::Point2F(rect.left + controls.prevX, cy),
+                                          D2D1::Point2F(rect.left + controls.playX, cy),
+                                          D2D1::Point2F(rect.left + controls.nextX, cy),
+                                          rect.left + controls.volLeft, rect.left + controls.volRight,
+                                          state.media.queueMode, state.media.canChangeQueueMode,
+                                          state.system.volumePercent, state.system.volumeMuted, now);
+                    }
                     DrawSourceDock(state, rect, now);
-                    if (settings.mediaTabLyrics) {
-                        DrawImmersiveLyricsButton(rect, immersiveMix);
+                    if (settings.mediaTabLyrics && controls.showLyrics) {
+                        DrawImmersiveLyricsButton(rect, rect.left + controls.lyricsX, immersiveMix);
                     }
                     target_->SetTransform(playerZoneOldTransform);
                     if (sideLyricsExtra > 1.0f) {
@@ -18519,13 +18798,11 @@ private:
         if (began)
             target_->PopLayer();
     }
-    void DrawImmersiveLyricsButton(D2D1_RECT_F rect, float mix) {
+    void DrawImmersiveLyricsButton(D2D1_RECT_F rect, float centerX, float mix) {
         if (!EnsureRoundJoinStyle())
             return;
         const float r = ImmersiveLayout::kBtnRadius;
-        const D2D1_POINT_2F c =
-            D2D1::Point2F((rect.left + rect.right) * 0.5f - MediaLayout::kLyricsButtonSpacing,
-                          rect.top + MediaLayout::kControlsY);
+        const D2D1_POINT_2F c = D2D1::Point2F(centerX, rect.top + MediaLayout::kControlsY);
         const bool hovered = g_hoveredLyricsBtn.load(std::memory_order_relaxed);
         const D2D1_COLOR_F restBg = D2D1::ColorF(1.0f, 1.0f, 1.0f, hovered ? 0.09f : 0.040f);
         const D2D1_COLOR_F onBg = D2D1::ColorF(currentAccent_.r, currentAccent_.g, currentAccent_.b,
@@ -19691,10 +19968,7 @@ private:
             }
         }
     }
-    void DrawMediaInlineVolume(D2D1_POINT_2F nextCenter, int volumePercent, bool muted) {
-        const float trackLeft = nextCenter.x + MediaLayout::kInlineVolGap;
-        const float trackRight = trackLeft + MediaLayout::kInlineVolTrackW;
-        const float cy = nextCenter.y;
+    void DrawMediaInlineVolume(float trackLeft, float trackRight, float cy, int volumePercent, bool muted) {
         if (MediaInlineVolumeDigitsVisible()) {
             // Keep painting until the hold expires so the track returns automatically.
             g_layoutDirty = true;
@@ -19746,50 +20020,52 @@ private:
         if (!d2dFactory_) {
             return nullptr;
         }
-        ComPtr<ID2D1RoundedRectangleGeometry> thumb;
-        ComPtr<ID2D1RoundedRectangleGeometry> palm;
-        if (FAILED(d2dFactory_->CreateRoundedRectangleGeometry(
-                D2D1::RoundedRect(D2D1::RectF(-6.5f, -7.6f, -1.15f, 1.35f), 2.45f, 2.45f), &thumb)) ||
-            !thumb) {
-            return nullptr;
-        }
-        ComPtr<ID2D1TransformedGeometry> thumbTilt;
-        if (FAILED(d2dFactory_->CreateTransformedGeometry(
-                thumb.Get(), D2D1::Matrix3x2F::Rotation(-18.0f, D2D1::Point2F(-3.8f, -0.6f)),
-                &thumbTilt)) ||
-            !thumbTilt) {
-            return nullptr;
-        }
-        if (FAILED(d2dFactory_->CreateRoundedRectangleGeometry(
-                D2D1::RoundedRect(D2D1::RectF(-2.15f, -1.15f, 6.7f, 6.7f), 2.25f, 2.25f), &palm)) ||
-            !palm) {
-            return nullptr;
-        }
-        ComPtr<ID2D1PathGeometry> united;
-        if (FAILED(d2dFactory_->CreatePathGeometry(&united)) || !united) {
+        // Thumbs-up silhouette around the origin: narrow thumb, knuckle notches, palm, cuff.
+        ComPtr<ID2D1PathGeometry> path;
+        if (FAILED(d2dFactory_->CreatePathGeometry(&path)) || !path) {
             return nullptr;
         }
         ComPtr<ID2D1GeometrySink> sink;
-        if (FAILED(united->Open(&sink)) || !sink) {
+        if (FAILED(path->Open(&sink)) || !sink) {
             return nullptr;
         }
-        if (FAILED(thumbTilt->CombineWithGeometry(palm.Get(), D2D1_COMBINE_MODE_UNION, nullptr, 0.2f,
-                                                  sink.Get())) ||
-            FAILED(sink->Close())) {
+        sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+        sink->BeginFigure(D2D1::Point2F(-1.55f, 5.85f), D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(D2D1::Point2F(4.15f, 5.85f));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(5.35f, 5.85f), D2D1::Point2F(5.95f, 5.15f),
+                                             D2D1::Point2F(5.95f, 4.15f)));
+        sink->AddLine(D2D1::Point2F(5.95f, 0.35f));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(5.95f, -0.65f), D2D1::Point2F(5.05f, -1.35f),
+                                             D2D1::Point2F(3.95f, -1.35f)));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.05f, -1.35f), D2D1::Point2F(2.75f, -2.15f),
+                                             D2D1::Point2F(2.15f, -1.35f)));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(1.45f, -0.45f), D2D1::Point2F(0.85f, -2.15f),
+                                             D2D1::Point2F(0.15f, -1.35f)));
+        sink->AddLine(D2D1::Point2F(-0.55f, -1.35f));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(-1.15f, -1.35f), D2D1::Point2F(-1.35f, -2.45f),
+                                             D2D1::Point2F(-1.15f, -3.35f)));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(-0.95f, -4.65f), D2D1::Point2F(-2.15f, -6.35f),
+                                             D2D1::Point2F(-3.45f, -6.45f)));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(-4.65f, -6.55f), D2D1::Point2F(-5.45f, -5.75f),
+                                             D2D1::Point2F(-5.2f, -4.55f)));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(-4.95f, -3.25f), D2D1::Point2F(-4.05f, -1.75f),
+                                             D2D1::Point2F(-3.05f, -0.75f)));
+        sink->AddLine(D2D1::Point2F(-3.05f, 4.25f));
+        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(-3.05f, 5.25f), D2D1::Point2F(-2.35f, 5.85f),
+                                             D2D1::Point2F(-1.55f, 5.85f)));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        if (FAILED(sink->Close())) {
             return nullptr;
         }
-        thumbIconGeom_ = united;
+        thumbIconGeom_ = path;
         return thumbIconGeom_.Get();
     }
     void DrawThumbIcon(D2D1_POINT_2F center, bool up, bool filled, float opacity, float press,
                        const D2D1_COLOR_F& color) {
         D2D1_MATRIX_3X2_F oldTransform;
         target_->GetTransform(&oldTransform);
-        const float scale = 1.0f - 0.13f * Clamp(press, 0.0f, 1.0f);
-        const float flip = up ? 1.0f : -1.0f;
-        target_->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale * flip, center) *
-                              D2D1::Matrix3x2F::Translation(center.x - 0.15f, center.y + 0.45f) *
-                              oldTransform);
+        const float scale = (1.0f - 0.08f * Clamp(press, 0.0f, 1.0f)) * 1.05f;
+        target_->SetTransform(RateGlyphTransform(center, up, scale) * oldTransform);
         ID2D1SolidColorBrush* brush =
             AcquireBrush(D2D1::ColorF(color.r, color.g, color.b, Clamp(opacity, 0.0f, 1.0f)));
         ID2D1Geometry* geometry = EnsureThumbIcon();
@@ -19797,33 +20073,24 @@ private:
             if (filled) {
                 target_->FillGeometry(geometry, brush);
             } else if (RoundStroke()) {
-                target_->DrawGeometry(geometry, brush, 1.45f, RoundStroke());
+                target_->DrawGeometry(geometry, brush, 1.35f, RoundStroke());
             } else {
-                target_->DrawGeometry(geometry, brush, 1.45f);
-            }
-        } else if (brush) {
-            const D2D1_ROUNDED_RECT palm =
-                D2D1::RoundedRect(D2D1::RectF(-2.15f, -1.15f, 6.7f, 6.7f), 2.25f, 2.25f);
-            const D2D1_ROUNDED_RECT thumb =
-                D2D1::RoundedRect(D2D1::RectF(-6.2f, -7.2f, -1.3f, 1.2f), 2.2f, 2.2f);
-            if (filled) {
-                target_->FillRoundedRectangle(palm, brush);
-                target_->FillRoundedRectangle(thumb, brush);
-            } else {
-                target_->DrawRoundedRectangle(palm, brush, 1.45f);
-                target_->DrawRoundedRectangle(thumb, brush, 1.45f);
+                target_->DrawGeometry(geometry, brush, 1.35f);
             }
         }
         target_->SetTransform(oldTransform);
     }
-    void DrawMediaRateButtons(D2D1_POINT_2F likeCenter, D2D1_POINT_2F dislikeCenter, bool connected,
-                              bool canRate, int likeState) {
-        const bool enabled = connected && canRate;
+    void DrawMediaRateButtons(D2D1_POINT_2F likeCenter, D2D1_POINT_2F dislikeCenter, bool drawLike,
+                              bool drawDislike, bool enabledLike, bool enabledDislike, int likeState,
+                              int feedback, int feedbackAction) {
         const int hovered = g_hoveredMediaButton.load();
-        auto drawOne = [&](D2D1_POINT_2F center, int command, bool thumbsUp, bool active) {
+        auto drawOne = [&](D2D1_POINT_2F center, int command, bool thumbsUp, bool enabled, bool active) {
+            if ((thumbsUp && !drawLike) || (!thumbsUp && !drawDislike)) {
+                return;
+            }
             const bool isHovered = hovered == command;
             const float press = (command >= 0 && command < 6) ? mediaBtnPress_[command] : 0.0f;
-            const float radius = 13.0f * (1.0f - 0.13f * press);
+            const float radius = MediaLayout::kRateButtonRadius * (1.0f - 0.08f * press);
             D2D1_COLOR_F icon = material_.textPrimary.a > 0.01f ? material_.textPrimary
                                                                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
             float bgAlpha = isHovered ? 0.09f : 0.04f;
@@ -19858,19 +20125,30 @@ private:
                 target_->FillEllipse(D2D1::Ellipse(center, radius, radius), plate);
             }
             DrawThumbIcon(center, thumbsUp, filled, iconAlpha, press, icon);
+            // feedback: 1 pending, 2 error. feedbackAction: 0 like, 1 dislike.
+            const bool thisAction = (feedbackAction == 0 && thumbsUp) || (feedbackAction == 1 && !thumbsUp);
+            const bool pending = feedback == 1 && thisAction;
+            const bool error = feedback == 2 && thisAction;
+            if (pending || error) {
+                const D2D1_COLOR_F ring = error ? D2D1::ColorF(0.93f, 0.35f, 0.40f, 0.95f) : currentAccent_;
+                if (ID2D1SolidColorBrush* stroke = AcquireBrush(ring)) {
+                    target_->DrawEllipse(D2D1::Ellipse(center, radius + 1.5f, radius + 1.5f), stroke, 1.4f);
+                }
+            }
         };
-        drawOne(likeCenter, MediaLayout::kRateLikeCommand, true, enabled && likeState == 1);
-        drawOne(dislikeCenter, MediaLayout::kRateDislikeCommand, false, enabled && likeState == 2);
+        drawOne(likeCenter, MediaLayout::kRateLikeCommand, true, enabledLike, enabledLike && likeState == 1);
+        drawOne(dislikeCenter, MediaLayout::kRateDislikeCommand, false, enabledDislike,
+                enabledDislike && likeState == 2);
     }
     void DrawMediaControls(bool playing, D2D1_POINT_2F cycle, D2D1_POINT_2F prev, D2D1_POINT_2F play,
-                           D2D1_POINT_2F next, MediaQueueMode queueMode, bool queueEnabled,
-                           int volumePercent, bool muted, double now) {
+                           D2D1_POINT_2F next, float volumeLeft, float volumeRight, MediaQueueMode queueMode,
+                           bool queueEnabled, int volumePercent, bool muted, double now) {
         (void)now;
         DrawMediaQueueModeButton(cycle, queueMode, queueEnabled);
         DrawMediaButton(prev, MediaLayout::kNavButtonRadius, 0, false);
         DrawMediaButton(play, MediaLayout::kPlayButtonRadius, playing ? 1 : 2, true);
         DrawMediaButton(next, MediaLayout::kNavButtonRadius, 3, false);
-        DrawMediaInlineVolume(next, volumePercent, muted);
+        DrawMediaInlineVolume(volumeLeft, volumeRight, next.y, volumePercent, muted);
     }
     void DrawMediaButton(D2D1_POINT_2F center, float radius, int kind, bool primary) {
         int buttonCmd = (kind == 0) ? 0 : ((kind == 1 || kind == 2) ? 1 : 2);
@@ -24316,14 +24594,31 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             if (MediaLikeButtonsEnabled(settings)) {
                 const int rate = MediaRateHitTest(cp);
-                if (rate != -1) {
-                    if (MediaRateActionableAt(cp, settings)) {
-                        g_pressedMediaButton = rate;
-                        SetCapture(hwnd);
+#ifdef LUX_STANDALONE
+                std::wstring rateTitle;
+                std::wstring rateArtist;
+                std::wstring rateSource;
+                std::wstring rateAumid;
+                bool ratePlaying = false;
+                if (rate != -1 &&
+                    CopyActiveMediaIdentity(&rateTitle, &rateArtist, &rateSource, &rateAumid, &ratePlaying)) {
+                    const MediaRateButtons buttons = MediaRateButtonsFor(MediaLikeBridgeQuery(
+                        rateTitle, rateArtist, rateSource, ratePlaying, rateAumid));
+                    if (MediaRateCommandDrawn(rate, buttons)) {
+                        if (MediaRateCommandEnabled(rate, buttons)) {
+                            g_pressedMediaButton = rate;
+                            SetCapture(hwnd);
+                        }
+                        g_layoutDirty = true;
+                        return 0;
                     }
+                }
+#else
+                if (rate != -1) {
                     g_layoutDirty = true;
                     return 0;
                 }
+#endif
             }
             const int cmd = MediaTransportHitTest(cp);
             if (cmd != -1) {
@@ -24493,9 +24788,25 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             hovered = hoveredSlot >= 0 ? -1 : MediaTransportHitTest(mediaPt);
             if (hovered < 0 && hoveredSlot < 0 && MediaLikeButtonsEnabled(settings)) {
                 const int rate = MediaRateHitTest(mediaPt);
+#ifdef LUX_STANDALONE
+                std::wstring rateTitle;
+                std::wstring rateArtist;
+                std::wstring rateSource;
+                std::wstring rateAumid;
+                bool ratePlaying = false;
+                if (rate != -1 &&
+                    CopyActiveMediaIdentity(&rateTitle, &rateArtist, &rateSource, &rateAumid, &ratePlaying)) {
+                    const MediaRateButtons buttons = MediaRateButtonsFor(MediaLikeBridgeQuery(
+                        rateTitle, rateArtist, rateSource, ratePlaying, rateAumid));
+                    if (MediaRateCommandDrawn(rate, buttons)) {
+                        hovered = rate;
+                    }
+                }
+#else
                 if (rate != -1) {
                     hovered = rate;
                 }
+#endif
             }
         }
         if (g_hoveredMediaButton.exchange(hovered) != hovered) {
@@ -24868,26 +25179,34 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             if (MediaLikeButtonsEnabled(settings)) {
                 const int rate = MediaRateHitTest(cp);
-                if (rate != -1) {
 #ifdef LUX_STANDALONE
-                    std::wstring rateTitle;
-                    std::wstring rateArtist;
-                    std::wstring rateSource;
-                    bool ratePlaying = false;
-                    if (CopyActiveMediaIdentity(&rateTitle, &rateArtist, &rateSource, &ratePlaying)) {
-                        const RateAction action = rate == MediaLayout::kRateDislikeCommand
-                                                      ? RateAction::Dislike
-                                                      : RateAction::Like;
-                        if (MediaLikeBridgeEnqueue(rateTitle, rateArtist, rateSource, ratePlaying,
-                                                   action)) {
-                            g_layoutDirty = true;
+                std::wstring rateTitle;
+                std::wstring rateArtist;
+                std::wstring rateSource;
+                std::wstring rateAumid;
+                bool ratePlaying = false;
+                if (rate != -1 &&
+                    CopyActiveMediaIdentity(&rateTitle, &rateArtist, &rateSource, &rateAumid, &ratePlaying)) {
+                    const MediaRateButtons buttons = MediaRateButtonsFor(MediaLikeBridgeQuery(
+                        rateTitle, rateArtist, rateSource, ratePlaying, rateAumid));
+                    if (MediaRateCommandDrawn(rate, buttons)) {
+                        if (MediaRateCommandEnabled(rate, buttons)) {
+                            const RateAction action = rate == MediaLayout::kRateDislikeCommand
+                                                          ? RateAction::Dislike
+                                                          : RateAction::Like;
+                            if (MediaLikeBridgeEnqueue(rateTitle, rateArtist, rateSource, ratePlaying, action,
+                                                       rateAumid)) {
+                                g_layoutDirty = true;
+                            }
                         }
+                        return 0;
                     }
+                }
 #else
-                    (void)rate;
-#endif
+                if (rate != -1) {
                     return 0;
                 }
+#endif
             }
             const int cmd = MediaTransportHitTest(cp);
             if (cmd != -1) {

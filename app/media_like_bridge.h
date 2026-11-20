@@ -5,9 +5,11 @@
 #include <string>
 #include <vector>
 
-// Local YouTube / YouTube Music like bridge.
-// The live server binds 127.0.0.1 only. These types are the testable core:
-// origin/Host checks, JSON state, tab matching, and the command queue.
+// Local Like / Dislike for the expanded player.
+// The browser extension bridge binds 127.0.0.1 only. Desktop players are
+// handled beside it (Pear Desktop, ytmdesktop, and UI Automation) and never
+// on the UI thread. These types are the testable core: origin/Host checks,
+// JSON state, tab matching, and the command queue.
 
 enum class BridgeSite { YouTube, YouTubeMusic };
 
@@ -69,11 +71,31 @@ struct HttpHeaderSet {
   bool chunked = false;
 };
 
+enum class RateFeedback { None, Pending, Error };
+
 struct MediaLikeBridgeView {
   bool connected = false;
   bool canRate = false;
+  bool canLike = false;
+  bool canDislike = false;
+  // Dim placeholder for a browser/YouTube session whose extension is not up yet.
+  bool reserveButtons = false;
   BridgeLikeState like = BridgeLikeState::None;
+  RateFeedback feedback = RateFeedback::None;
+  RateAction feedbackAction = RateAction::Like;
 };
+
+inline BridgeLikeState OptimisticRate(BridgeLikeState current, RateAction action) {
+  switch (action) {
+  case RateAction::Like:
+    return current == BridgeLikeState::Liked ? BridgeLikeState::None : BridgeLikeState::Liked;
+  case RateAction::Dislike:
+    return current == BridgeLikeState::Disliked ? BridgeLikeState::None : BridgeLikeState::Disliked;
+  }
+  const RateAction unhandled = action;
+  (void)unhandled;
+  return current;
+}
 
 // Host must be 127.0.0.1:<port> or localhost:<port>.
 // Extension origins (chrome-extension://, moz-extension://, extension://) are
@@ -114,12 +136,20 @@ class TabRegistry {
 };
 
 // Process-wide server + registry used by the island UI.
+// appUserModelId is the SMTC SourceAppUserModelId. Pass it so a desktop player
+// is not confused with a browser tab that happens to show the same title.
 void MediaLikeBridgeSetWake(void (*wake)());
 void MediaLikeBridgeApply(bool enabled, int port);
 void MediaLikeBridgeStop();
 MediaLikeBridgeView MediaLikeBridgeQuery(const std::wstring& title, const std::wstring& artist,
-                                         const std::wstring& source, bool playing);
+                                         const std::wstring& source, bool playing,
+                                         const std::wstring& appUserModelId = std::wstring());
 bool MediaLikeBridgeEnqueue(const std::wstring& title, const std::wstring& artist,
-                            const std::wstring& source, bool playing, RateAction action);
+                            const std::wstring& source, bool playing, RateAction action,
+                            const std::wstring& appUserModelId = std::wstring());
+
+uint64_t MediaRateNotePending(RateAction action);
+void MediaRateNoteResult(uint64_t generation, bool ok, RateAction action);
+void MediaRateNotifyUi();
 
 bool MediaLikeBridgeSelfTest();

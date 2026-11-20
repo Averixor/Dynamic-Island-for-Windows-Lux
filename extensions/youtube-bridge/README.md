@@ -13,6 +13,8 @@ Nothing is uploaded. The only network target is the loopback bridge inside Dynam
 
 Installed YouTube and YouTube Music apps (Chrome/Edge PWAs) are normal `https://www.youtube.com` and `https://music.youtube.com` windows. The extension runs there when it is enabled in the **same browser profile** that installed the app.
 
+Desktop players do not use this extension. Pear Desktop (`th-ch/youtube-music`) and ytmdesktop are controlled through their own loopback APIs when those servers are on, and Spotify, TIDAL, Deezer, Apple Music, and YouTube Music desktop windows are clicked through Windows UI Automation. The island only rates the app that currently owns the system media session.
+
 ## Install on Chrome, Edge, Brave, Opera, or Vivaldi
 
 1. Open the extensions page:
@@ -46,7 +48,7 @@ Firefox 115 and newer run this folder's Manifest V3 service worker (`background.
 ## Troubleshooting
 
 - **Popup says not connected.** Start Dynamic Island Lux and leave the like bridge enabled. Confirm both sides use the same port. A browser tab opened directly to `http://127.0.0.1:18473` is rejected on purpose; only the extension may call the bridge.
-- **Buttons on the island stay dim.** The system media session must be the YouTube/YouTube Music track (or a browser session whose title matches that tab). Spotify and other players do not get a fake like. The YouTube tab also has to be loaded, not discarded.
+- **Buttons on the island stay dim.** The system media session must be the YouTube/YouTube Music track (or a browser session whose title matches that tab). Desktop Spotify / TIDAL / Deezer / Apple Music / YouTube Music apps use the island’s desktop backends, not this extension. The YouTube tab also has to be loaded, not discarded.
 - **Like state is wrong or clicks do nothing.** Reload the YouTube page. YouTube and YouTube Music are single-page apps; the content script watches navigation, but a hard refresh clears a stuck player DOM.
 - **Several YouTube tabs are open.** The island follows the tab that is playing and whose title matches the current system media session.
 - **PWA does nothing.** Install the unpacked extension in the same profile that owns the YouTube app window, then restart the app window.

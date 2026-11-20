@@ -66,6 +66,10 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 
 `app.version` у `settings.json` оновлюється **лише якщо змінився** (не перезаписує файл щосесії).
 
+## Like / Dislike
+
+The expanded player’s Like and Dislike buttons follow the active SMTC source. A browser session uses `extensions/youtube-bridge` on `127.0.0.1` (setting `Modules.MediaLikeBridgePort`, default 18473). YouTube Music desktop apps can use their loopback APIs (Pear Desktop `127.0.0.1:26538`, ytmdesktop `127.0.0.1:9863`). Spotify, TIDAL, Deezer, Apple Music, and the YouTube Music desktop/PWA windows are driven with UI Automation on a background thread, with no extra plugin. The master switch stays `Modules.MediaLikeBridge`.
+
 ## Known limitations
 
 - **`SetWindowCompositionAttribute` (WCA)** — недокументований API. На майбутніх збірках Win11 accent може зникнути без попередження. Fallback = backdrop `none`, не crash (Warn у лозі).

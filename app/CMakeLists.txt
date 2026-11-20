@@ -33,6 +33,7 @@ add_executable(DynamicIslandLux WIN32
   autostart.cpp
   lux_overlay.cpp
   media_like_bridge.cpp
+  media_desktop_rate.cpp
   # Island implementation TU (Windhawk archive + standalone body).
   "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"
   "${CMAKE_CURRENT_BINARY_DIR}/resources.gen.rc"
@@ -111,6 +112,7 @@ target_link_libraries(DynamicIslandLux PRIVATE
   wbemuuid
   iphlpapi
   ws2_32
+  uiautomationcore
 )
 
 set_target_properties(DynamicIslandLux PROPERTIES
