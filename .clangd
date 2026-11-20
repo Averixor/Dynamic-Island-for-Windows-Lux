@@ -1,0 +1,9 @@
+# Project is C++17 (see app/CMakeLists.txt). Without this, clangd defaults to an
+# older dialect and falsely reports missing std::clamp / if-init extensions.
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -DUNICODE
+    - -D_UNICODE
+    - -DNOMINMAX
+    - -DWIN32_LEAN_AND_MEAN

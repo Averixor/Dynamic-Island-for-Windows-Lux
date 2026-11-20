@@ -100,7 +100,16 @@
     "Anims",
     "wtsapi",
     "dbch",
-    "lfanew"
+    "lfanew",
+    "blit",
+    "blits",
+    "Cust",
+    "лайків",
+    "дизлайк",
+    "плеєрів",
+    "Dislike",
+    "dpis",
+    "cdit"
   ],
   "ignorePaths": [
     "LICENSE",

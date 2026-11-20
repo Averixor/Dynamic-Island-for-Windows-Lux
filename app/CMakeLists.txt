@@ -4,6 +4,7 @@ project(DynamicIslandLux VERSION 1.0.7 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Embed RT_MANIFEST + icon from generated paths (version follows project(VERSION)).
 set(LUX_MANIFEST_FILE "${CMAKE_CURRENT_BINARY_DIR}/DynamicIslandLux.manifest")

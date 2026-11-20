@@ -1,6 +1,5 @@
 #include "settings_dialog.h"
 
-#include "app_context.h"
 #include "autostart.h"
 #include "logging.h"
 #include "lux_overlay.h"
@@ -1580,7 +1579,8 @@ void EnsureWindowClasses() {
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = proc;
     wc.hInstance = instance;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // MAKEINTRESOURCEW: clangd without UNICODE treats IDC_ARROW as LPSTR.
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     wc.lpszClassName = name;
     wc.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW;
     RegisterClassExW(&wc);
@@ -1598,7 +1598,7 @@ std::wstring GetControlText(HWND control) {
     return {};
   }
   std::wstring text(static_cast<size_t>(len) + 1, L'\0');
-  const int copied = GetWindowTextW(control, text.data(), len + 1);
+  const int copied = GetWindowTextW(control, &text[0], len + 1);
   if (copied <= 0) {
     return {};
   }
@@ -3382,27 +3382,40 @@ bool PaintSessionSelfTest() {
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = PaintProbeProc;
   wc.hInstance = GetModuleHandleW(nullptr);
-  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
   wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
   wc.lpszClassName = className;
   if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
     LUX_LOGE(L"Settings dialog self-test failed: paint probe class");
     return false;
   }
-  HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"", WS_POPUP, -3200, -3200, 80,
-                              48, nullptr, nullptr, wc.hInstance, nullptr);
+  // On a real monitor: off-screen (−3200,−3200) GetPixel often returns CLR_INVALID under DWM.
+  POINT probeOrigin = {0, 0};
+  if (HMONITOR monitor = MonitorFromPoint(probeOrigin, MONITOR_DEFAULTTOPRIMARY)) {
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(monitor, &mi)) {
+      probeOrigin.x = mi.rcMonitor.left;
+      probeOrigin.y = mi.rcMonitor.top;
+    }
+  }
+  HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"", WS_POPUP,
+                              probeOrigin.x, probeOrigin.y, 80, 48, nullptr, nullptr, wc.hInstance,
+                              nullptr);
   if (!hwnd) {
     UnregisterClassW(className, wc.hInstance);
     LUX_LOGE(L"Settings dialog self-test failed: paint probe window");
     return false;
   }
-  ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+  SetWindowPos(hwnd, HWND_BOTTOM, probeOrigin.x, probeOrigin.y, 80, 48,
+               SWP_NOACTIVATE | SWP_SHOWWINDOW);
   UpdateWindow(hwnd);
   const COLORREF pixel = g_probePixel;
   DestroyWindow(hwnd);
   UnregisterClassW(className, wc.hInstance);
   if (pixel != RGB(18, 52, 86)) {
-    LUX_LOGE(L"Settings dialog self-test failed: PaintSession blit before EndPaint");
+    LUX_LOGE(L"Settings dialog self-test failed: PaintSession blit before EndPaint (pixel=0x%08lX)",
+             static_cast<unsigned long>(pixel));
     return false;
   }
   return true;
@@ -3526,10 +3539,10 @@ bool SettingsDialogSelfTestImpl() {
                L"Месенджери (через кому)") == 0,
         L"messenger uk");
   check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::En, L"Modules.MediaLikeBridge"),
-               L"YouTube / YouTube Music like bridge") == 0,
+               L"Like / Dislike for players") == 0,
         L"like bridge en");
   check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::Uk, L"Modules.MediaLikeBridgePort"),
-               L"Порт моста лайків (127.0.0.1)") == 0,
+               L"Порт браузерного моста (127.0.0.1)") == 0,
         L"like bridge port uk");
 
   const int dpis[] = {96, 120, 144, 192};
