@@ -45,7 +45,7 @@
 
 Розгорнутий стан (наведення або клік): вкладки медіа, календаря, погоди, монітора системи, лотка файлів.
 
-Короткі події замінюють пігулку, поки не згаснуть:
+Центр острова завжди лишає плеєр або годинник. Короткі технічні події з’являються ліворуч, сповіщення месенджерів — праворуч:
 
 - відтворення: назва, виконавець, обкладинка, спектр, попередній / play / наступний, смуга перемотки;
 - гучність і яскравість;
@@ -334,6 +334,12 @@
   - DoNotDisturbIndicator: true
     $name: Не турбувати
     $description: Показує стан режиму «Не турбувати»
+  - Notifications: true
+    $name: Сповіщення Windows
+    $description: Показує тости поруч з островом. Месенджери справа, системні зліва. Не замінює плеєр і годинник
+  - MessengerApps: "telegram,discord,whatsapp,viber,slack,teams,signal,skype,messenger,mail,outlook,thunderbird"
+    $name: Месенджери
+    $description: Імена через кому, без урахування регістру. Ці програми на правій пігулці. Snipping Tool завжди зліва. Порожнє поле — стандартний список
   - TimerModule: true
     $name: Таймер фокусу
     $description: Увімкнути таймер фокусу/перерви з контекстного меню
@@ -415,6 +421,7 @@
 #ifdef LUX_STANDALONE
 #include "windhawk_compat.h"
 #include "app_context.h"
+#include "island_zones.h"
 #include "main.h"
 #include "menu_theme.h"
 #include "resource.h"
@@ -613,7 +620,7 @@ namespace IdleStripLayout {
     constexpr float kSlotGap = 9.0f;
     constexpr float kDividerWidth = 1.0f;
     constexpr float kDividerInsetY = 9.0f;
-    constexpr float kPrivacyReserve = 18.0f;
+    constexpr float kPrivacyReserve = 28.0f;
     constexpr float kHeight = 44.0f;
     constexpr float kClockFontSize = 20.5f;
     constexpr float kMinWidth = 72.0f;
@@ -967,6 +974,9 @@ struct Settings {
     bool hardwareMonitorModule = true;
     bool doNotDisturbIndicator = true;
     bool notificationRespectDnD = true;
+    bool notifications = true;
+    std::wstring messengerApps =
+        L"telegram,discord,whatsapp,viber,slack,teams,signal,skype,messenger,mail,outlook,thunderbird";
     bool materialDepth = true;
     bool dropShadow = true;
     float accentBloom = 1.0f;
@@ -1070,7 +1080,9 @@ struct ClipboardSnapshot {
     std::wstring appName;
     PixelsRef appIcon;
     PixelsRef imagePreview;
+    bool screenshot = false;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct BatterySnapshot {
     bool active = false;
@@ -1079,10 +1091,12 @@ struct BatterySnapshot {
     int percent = 100;
     DWORD secondsRemaining = BATTERY_LIFE_UNKNOWN;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct ProgressSnapshot {
     bool active = false;
     int percent = 0;
+    double raisedAt = 0.0;
 };
 struct NotificationSnapshot {
     bool active = false;
@@ -1095,6 +1109,9 @@ struct NotificationSnapshot {
     std::wstring activationArgs;
     PixelsRef icon;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
+    uint64_t seq = 0;
+    bool messenger = false;
 };
 struct VolumeSnapshot {
     bool active = false;
@@ -1115,6 +1132,7 @@ struct CapsLockSnapshot {
     bool numOn = false;
     bool isNumEvent = false;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct TimerSnapshot {
     bool active = false;
@@ -1125,6 +1143,7 @@ struct TimerSnapshot {
     double remainingAtPause = 0.0;
     bool justFinished = false;
     double finishedExpiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 enum class DeviceEventType {
     Connected,
@@ -1136,6 +1155,7 @@ struct DeviceSnapshot {
     std::wstring deviceName;
     bool isBluetoothLike = false;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct BluetoothDeviceSnapshot {
     bool active = false;
@@ -1144,6 +1164,7 @@ struct BluetoothDeviceSnapshot {
     int batteryPercent = -1;
     BluetoothDeviceCategory category = BluetoothDeviceCategory::Generic;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct SystemSnapshot {
     int volumePercent = 0;
@@ -1168,6 +1189,8 @@ struct Activity {
     IslandKind kind = IslandKind::Idle;
     float width = 120.0f;
     float height = 36.0f;
+    // System/technical toasts share IslandKind::Notification with messengers.
+    bool systemNotice = false;
 };
 struct WeatherSnapshot {
     bool hasData = false;
@@ -1185,6 +1208,7 @@ struct DoNotDisturbSnapshot {
     bool active = false;
     bool enabled = false;
     double expiresAt = 0.0;
+    double raisedAt = 0.0;
 };
 struct FileTrayItem {
     std::wstring path;
@@ -1300,6 +1324,7 @@ struct SharedState {
     std::vector<MediaSourceInfo> mediaSources;
     ClipboardSnapshot clipboard;
     NotificationSnapshot notification;
+    NotificationSnapshot systemNotification;
     VolumeSnapshot volume;
     BrightnessSnapshot brightness;
     CapsLockSnapshot capsLock;
@@ -1361,6 +1386,7 @@ Settings GetSettingsCopy() {
 }
 std::mutex g_stateMutex;
 SharedState g_state;
+std::atomic<uint64_t> g_noticeSeq{0};
 std::atomic<uint64_t> g_artGenerationCounter = 0;
 HWND g_hwnd = nullptr;
 HANDLE g_stopEvent = nullptr;
@@ -2007,6 +2033,7 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Battery Alert", L"Сповіщення батареї"},
         {L"Progress", L"Прогрес"},
         {L"Image copied", L"Зображення скопійовано"},
+        {L"Screenshot", L"Знімок екрана"},
         {L"Clipboard", L"Буфер обміну"},
         {L"Notification", L"Сповіщення"},
         {L"USB Device", L"USB-пристрій"},
@@ -2151,6 +2178,7 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Battery Alert", L"Предупреждение о батарее"},
         {L"Progress", L"Прогресс"},
         {L"Image copied", L"Изображение скопировано"},
+        {L"Screenshot", L"Скриншот"},
         {L"Clipboard", L"Буфер обмена"},
         {L"Notification", L"Уведомление"},
         {L"USB Device", L"Устройство USB"},
@@ -2882,6 +2910,8 @@ struct PillClientRect {
     }
 };
 extern PillClientRect g_pillClientRect;
+extern PillClientRect g_leftPillClientRect;
+extern PillClientRect g_rightPillClientRect;
 extern PillClientRect g_secondaryPillClientRect;
 bool SampleDesktopBackdrop(HWND hwnd, D2D1_COLOR_F* outColor) {
     if (!hwnd || !outColor || !g_pillClientRect.valid) {
@@ -3405,6 +3435,12 @@ void LoadSettings() {
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
     next.notificationRespectDnD = Wh_GetIntSetting(L"Modules.NotificationRespectDnD") != 0;
+    next.notifications = Wh_GetIntSetting(L"Modules.Notifications") != 0;
+    next.messengerApps = GetStringSettingCopy(L"Modules.MessengerApps");
+    if (next.messengerApps.empty()) {
+        next.messengerApps =
+            L"telegram,discord,whatsapp,viber,slack,teams,signal,skype,messenger,mail,outlook,thunderbird";
+    }
     {
             const std::wstring appearanceBackdrop =
                 GetStringSettingCopy(L"Appearance.BackdropMaterial");
@@ -3839,6 +3875,8 @@ void LoadSettings() {
         next.hardwareMonitorModule = defaults.hardwareMonitorModule;
         next.doNotDisturbIndicator = defaults.doNotDisturbIndicator;
         next.notificationRespectDnD = defaults.notificationRespectDnD;
+        next.notifications = defaults.notifications;
+        next.messengerApps = defaults.messengerApps;
         next.fileTrayModule = defaults.fileTrayModule;
         next.materialDepth = defaults.materialDepth;
         next.dropShadow = defaults.dropShadow;
@@ -3994,7 +4032,7 @@ namespace DwmBackdrop {
     constexpr int kAccentEnableAcrylicBlurBehind = 4;
     constexpr int kWcaAccentPolicy = 19;
     constexpr int kWcaTransitionsForcedisabled = 3;
-    constexpr int kMaxPills = 2;
+    constexpr int kMaxPills = 3;
     constexpr wchar_t kClassName[] = L"DynamicIslandBackdrop";
     struct Slot {
         HWND hwnd = nullptr;
@@ -4595,6 +4633,8 @@ struct StageLayout {
     float pillTop = 0.0f;
 };
 PillClientRect g_pillClientRect;
+PillClientRect g_leftPillClientRect;
+PillClientRect g_rightPillClientRect;
 PillClientRect g_secondaryPillClientRect;
 inline bool UsesFixedStage(const Settings&) {
     return true;
@@ -5135,6 +5175,395 @@ std::wstring ToLowerCopy(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
     return value;
+}
+// Messenger toasts stay on the right pill. Hardware, clipboard, screenshots,
+// and every other shell toast stay on the left. The center island is untouched.
+namespace IslandZones {
+constexpr wchar_t kDefaultMessengerApps[] =
+    L"telegram,discord,whatsapp,viber,slack,teams,signal,skype,messenger,mail,outlook,thunderbird";
+enum class Lane { Technical, Messenger };
+enum class HitTarget { None, Center, Technical, Messenger };
+inline wchar_t AsciiLower(wchar_t ch) {
+    if (ch >= L'A' && ch <= L'Z') {
+        return static_cast<wchar_t>(ch - L'A' + L'a');
+    }
+    return ch;
+}
+inline std::wstring AsciiLowerCopy(const std::wstring& text) {
+    std::wstring out(text.size(), L'\0');
+    for (size_t i = 0; i < text.size(); ++i) {
+        out[i] = AsciiLower(text[i]);
+    }
+    return out;
+}
+inline bool HayContains(const std::wstring& hay, const wchar_t* needle) {
+    return needle && needle[0] && !hay.empty() && hay.find(needle) != std::wstring::npos;
+}
+inline bool IsForcedTechnicalNotice(const std::wstring& hay) {
+    static const wchar_t* kNeedles[] = {
+        L"snippingtool",   L"snipping tool", L"screenclippinghost", L"screenclipping",
+        L"screen clipping", L"printscreen",  L"print screen",       L"snip & sketch",
+        L"snipandsketch",  L"screensketch",
+    };
+    for (const wchar_t* needle : kNeedles) {
+        if (HayContains(hay, needle)) {
+            return true;
+        }
+    }
+    return false;
+}
+inline Lane ClassifyNotice(const std::wstring& aumid, const std::wstring& displayName,
+                           const std::wstring& keywordList) {
+    std::wstring hay = AsciiLowerCopy(aumid);
+    if (!displayName.empty()) {
+        if (!hay.empty()) {
+            hay.push_back(L' ');
+        }
+        hay += AsciiLowerCopy(displayName);
+    }
+    if (hay.empty() || IsForcedTechnicalNotice(hay)) {
+        return Lane::Technical;
+    }
+    const std::wstring list =
+        AsciiLowerCopy(keywordList.empty() ? std::wstring(kDefaultMessengerApps) : keywordList);
+    size_t i = 0;
+    while (i < list.size()) {
+        while (i < list.size() &&
+               (list[i] == L',' || list[i] == L';' || list[i] == L' ' || list[i] == L'\t')) {
+            ++i;
+        }
+        size_t end = i;
+        while (end < list.size() && list[end] != L',' && list[end] != L';') {
+            ++end;
+        }
+        while (end > i && (list[end - 1] == L' ' || list[end - 1] == L'\t')) {
+            --end;
+        }
+        if (end > i && (end - i) >= 3 && hay.find(list.substr(i, end - i)) != std::wstring::npos) {
+            return Lane::Messenger;
+        }
+        i = end + 1;
+    }
+    return Lane::Technical;
+}
+struct PlacedSide {
+    float left = 0.0f;
+    float top = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool present = false;
+    bool mirrored = false;
+    float right() const { return left + width; }
+    float bottom() const { return top + height; }
+};
+struct ZoneLayout {
+    PlacedSide center;
+    PlacedSide technical;
+    PlacedSide messenger;
+    float leftSeam = -1.0f;
+    float rightSeam = -1.0f;
+};
+struct LayoutInput {
+    float stageWidth = 0.0f;
+    float centerLeft = 0.0f;
+    float top = 0.0f;
+    float centerWidth = 0.0f;
+    float centerHeight = 0.0f;
+    float leftWidth = 0.0f;
+    float leftHeight = 0.0f;
+    float rightWidth = 0.0f;
+    float rightHeight = 0.0f;
+    bool wantLeft = false;
+    bool wantRight = false;
+    float gap = 20.0f;
+    float pad = 40.0f;
+    float paginationReserve = 0.0f;
+    float minSide = 72.0f;
+    bool hangFromTop = false;
+};
+inline float SideTop(const LayoutInput& in, float sideHeight) {
+    if (in.hangFromTop) {
+        return in.top;
+    }
+    return in.top + (in.centerHeight - sideHeight) * 0.5f;
+}
+inline bool PlaceOnLeft(const LayoutInput& in, float wantWidth, float wantHeight, bool mirrored,
+                        PlacedSide* out) {
+    const float room = in.centerLeft - in.gap - in.pad;
+    if (!out || room < in.minSide || wantWidth < 1.0f || wantHeight < 1.0f) {
+        return false;
+    }
+    const float width = wantWidth < room ? wantWidth : room;
+    if (width < in.minSide) {
+        return false;
+    }
+    out->present = true;
+    out->mirrored = mirrored;
+    out->width = width;
+    out->height = wantHeight;
+    out->left = in.centerLeft - in.gap - width;
+    out->top = SideTop(in, wantHeight);
+    return true;
+}
+inline bool PlaceOnRight(const LayoutInput& in, float wantWidth, float wantHeight, bool mirrored,
+                         PlacedSide* out) {
+    const float centerRight = in.centerLeft + in.centerWidth;
+    const float rightGap = in.gap + (in.paginationReserve > 0.0f ? in.paginationReserve : 0.0f);
+    const float room = (in.stageWidth - in.pad) - (centerRight + rightGap);
+    if (!out || room < in.minSide || wantWidth < 1.0f || wantHeight < 1.0f) {
+        return false;
+    }
+    const float width = wantWidth < room ? wantWidth : room;
+    if (width < in.minSide) {
+        return false;
+    }
+    out->present = true;
+    out->mirrored = mirrored;
+    out->width = width;
+    out->height = wantHeight;
+    out->left = centerRight + rightGap;
+    out->top = SideTop(in, wantHeight);
+    return true;
+}
+inline ZoneLayout Place(const LayoutInput& in) {
+    ZoneLayout layout;
+    if (in.centerWidth < 2.0f || in.centerHeight < 2.0f || in.stageWidth < 2.0f) {
+        return layout;
+    }
+    layout.center.present = true;
+    layout.center.left = in.centerLeft;
+    layout.center.top = in.top;
+    layout.center.width = in.centerWidth;
+    layout.center.height = in.centerHeight;
+    if (in.wantLeft) {
+        PlaceOnLeft(in, in.leftWidth, in.leftHeight, false, &layout.technical);
+    }
+    if (in.wantRight) {
+        PlaceOnRight(in, in.rightWidth, in.rightHeight, false, &layout.messenger);
+    }
+    if (in.wantLeft && !layout.technical.present && !layout.messenger.present) {
+        PlaceOnRight(in, in.leftWidth, in.leftHeight, true, &layout.technical);
+    }
+    if (in.wantRight && !layout.messenger.present && !layout.technical.present) {
+        PlaceOnLeft(in, in.rightWidth, in.rightHeight, true, &layout.messenger);
+    }
+    const bool geometricLeft = (layout.technical.present && !layout.technical.mirrored) ||
+                               (layout.messenger.present && layout.messenger.mirrored);
+    const bool geometricRight = (layout.messenger.present && !layout.messenger.mirrored) ||
+                                (layout.technical.present && layout.technical.mirrored);
+    layout.leftSeam = geometricLeft ? layout.center.left : -1.0f;
+    layout.rightSeam = geometricRight ? (layout.center.left + layout.center.width) : -1.0f;
+    return layout;
+}
+inline bool ContainsSide(const PlacedSide& side, float x, float y) {
+    return side.present && x >= side.left && x <= side.right() && y >= side.top && y <= side.bottom();
+}
+inline HitTarget HitTest(const ZoneLayout& layout, float x, float y) {
+    if (ContainsSide(layout.technical, x, y)) {
+        return HitTarget::Technical;
+    }
+    if (ContainsSide(layout.messenger, x, y)) {
+        return HitTarget::Messenger;
+    }
+    if (ContainsSide(layout.center, x, y)) {
+        return HitTarget::Center;
+    }
+    return HitTarget::None;
+}
+inline bool Near(float a, float b) {
+    return std::fabs(a - b) <= 0.05f;
+}
+inline bool Overlaps(const PlacedSide& a, const PlacedSide& b) {
+    if (!a.present || !b.present) {
+        return false;
+    }
+    return a.left < b.right() && b.left < a.right() && a.top < b.bottom() && b.top < a.bottom();
+}
+inline bool InsideStage(const LayoutInput& in, const PlacedSide& side) {
+    if (!side.present) {
+        return true;
+    }
+    return side.left >= in.pad - 0.05f && side.right() <= in.stageWidth - in.pad + 0.05f;
+}
+bool RunSelfTest(const wchar_t** failure) {
+    auto fail = [&](const wchar_t* message) {
+        if (failure) {
+            *failure = message;
+        }
+        return false;
+    };
+    const std::wstring defaults(kDefaultMessengerApps);
+    const auto lane = [&](const wchar_t* aumid, const wchar_t* name, const std::wstring& keys) {
+        return ClassifyNotice(aumid ? aumid : L"", name ? name : L"", keys);
+    };
+    if (lane(L"Telegram.TelegramDesktop_t4vj0pshhgkwm", L"Telegram", defaults) != Lane::Messenger ||
+        lane(L"com.discordapp.Discord", L"Discord", defaults) != Lane::Messenger ||
+        lane(L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm", L"WhatsApp", defaults) != Lane::Messenger ||
+        lane(L"Viber.ViberDesktop", L"Viber", defaults) != Lane::Messenger ||
+        lane(L"com.tinyspeck.slackdesktop", L"Slack", defaults) != Lane::Messenger ||
+        lane(L"Microsoft.Teams_8wekyb3d8bbwe!MSTeams", L"Microsoft Teams", defaults) !=
+            Lane::Messenger ||
+        lane(L"Microsoft.Office.OUTLOOK.EXE", L"Outlook", defaults) != Lane::Messenger ||
+        lane(L"", L"Mail", defaults) != Lane::Messenger ||
+        lane(L"thunderbird.exe", L"Thunderbird", defaults) != Lane::Messenger ||
+        lane(L"Microsoft.SkypeApp", L"Skype", defaults) != Lane::Messenger ||
+        lane(L"Facebook.Messenger", L"Messenger", defaults) != Lane::Messenger ||
+        lane(L"org.whispersystems.signal", L"Signal", defaults) != Lane::Messenger ||
+        lane(L"TELEGRAM.EXE", L"", defaults) != Lane::Messenger) {
+        return fail(L"messenger apps were not classified to the right lane");
+    }
+    if (lane(L"SnippingTool.exe", L"Snipping Tool", defaults) != Lane::Technical ||
+        lane(L"ScreenClippingHost.exe", L"Screen Snip", defaults) != Lane::Technical ||
+        lane(L"Microsoft.ScreenSketch_8wekyb3d8bbwe", L"Snipping Tool", defaults) != Lane::Technical ||
+        lane(L"", L"Print Screen", defaults) != Lane::Technical ||
+        lane(L"PrintScreen.exe", L"", defaults) != Lane::Technical ||
+        lane(L"SnippingTool.exe", L"Snipping Tool", L"snipping,telegram") != Lane::Technical ||
+        lane(L"Photos.exe", L"Photos", defaults) != Lane::Technical ||
+        lane(L"Contoso.Studio", L"Contoso Studio", defaults) != Lane::Technical ||
+        lane(L"steam.exe", L"Steam", defaults) != Lane::Technical) {
+        return fail(L"technical or screenshot notices were not kept on the left lane");
+    }
+    if (lane(L"Notion.exe", L"Notion", L"notion, obsidian") != Lane::Messenger ||
+        lane(L"Obsidian.exe", L"Obsidian", L"notion, obsidian") != Lane::Messenger ||
+        lane(L"Telegram.exe", L"Telegram", L"notion, obsidian") != Lane::Technical ||
+        lane(L"Spotify.exe", L"Spotify", L"") != Lane::Technical) {
+        return fail(L"custom messenger keywords were not applied");
+    }
+    LayoutInput centered;
+    centered.stageWidth = 960.0f;
+    centered.pad = 40.0f;
+    centered.gap = 20.0f;
+    centered.minSide = 72.0f;
+    centered.top = 34.0f;
+    centered.centerWidth = 170.0f;
+    centered.centerHeight = 44.0f;
+    centered.centerLeft = (centered.stageWidth - centered.centerWidth) * 0.5f;
+    const ZoneLayout centerOnly = Place(centered);
+    centered.wantLeft = true;
+    centered.leftWidth = 220.0f;
+    centered.leftHeight = 44.0f;
+    centered.wantRight = true;
+    centered.rightWidth = 200.0f;
+    centered.rightHeight = 56.0f;
+    const ZoneLayout both = Place(centered);
+    if (!centerOnly.center.present || !both.center.present || !both.technical.present ||
+        !both.messenger.present || both.technical.mirrored || both.messenger.mirrored) {
+        return fail(L"center layout did not place technical, primary, and messenger pills");
+    }
+    if (!Near(centerOnly.center.left, both.center.left) ||
+        !Near(centerOnly.center.width, both.center.width) ||
+        !Near(both.center.left, 395.0f) || !Near(both.leftSeam, both.center.left) ||
+        !Near(both.rightSeam, both.center.right()) ||
+        !Near(both.technical.right() + centered.gap, both.center.left) ||
+        !Near(both.messenger.left, both.center.right() + centered.gap)) {
+        return fail(L"side pills moved the center island or broke the seams");
+    }
+    if (Overlaps(both.technical, both.center) || Overlaps(both.messenger, both.center) ||
+        Overlaps(both.technical, both.messenger) || !InsideStage(centered, both.technical) ||
+        !InsideStage(centered, both.messenger) || !InsideStage(centered, both.center)) {
+        return fail(L"3-zone pills overlap or leave the stage");
+    }
+    const float midY = both.center.top + both.center.height * 0.5f;
+    if (HitTest(both, both.technical.left + 8.0f, midY) != HitTarget::Technical ||
+        HitTest(both, both.center.left + 8.0f, midY) != HitTarget::Center ||
+        HitTest(both, both.messenger.left + 8.0f, midY) != HitTarget::Messenger ||
+        HitTest(both, (both.technical.right() + both.center.left) * 0.5f, midY) != HitTarget::None) {
+        return fail(L"hit-test did not separate technical, center, and messenger pills");
+    }
+    LayoutInput expanded = centered;
+    expanded.centerWidth = 380.0f;
+    expanded.centerHeight = 184.0f;
+    expanded.centerLeft = (expanded.stageWidth - expanded.centerWidth) * 0.5f;
+    expanded.paginationReserve = 14.0f;
+    expanded.leftWidth = 340.0f;
+    expanded.rightWidth = 280.0f;
+    expanded.leftHeight = 52.0f;
+    expanded.rightHeight = 52.0f;
+    const ZoneLayout wide = Place(expanded);
+    const float rightGap = expanded.gap + expanded.paginationReserve;
+    if (!wide.technical.present || !wide.messenger.present ||
+        !Near(wide.center.left, expanded.centerLeft) || wide.technical.width > 230.05f ||
+        wide.messenger.width > 216.05f ||
+        !Near(wide.messenger.left, wide.center.right() + rightGap) ||
+        wide.messenger.right() > expanded.stageWidth - expanded.pad + 0.05f ||
+        wide.technical.left < expanded.pad - 0.05f || Overlaps(wide.messenger, wide.center)) {
+        return fail(L"expanded island did not cap side pills clear of the edges and tab dots");
+    }
+    LayoutInput topLeft = centered;
+    topLeft.centerLeft = 40.0f;
+    topLeft.centerWidth = 170.0f;
+    topLeft.paginationReserve = 0.0f;
+    topLeft.wantRight = false;
+    topLeft.leftWidth = 220.0f;
+    const ZoneLayout leftEdge = Place(topLeft);
+    if (!leftEdge.technical.present || !leftEdge.technical.mirrored || leftEdge.messenger.present ||
+        !Near(leftEdge.center.left, 40.0f) ||
+        !Near(leftEdge.technical.left, leftEdge.center.right() + topLeft.gap) ||
+        leftEdge.leftSeam > 0.0f) {
+        return fail(L"top-left anchor did not keep the center and clamp the technical pill");
+    }
+    topLeft.wantRight = true;
+    topLeft.rightWidth = 180.0f;
+    topLeft.rightHeight = 56.0f;
+    const ZoneLayout leftEdgeBoth = Place(topLeft);
+    if (leftEdgeBoth.technical.present || !leftEdgeBoth.messenger.present ||
+        leftEdgeBoth.messenger.mirrored || !Near(leftEdgeBoth.center.left, 40.0f) ||
+        !InsideStage(topLeft, leftEdgeBoth.messenger)) {
+        return fail(L"top-left anchor let the technical pill cover the messenger pill");
+    }
+    LayoutInput topRight = centered;
+    topRight.centerWidth = 170.0f;
+    topRight.centerLeft = topRight.stageWidth - topRight.pad - topRight.centerWidth;
+    topRight.paginationReserve = 0.0f;
+    topRight.wantLeft = false;
+    topRight.wantRight = true;
+    topRight.rightWidth = 200.0f;
+    const ZoneLayout rightEdge = Place(topRight);
+    if (!rightEdge.messenger.present || !rightEdge.messenger.mirrored || rightEdge.technical.present ||
+        !Near(rightEdge.center.left, 750.0f) ||
+        !Near(rightEdge.messenger.right() + topRight.gap, rightEdge.center.left)) {
+        return fail(L"top-right anchor did not keep the center and clamp the messenger pill");
+    }
+    topRight.wantLeft = true;
+    topRight.leftWidth = 220.0f;
+    topRight.leftHeight = 44.0f;
+    const ZoneLayout rightEdgeBoth = Place(topRight);
+    if (!rightEdgeBoth.technical.present || rightEdgeBoth.technical.mirrored ||
+        rightEdgeBoth.messenger.present || !Near(rightEdgeBoth.center.left, 750.0f) ||
+        !InsideStage(topRight, rightEdgeBoth.technical)) {
+        return fail(L"top-right anchor let the messenger pill push the center island");
+    }
+    if (failure) {
+        *failure = nullptr;
+    }
+    return true;
+}
+}  // namespace IslandZones
+bool IslandZoneSelfTest(const wchar_t** failure) {
+    return IslandZones::RunSelfTest(failure);
+}
+uint64_t PublishNotification(NotificationSnapshot snapshot) {
+    const Settings settings = GetSettingsCopy();
+    if (!settings.notifications) {
+        return 0;
+    }
+    snapshot.active = true;
+    snapshot.raisedAt = NowSeconds();
+    snapshot.seq = g_noticeSeq.fetch_add(1, std::memory_order_relaxed) + 1;
+    snapshot.messenger =
+        IslandZones::ClassifyNotice(snapshot.aumid, snapshot.app, settings.messengerApps) ==
+        IslandZones::Lane::Messenger;
+    const uint64_t seq = snapshot.seq;
+    {
+        std::lock_guard lock(g_stateMutex);
+        if (snapshot.messenger) {
+            g_state.notification = std::move(snapshot);
+        } else {
+            g_state.systemNotification = std::move(snapshot);
+        }
+    }
+    g_layoutDirty = true;
+    return seq;
 }
 std::wstring BaseNameFromPath(std::wstring path) {
     const size_t slash = path.find_last_of(L"\\/");
@@ -6204,7 +6633,8 @@ NTSTATUS NTAPI WnfDndCallback(
             std::lock_guard lock(g_stateMutex);
             g_state.doNotDisturb.active = true;
             g_state.doNotDisturb.enabled = active;
-            g_state.doNotDisturb.expiresAt = NowSeconds() + 3.0;
+            g_state.doNotDisturb.raisedAt = NowSeconds();
+            g_state.doNotDisturb.expiresAt = g_state.doNotDisturb.raisedAt + 3.0;
         }
         TriggerNudge();
     }
@@ -6320,7 +6750,11 @@ DWORD WINAPI NotificationThreadProc(void*) {
                                 continue;
                             }
                             seenIds.insert(id);
-                            if (GetSettingsCopy().notificationRespectDnD && g_isDnDActive.load()) {
+                            const Settings noteSettings = GetSettingsCopy();
+                            if (!noteSettings.notifications) {
+                                continue;
+                            }
+                            if (noteSettings.notificationRespectDnD && g_isDnDActive.load()) {
                                 continue;
                             }
                             NotificationSnapshot snapshot;
@@ -6383,10 +6817,7 @@ DWORD WINAPI NotificationThreadProc(void*) {
                                 snapshot.title.resize(120);
                                 snapshot.title += L"...";
                             }
-                            {
-                                std::lock_guard lock(g_stateMutex);
-                                g_state.notification = std::move(snapshot);
-                            }
+                            PublishNotification(std::move(snapshot));
                             TriggerNudge();
                         } catch (const winrt::hresult_error& nex) {
                             if (nex.to_abi() == static_cast<int32_t>(0x80004001) || nex.to_abi() == static_cast<int32_t>(0x80040154)) {
@@ -6638,7 +7069,8 @@ void HandleBluetoothConnected(
     snapshot.connected = true;
     snapshot.deviceName = name;
     snapshot.category = category;
-    snapshot.expiresAt = NowSeconds() + 4.0;
+    snapshot.raisedAt = NowSeconds();
+    snapshot.expiresAt = snapshot.raisedAt + 4.0;
     snapshot.batteryPercent = btSettings.bluetoothShowBattery
                                   ? TryReadBluetoothBatteryPercent(info.Id())
                                   : -1;
@@ -6705,7 +7137,8 @@ void HandleBluetoothDisconnected(
     snapshot.deviceName = name;
     snapshot.category = category;
     snapshot.batteryPercent = GetLastKnownBluetoothBatteryPercent(std::wstring(id.c_str()));
-    snapshot.expiresAt = NowSeconds() + 4.0;
+    snapshot.raisedAt = NowSeconds();
+    snapshot.expiresAt = snapshot.raisedAt + 4.0;
     {
         std::lock_guard lock(g_stateMutex);
         g_state.bluetoothDevice = std::move(snapshot);
@@ -8771,7 +9204,8 @@ void UpdateBatterySnapshot() {
         g_state.battery.low = (!newCharging && newPercent <= 20);
         if (triggerAlert) {
             g_state.battery.active = true;
-            g_state.battery.expiresAt = NowSeconds() + 4.0;
+            g_state.battery.raisedAt = NowSeconds();
+            g_state.battery.expiresAt = g_state.battery.raisedAt + 4.0;
         }
     }
     if (triggerAlert) {
@@ -9630,8 +10064,14 @@ void UpdateProgressSnapshot() {
     }
     s_lastProgress = progress;
     std::lock_guard lock(g_stateMutex);
+    const bool progressWasActive = g_state.progress.active;
     g_state.progress.active = progress >= 0 && progress <= 100;
     g_state.progress.percent = ClampInt(progress, 0, 100);
+    if (g_state.progress.active && !progressWasActive) {
+        g_state.progress.raisedAt = NowSeconds();
+    } else if (!g_state.progress.active) {
+        g_state.progress.raisedAt = 0.0;
+    }
 }
 void UpdatePrivacyIndicators() {
     std::wstring micApp;
@@ -10003,8 +10443,58 @@ bool IsLikelyToastWindow(HWND hwnd, const wchar_t* className, const wchar_t* tit
     }
     return false;
 }
+void RefinePublishedNotification(uint64_t seq, std::wstring app, std::wstring title,
+                                 std::wstring aumid, PixelsRef icon) {
+    if (seq == 0) {
+        return;
+    }
+    const Settings settings = GetSettingsCopy();
+    std::lock_guard lock(g_stateMutex);
+    NotificationSnapshot* current = nullptr;
+    bool fromMessenger = false;
+    if (g_state.notification.active && g_state.notification.seq == seq) {
+        current = &g_state.notification;
+        fromMessenger = true;
+    } else if (g_state.systemNotification.active && g_state.systemNotification.seq == seq) {
+        current = &g_state.systemNotification;
+    } else {
+        return;
+    }
+    if (!app.empty()) {
+        current->app = std::move(app);
+        if (icon) {
+            current->icon = std::move(icon);
+        }
+    }
+    if (!aumid.empty() && (current->aumid.empty() || IsNoiseNotificationAumid(current->aumid))) {
+        current->aumid = std::move(aumid);
+    }
+    if (!title.empty()) {
+        current->title = std::move(title);
+    }
+    const bool messenger =
+        settings.notifications &&
+        IslandZones::ClassifyNotice(current->aumid, current->app, settings.messengerApps) ==
+            IslandZones::Lane::Messenger;
+    current->messenger = messenger;
+    if (messenger != fromMessenger) {
+        NotificationSnapshot moved = std::move(*current);
+        current->active = false;
+        moved.active = true;
+        moved.messenger = messenger;
+        if (messenger) {
+            g_state.notification = std::move(moved);
+        } else {
+            g_state.systemNotification = std::move(moved);
+        }
+    }
+    g_layoutDirty = true;
+}
 void CaptureShellNotification(HWND hwnd) {
     if (NowSeconds() < 3.0) {
+        return;
+    }
+    if (!GetSettingsCopy().notifications) {
         return;
     }
     wchar_t className[128] = {};
@@ -10041,12 +10531,9 @@ void CaptureShellNotification(HWND hwnd) {
         notification.title.resize(64);
         notification.title += L"...";
     }
-    {
-        std::lock_guard lock(g_stateMutex);
-        g_state.notification = std::move(notification);
-    }
+    const uint64_t seq = PublishNotification(std::move(notification));
     TriggerNudge();
-    LaunchBackgroundTask([hwnd]() {
+    LaunchBackgroundTask([hwnd, seq]() {
         try {
             Sleep(400);
             if (!IsWindow(hwnd))
@@ -10111,21 +10598,9 @@ void CaptureShellNotification(HWND hwnd) {
                                     appName != L"Notification") {
                                     resolvedAumid = ResolveNotificationAumidFromAppName(appName);
                                 }
-                                std::lock_guard lock(g_stateMutex);
-                                if (g_state.notification.active) {
-                                    if (!appName.empty()) {
-                                        g_state.notification.app = appName;
-                                        if (resolvedIcon) {
-                                            g_state.notification.icon = std::move(resolvedIcon);
-                                        }
-                                    }
-                                    if (!resolvedAumid.empty() &&
-                                        (g_state.notification.aumid.empty() ||
-                                         IsNoiseNotificationAumid(g_state.notification.aumid))) {
-                                        g_state.notification.aumid = std::move(resolvedAumid);
-                                    }
-                                    g_state.notification.title = fullText;
-                                }
+                                RefinePublishedNotification(seq, std::move(appName), std::move(fullText),
+                                                             std::move(resolvedAumid),
+                                                             std::move(resolvedIcon));
                             }
                         }
                         if (cond)
@@ -10226,7 +10701,9 @@ bool SaveClipboardImageToPictures(HWND hwnd) {
 }
 void CaptureClipboard(HWND hwnd) {
     ClipboardSnapshot clip;
-    clip.expiresAt = NowSeconds() + 2.5;
+    const double copiedAt = NowSeconds();
+    clip.expiresAt = copiedAt + 2.5;
+    clip.raisedAt = copiedAt;
     HWND owner = GetClipboardOwner();
     if (!owner) {
         owner = GetForegroundWindow();
@@ -10234,6 +10711,14 @@ void CaptureClipboard(HWND hwnd) {
     wchar_t ownerTitle[80] = {};
     if (owner) {
         GetWindowTextW(owner, ownerTitle, ARRAYSIZE(ownerTitle));
+    }
+    std::wstring exePath;
+    if (owner) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(owner, &pid);
+        if (pid) {
+            ProcessImageNameForPid(pid, &exePath);
+        }
     }
     if (owner && !IsIgnorableForegroundWindow(owner, ownerTitle)) {
         DWORD pid = 0;
@@ -10271,11 +10756,13 @@ void CaptureClipboard(HWND hwnd) {
     } else {
         BitmapPixels imagePixels;
         if (ReadClipboardImagePixels(hwnd, &imagePixels, kClipboardImageThumbMaxDim)) {
-            clip.text = Loc(L"Image copied");
             clip.image = true;
             clip.action = ClipboardAction::SaveImage;
             clip.active = true;
             clip.imagePreview = PixelsRef(std::move(imagePixels));
+            const std::wstring source = exePath + L" " + ownerTitle + L" " + clip.appName;
+            clip.screenshot = IslandZones::IsForcedTechnicalNotice(IslandZones::AsciiLowerCopy(source));
+            clip.text = clip.screenshot ? std::wstring(Loc(L"Screenshot")) : std::wstring(Loc(L"Image copied"));
         }
     }
     if (clip.active) {
@@ -11602,6 +12089,7 @@ void StartFocusTimer(int minutes, bool isBreak) {
         g_state.timer.endsAt = NowSeconds() + minutes * 60;
         g_state.timer.remainingAtPause = 0.0;
         g_state.timer.justFinished = false;
+        g_state.timer.raisedAt = NowSeconds();
     }
     TriggerNudge();
 }
@@ -12317,12 +12805,7 @@ BOOL CALLBACK HuntNotificationSourceWindowProc(HWND hwnd, LPARAM lParam) {
 //   background  — running but not focused / minimized → restore + focus
 //   terminated  — not running → ActivateApplication / shell:AppsFolder / exe path
 // Optional activationArgs act as a deep link to a specific screen inside the app.
-void OpenNotificationSource() {
-    NotificationSnapshot snap;
-    {
-        std::lock_guard lock(g_stateMutex);
-        snap = g_state.notification;
-    }
+void OpenNotificationSource(NotificationSnapshot snap) {
     // Still try to open even if the toast just expired — identity may remain.
     if (snap.aumid.empty() && snap.app.empty() && snap.activationArgs.empty()) {
         Wh_Log(L"OpenNotificationSource: empty identity (no aumid/app/args)");
@@ -12540,6 +13023,7 @@ void DismissTransientState() {
     std::lock_guard lock(g_stateMutex);
     g_state.clipboard.active = false;
     g_state.notification.active = false;
+    g_state.systemNotification.active = false;
     g_state.volume.active = false;
     g_state.brightness.active = false;
     g_state.progress.active = false;
@@ -13164,73 +13648,85 @@ public:
         }
     }
     bool Render(const SharedState& state, const Settings& settings, const Activity& primary,
-                const std::optional<Activity>& secondary, float width, float height,
-                float nudge, bool hover, bool pinned, double now) {
+                const std::optional<Activity>& leftPill, const std::optional<Activity>& rightPill,
+                float width, float height, float nudge, bool hover, bool pinned, double now) {
         EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
         width = std::max(width, 0.0f);
         height = std::max(height, 0.0f);
-        // Stage follows the spring-animated island box. Toast is seam-anchored to its
-        // left — never re-center the pair (that slid both pills and left ghost trails).
-        float stageW = width;
-        float stageH = secondary ? std::max(height, secondary->height) : height;
-        stageW = std::max(stageW, 0.0f);
-        stageH = std::max(stageH, 0.0f);
+        // The stage is anchored to the center pill. Side pills grow away from its
+        // seams and are capped at the stage pad — they never slide the center.
         if (UsesFixedStage(settings)) {
-            stageW = std::min(stageW, kStageContentWidth * settings.sizeScale);
-            stageH = std::min(stageH, kStageContentHeight * settings.sizeScale);
             width = std::min(width, kStageContentWidth * settings.sizeScale);
             height = std::min(height, kStageContentHeight * settings.sizeScale);
         }
-        const StageLayout stage = ComputeStageLayout(settings, stageW, stageH);
+        const StageLayout stage = ComputeStageLayout(settings, width, height);
         const int pixelWidth = stage.width;
         const int pixelHeight = stage.height;
         const bool flushTop = settings.notchStyle || settings.borderMergedMode;
         const float top = stage.pillTop + (flushTop ? std::max(0.0f, nudge) : nudge);
-        const float left = stage.pillLeft;
         const BYTE alpha = static_cast<BYTE>(Clamp(settings.pillOpacity, 0.35f, 1.0f) * 255.0f);
         const bool sizeChanged = pixelWidth != bitmapWidth_ || pixelHeight != bitmapHeight_;
         const bool moved = stage.origin.x != lastOrigin_.x || stage.origin.y != lastOrigin_.y;
-        const bool secondaryNow = secondary.has_value();
-        const bool secondaryToggled = secondaryNow != lastHadSecondary_;
-        lastHadSecondary_ = secondaryNow;
-        // Dual pills: toast LEFT of island, island stays on stage.pillLeft (seam-anchored).
-        const float gap = secondary ? 20.0f * settings.sizeScale : 0.0f;
-        const float primaryW = width;
-        const float primaryH = height;
-        float toastW = secondary ? secondary->width : 0.0f;
-        float toastH = secondary ? secondary->height : 0.0f;
-        float pLeft = left;
-        float pTop = top;
-        float sLeft = left;
-        float sTop = top;
-        if (secondary) {
-            const float pairH = std::max(primaryH, toastH);
-            sLeft = pLeft - gap - toastW;
-            // Keep toast inside the stage pad; shift the pair right only if clipped.
-            if (sLeft < kRenderPadX) {
-                const float shift = kRenderPadX - sLeft;
-                sLeft += shift;
-                pLeft += shift;
-            }
-            const bool hangFromTop = settings.notchStyle || settings.borderMergedMode;
-            if (hangFromTop) {
-                pTop = top;
-                sTop = top;
-            } else {
-                pTop = top + (pairH - primaryH) * 0.5f;
-                sTop = top + (pairH - toastH) * 0.5f;
-            }
-            pairSeamX_ = pLeft;
-            pairSeamY_ = top + pairH * 0.5f;
-        } else {
-            pairSeamX_ = -1.0f;
-            pairSeamY_ = -1.0f;
+        IslandZones::LayoutInput zone;
+        zone.stageWidth = static_cast<float>(pixelWidth);
+        zone.centerLeft = stage.pillLeft;
+        zone.top = top;
+        zone.centerWidth = width;
+        zone.centerHeight = height;
+        zone.gap = 20.0f * settings.sizeScale;
+        zone.pad = kRenderPadX;
+        zone.minSide = 72.0f * settings.sizeScale;
+        zone.hangFromTop = flushTop;
+        zone.paginationReserve =
+            (height > 80.0f * settings.sizeScale) ? 14.0f * settings.sizeScale : 0.0f;
+        if (leftPill && leftPill->width >= 2.0f && leftPill->height >= 2.0f) {
+            zone.wantLeft = true;
+            zone.leftWidth = leftPill->width;
+            zone.leftHeight = leftPill->height;
         }
-        const float contentLeft = secondary ? sLeft : pLeft;
-        const float contentRight = pLeft + primaryW;
-        const float contentTop = secondary ? std::min(pTop, sTop) : pTop;
-        const float contentBottom =
-            secondary ? std::max(pTop + primaryH, sTop + toastH) : pTop + primaryH;
+        if (rightPill && rightPill->width >= 2.0f && rightPill->height >= 2.0f) {
+            zone.wantRight = true;
+            zone.rightWidth = rightPill->width;
+            zone.rightHeight = rightPill->height;
+        }
+        const IslandZones::ZoneLayout placed = IslandZones::Place(zone);
+        pairSeamX_ = placed.leftSeam;
+        pairRightSeamX_ = placed.rightSeam;
+        pairSeamY_ = top + height * 0.5f;
+        const int sideMask = (placed.technical.present ? 1 : 0) | (placed.messenger.present ? 2 : 0);
+        const bool sideToggled = sideMask != lastSideMask_;
+        lastSideMask_ = sideMask;
+        lastHadSecondary_ = sideMask != 0;
+        float contentLeft = placed.center.left;
+        float contentTop = placed.center.top;
+        float contentRight = placed.center.right();
+        float contentBottom = placed.center.bottom();
+        bool anyContent = placed.center.present;
+        auto includeSide = [&](const IslandZones::PlacedSide& side) {
+            if (!side.present) {
+                return;
+            }
+            if (!anyContent) {
+                contentLeft = side.left;
+                contentTop = side.top;
+                contentRight = side.right();
+                contentBottom = side.bottom();
+                anyContent = true;
+                return;
+            }
+            contentLeft = std::min(contentLeft, side.left);
+            contentTop = std::min(contentTop, side.top);
+            contentRight = std::max(contentRight, side.right());
+            contentBottom = std::max(contentBottom, side.bottom());
+        };
+        includeSide(placed.technical);
+        includeSide(placed.messenger);
+        if (!anyContent) {
+            contentLeft = stage.pillLeft;
+            contentTop = top;
+            contentRight = stage.pillLeft;
+            contentBottom = top;
+        }
         RECT bounds;
         bounds.left = std::max(0, static_cast<int>(std::floor(contentLeft - kRenderPadX - 4.0f)));
         bounds.top = std::max(0, static_cast<int>(std::floor(contentTop - kRenderPadY - 12.0f)));
@@ -13244,7 +13740,7 @@ public:
             std::abs(bounds.right - lastBounds_.right) > 2 ||
             std::abs(bounds.bottom - lastBounds_.bottom) > 2;
         const bool fullPaint = !kUseDirtyRect || !stageValid_ || sizeChanged || moved ||
-                               secondaryToggled || boundsJumped || alpha != lastAlpha_ ||
+                               sideToggled || boundsJumped || alpha != lastAlpha_ ||
                                (now - lastFullPaint_) > 1.0 || compositionActive_;
         if (settings.useDirectComposition && !compositionActive_) {
             TryEnableComposition(pixelWidth, pixelHeight);
@@ -13316,27 +13812,33 @@ public:
         }
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
                                         (settings.gameOverlay || g_gameOverlayPinned.load());
-        islandHiding_ = primary.width < 1.0f && primary.height < 1.0f && !secondary;
+        const bool anySide = placed.technical.present || placed.messenger.present;
+        islandHiding_ = width < 1.0f && height < 1.0f && !anySide;
         // Hover-scale grows pills toward each other and eats the gap — disable for pairs.
         const float hoverScale =
-            (!secondary && settings.expandOnHover && ((hover && !gameMetricsPresent) || pinned))
+            (!anySide && settings.expandOnHover && ((hover && !gameMetricsPresent) || pinned))
                 ? 1.025f
                 : 1.0f;
         const float scale = hoverScale;
         hoverScale_ = scale;
-        if (primaryW >= 2.0f && primaryH >= 2.0f) {
-            if (secondary) {
-                // Island first, toast second so the chip stays crisp above island shadows.
-                DrawPill(state, settings, primary,
-                         D2D1::RectF(pLeft, pTop, pLeft + primaryW, pTop + primaryH), scale,
-                         now);
-                DrawPill(state, settings, *secondary,
-                         D2D1::RectF(sLeft, sTop, sLeft + toastW, sTop + toastH), scale, now);
-            } else {
-                DrawPill(state, settings, primary,
-                         D2D1::RectF(pLeft, pTop, pLeft + primaryW, pTop + primaryH), scale,
-                         now);
-            }
+        g_privacyHitValid.store(false, std::memory_order_relaxed);
+        if (placed.center.present) {
+            DrawPill(state, settings, primary,
+                     D2D1::RectF(placed.center.left, placed.center.top, placed.center.right(),
+                                 placed.center.bottom()),
+                     scale, now);
+        }
+        if (placed.technical.present && leftPill) {
+            DrawPill(state, settings, *leftPill,
+                     D2D1::RectF(placed.technical.left, placed.technical.top,
+                                 placed.technical.right(), placed.technical.bottom()),
+                     scale, now);
+        }
+        if (placed.messenger.present && rightPill) {
+            DrawPill(state, settings, *rightPill,
+                     D2D1::RectF(placed.messenger.left, placed.messenger.top,
+                                 placed.messenger.right(), placed.messenger.bottom()),
+                     scale, now);
         }
         target_->PopAxisAlignedClip();
         hr = target_->EndDraw();
@@ -13391,39 +13893,26 @@ public:
             lastAlpha_ = alpha;
             if (fullPaint)
                 lastFullPaint_ = now;
-            if (compositionActive_) {
-                const float ox = static_cast<float>(bounds.left);
-                const float oy = static_cast<float>(bounds.top);
-                if (secondary) {
-                    g_secondaryPillClientRect =
-                        PillClientRect{sLeft - ox, sTop - oy, sLeft + toastW - ox,
-                                       sTop + toastH - oy, true};
-                    g_pillClientRect =
-                        PillClientRect{pLeft - ox, pTop - oy, pLeft + primaryW - ox,
-                                       pTop + primaryH - oy, true};
-                } else {
-                    g_pillClientRect = PillClientRect{pLeft - ox, pTop - oy, pLeft + primaryW - ox,
-                                                      pTop + primaryH - oy, true};
-                    g_secondaryPillClientRect = {};
+            const float ox = compositionActive_ ? static_cast<float>(bounds.left) : 0.0f;
+            const float oy = compositionActive_ ? static_cast<float>(bounds.top) : 0.0f;
+            auto publishPill = [&](const IslandZones::PlacedSide& side) {
+                if (!side.present) {
+                    return PillClientRect{};
                 }
-                g_clientContentOriginX.store(ox, std::memory_order_relaxed);
-                g_clientContentOriginY.store(oy, std::memory_order_relaxed);
-            } else {
-                if (secondary) {
-                    g_secondaryPillClientRect =
-                        PillClientRect{sLeft, sTop, sLeft + toastW, sTop + toastH, true};
-                    g_pillClientRect =
-                        PillClientRect{pLeft, pTop, pLeft + primaryW, pTop + primaryH, true};
-                } else {
-                    g_pillClientRect =
-                        PillClientRect{pLeft, pTop, pLeft + primaryW, pTop + primaryH, true};
-                    g_secondaryPillClientRect = {};
-                }
-                g_clientContentOriginX.store(0.0f, std::memory_order_relaxed);
-                g_clientContentOriginY.store(0.0f, std::memory_order_relaxed);
-            }
+                return PillClientRect{side.left - ox, side.top - oy, side.right() - ox,
+                                      side.bottom() - oy, true};
+            };
+            g_pillClientRect = publishPill(placed.center);
+            g_leftPillClientRect = publishPill(placed.technical);
+            g_rightPillClientRect = publishPill(placed.messenger);
+            g_secondaryPillClientRect = g_rightPillClientRect.valid ? g_rightPillClientRect
+                                                                   : g_leftPillClientRect;
+            g_clientContentOriginX.store(ox, std::memory_order_relaxed);
+            g_clientContentOriginY.store(oy, std::memory_order_relaxed);
         } else {
             stageValid_ = false;
+            g_leftPillClientRect = {};
+            g_rightPillClientRect = {};
             g_secondaryPillClientRect = {};
         }
         if (presented) {
@@ -13630,7 +14119,7 @@ public:
     }
     // Size toast to content; never exceed maxW/maxH (usually the island box).
     // Logical (unscaled) size that fits notification text, never exceeding maxW/maxH.
-    NotificationCardMetrics MeasureNotificationCard(const SharedState& state,
+    NotificationCardMetrics MeasureNotificationCard(const NotificationSnapshot& notice,
                                                     const Settings& settings, float maxW,
                                                     float maxH) {
         EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
@@ -13644,13 +14133,13 @@ public:
         const float minW = std::min(maxW, compact ? 120.0f : 168.0f);
         const float minH = std::min(maxH, compact ? maxH : 52.0f);
 
-        std::wstring app = state.notification.app;
+        std::wstring app = notice.app;
         if (app.empty() || app == L"Notification" || app == Loc(L"Notification")) {
             app = Loc(L"Notification");
         }
-        std::wstring title = state.notification.title.empty() ? std::wstring(Loc(L"Notification"))
-                                                              : state.notification.title;
-        const std::wstring& body = state.notification.body;
+        std::wstring title = notice.title.empty() ? std::wstring(Loc(L"Notification"))
+                                                              : notice.title;
+        const std::wstring& body = notice.body;
 
         auto measureLine = [&](const std::wstring& text, IDWriteTextFormat* fmt) -> float {
             if (!fmt || !dwriteFactory_ || text.empty()) {
@@ -14473,6 +14962,10 @@ private:
         float unW = (rect.right - rect.left) * invScale;
         float unH = (rect.bottom - rect.top) * invScale;
         D2D1_RECT_F unscaledRect = D2D1::RectF(pillCenter.x - unW * 0.5f, pillCenter.y - unH * 0.5f, pillCenter.x + unW * 0.5f, pillCenter.y + unH * 0.5f);
+        const NotificationSnapshot* previousNotice = activeNotice_;
+        if (activity.kind == IslandKind::Notification) {
+            activeNotice_ = activity.systemNotice ? &state.systemNotification : &state.notification;
+        }
         switch (activity.kind) {
         case IslandKind::Media:
             DrawMedia(state, unscaledRect, settings, now);
@@ -14518,7 +15011,10 @@ private:
             DrawIdleDashboard(state, unscaledRect, settings, now);
             break;
         }
-        DrawPrivacyDots(state, settings, unscaledRect, now);
+        if (activity.kind == IslandKind::Idle || activity.kind == IslandKind::Media) {
+            DrawPrivacyDots(state, settings, unscaledRect, now);
+        }
+        activeNotice_ = previousNotice;
         target_->SetTransform(oldTransform);
     }
     float InstantWaveEnergy(const SharedState& state) const {
@@ -14957,16 +15453,18 @@ private:
             textBrush_->SetOpacity(0.90f);
             return;
         }
-        // Collapsed pill: fixed red dots on the right.
+        // Collapsed pill: fixed red dots on the left cap (technical zone).
         const float dotR = 4.0f;
-        const float margin = 16.0f;
+        const float margin = 12.0f;
+        const float dotGap = 6.0f;
         const float dotY = rect.top + (rect.bottom - rect.top) * 0.5f;
-        const float x = rect.right - margin - dotR;
+        const float firstX = rect.left + margin + dotR;
+        const float secondX = firstX + dotR * 2.0f + dotGap;
+        const float lastX = (cam && mic) ? secondX : firstX;
         const float hitPad = 10.0f;
-        g_privacyHitL.store(x - hitPad - (cam && mic ? (dotR * 2.0f + 6.0f) : 0.0f),
-                            std::memory_order_relaxed);
+        g_privacyHitL.store(firstX - hitPad, std::memory_order_relaxed);
         g_privacyHitT.store(dotY - hitPad, std::memory_order_relaxed);
-        g_privacyHitR.store(x + hitPad, std::memory_order_relaxed);
+        g_privacyHitR.store(lastX + hitPad, std::memory_order_relaxed);
         g_privacyHitB.store(dotY + hitPad, std::memory_order_relaxed);
         g_privacyHitValid.store(true, std::memory_order_relaxed);
         auto paintDot = [&](float cx, ComPtr<ID2D1SolidColorBrush>& brush) {
@@ -14981,12 +15479,12 @@ private:
             }
         };
         if (cam) {
-            paintDot(x, camDotBrush_);
+            paintDot(firstX, camDotBrush_);
             if (mic) {
-                paintDot(x - (dotR * 2.0f + 6.0f), micDotBrush_);
+                paintDot(secondX, micDotBrush_);
             }
         } else if (mic) {
-            paintDot(x, micDotBrush_);
+            paintDot(firstX, micDotBrush_);
         }
         if (g_privacyHovering.load(std::memory_order_relaxed) && smallTextFormat_) {
             std::wstring label;
@@ -15023,8 +15521,8 @@ private:
                 layout->GetMetrics(&tm);
                 const float tipH = 22.0f;
                 const float tipW = tm.width + 16.0f;
-                const float tipR = x - 10.0f;
-                const float tipL = tipR - tipW;
+                const float tipL = lastX + 10.0f;
+                const float tipR = tipL + tipW;
                 const float tipT = dotY - tipH * 0.5f;
                 const float tipB = tipT + tipH;
                 ComPtr<ID2D1SolidColorBrush> tipBg;
@@ -16854,9 +17352,9 @@ private:
                 idleTextFormat_ ? idleTextFormat_.Get() : smallTextFormat_.Get();
             const float privacyReserve =
                 idleMetrics.hasPrivacy ? IdleStripLayout::kPrivacyReserve * scale : 0.0f;
-            const float innerLeft = rect.left + IdleStripLayout::kPadX * scale;
-            const float innerRight =
-                rect.right - IdleStripLayout::kPadX * scale - privacyReserve;
+            const float innerLeft =
+                rect.left + IdleStripLayout::kPadX * scale + privacyReserve;
+            const float innerRight = rect.right - IdleStripLayout::kPadX * scale;
             float blockWidth = idleMetrics.clockWidth;
             if (idleMetrics.hasWeather) {
                 blockWidth += (IdleStripLayout::kSlotGap * 2.0f +
@@ -20635,9 +21133,11 @@ private:
                                     clipboardIconBitmap_,
                                     clipboardIconGeneration_, 0.96f);
         } else {
-            const wchar_t* glyph = state.clipboard.image
-                                       ? (usingFluentIcons_ ? L"\uE91B" : L"\uE114")
-                                       : (usingFluentIcons_ ? L"\uF0E3" : L"\uE8C8");
+            const wchar_t* glyph = state.clipboard.screenshot
+                                       ? (usingFluentIcons_ ? L"\uE8B9" : L"\uE114")
+                                       : (state.clipboard.image
+                                              ? (usingFluentIcons_ ? L"\uE91B" : L"\uE114")
+                                              : (usingFluentIcons_ ? L"\uF0E3" : L"\uE8C8"));
             textBrush_->SetOpacity(0.95f);
             if (iconFormat_) {
                 iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -20710,10 +21210,13 @@ private:
                                     ? D2D1::RectF(tx, cy - 18.0f, actionLeft, cy - 2.0f)
                                     : D2D1::RectF(tx, cy - 16.0f, actionLeft, cy - 1.0f);
         mutedBrush_->SetOpacity(0.48f);
+        const wchar_t* clipKind = state.clipboard.screenshot
+                                      ? Loc(L"Screenshot")
+                                      : (state.clipboard.image ? Loc(L"Image copied") : Loc(L"Clipboard"));
         const std::wstring clipTitle =
             state.clipboard.appName.empty()
-                ? (state.clipboard.image ? std::wstring(Loc(L"Image copied")) : std::wstring(Loc(L"Clipboard")))
-                : state.clipboard.appName + L"  \u00b7  " + Loc(L"Clipboard");
+                ? std::wstring(clipKind)
+                : state.clipboard.appName + L"  \u00b7  " + clipKind;
         target_->DrawTextW(clipTitle.c_str(), static_cast<UINT32>(clipTitle.size()),
                            smallTextFormat_.Get(), titleRect, mutedBrush_.Get(),
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -20726,16 +21229,17 @@ private:
         mutedBrush_->SetOpacity(0.58f);
     }
     void DrawNotification(const SharedState& state, D2D1_RECT_F rect) {
+        const NotificationSnapshot& notice = activeNotice_ ? *activeNotice_ : state.notification;
         const float boxW = rect.right - rect.left;
         const float boxH = rect.bottom - rect.top;
         if (boxH < 28.0f || boxW < 80.0f)
             return;
         const double now = NowSeconds();
         const float ttl = 8.0f;
-        const float remaining = Clamp(static_cast<float>(state.notification.expiresAt - now), 0.0f, ttl);
+        const float remaining = Clamp(static_cast<float>(notice.expiresAt - now), 0.0f, ttl);
         const float progress = remaining / ttl;
         const bool compact = boxH < 64.0f;
-        const bool showBody = !state.notification.body.empty() && boxH >= 72.0f;
+        const bool showBody = !notice.body.empty() && boxH >= 72.0f;
         const float pad = compact ? 8.0f : (boxH >= 100.0f ? 16.0f : 12.0f);
         const float iconSz = compact ? Clamp(boxH - pad * 2.0f, 18.0f, 28.0f)
                                      : Clamp(std::min(36.0f, boxH - pad * 2.0f), 24.0f, 48.0f);
@@ -20747,8 +21251,8 @@ private:
         ComPtr<ID2D1SolidColorBrush> plateBrush;
         target_->CreateSolidColorBrush(material_.raisedStrong, &plateBrush);
         target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), plateBrush.Get());
-        if (state.notification.icon) {
-            DrawRoundedBitmapPixels(*state.notification.icon, badge, br,
+        if (notice.icon) {
+            DrawRoundedBitmapPixels(*notice.icon, badge, br,
                                     notificationIconBitmap_, notificationIconGeneration_, 1.0f);
             ComPtr<ID2D1SolidColorBrush> badgeColor;
             target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.23f, 0.18f, 1.0f), &badgeColor);
@@ -20778,14 +21282,14 @@ private:
         const bool showBar = frameSettings_.statusCountdownProgress;
         const float textBottom = showBar ? (rect.bottom - 10.0f) : (rect.bottom - pad);
         const std::wstring appLabel =
-            (state.notification.app.empty() ||
-             state.notification.app == L"Notification" ||
-             state.notification.app == Loc(L"Notification"))
+            (notice.app.empty() ||
+             notice.app == L"Notification" ||
+             notice.app == Loc(L"Notification"))
                 ? std::wstring(Loc(L"Notification"))
-                : state.notification.app;
-        const std::wstring titleText = state.notification.title.empty()
+                : notice.app;
+        const std::wstring titleText = notice.title.empty()
                                            ? std::wstring(Loc(L"Notification"))
-                                           : state.notification.title;
+                                           : notice.title;
         mutedBrush_->SetOpacity(0.75f);
         textBrush_->SetOpacity(0.95f);
         if (compact) {
@@ -20818,8 +21322,8 @@ private:
                 mutedBrush_->SetOpacity(0.85f);
                 if (smallTextFormat_) {
                     smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-                    target_->DrawTextW(state.notification.body.c_str(),
-                                       static_cast<UINT32>(state.notification.body.size()),
+                    target_->DrawTextW(notice.body.c_str(),
+                                       static_cast<UINT32>(notice.body.size()),
                                        smallTextFormat_.Get(), bodyRect, mutedBrush_.Get(),
                                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -22006,6 +22510,8 @@ private:
     POINT lastOrigin_ = {0, 0};
     RECT lastBounds_ = {0, 0, 0, 0};
     bool lastHadSecondary_ = false;
+    int lastSideMask_ = 0;
+    const NotificationSnapshot* activeNotice_ = nullptr;
     BYTE lastAlpha_ = 0;
     bool stageValid_ = false;
     double lastFullPaint_ = -1e9;
@@ -22274,9 +22780,9 @@ private:
     RadialGradientSlot bloomGrad_;
     ShapeEntry shapeCache_[kShapeCacheSize];
     uint64_t shapeClock_ = 0;
-    // Pair layout: toast left / island right share a fixed seam so they expand
-    // away from each other (3-way) instead of pushing.
+    // Center stays put. Left and right seams are the center pill's edges.
     float pairSeamX_ = -1.0f;
+    float pairRightSeamX_ = -1.0f;
     float pairSeamY_ = -1.0f;
 };
 Activity ActivityForKind(IslandKind kind, const Settings& settings, const SharedState& state) {
@@ -22351,77 +22857,62 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
     activity.height *= settings.sizeScale;
     return activity;
 }
-std::vector<IslandKind> ChooseActivities(const SharedState& state, const Settings& settings, double now) {
-    std::vector<IslandKind> activities;
+struct IslandSlots {
+    IslandKind center = IslandKind::Idle;
+    bool hasLeft = false;
+    IslandKind left = IslandKind::Idle;
+    bool leftSystemNotice = false;
+    bool hasRight = false;
+};
+// Center is Media, Idle, or Quick Lookup. The newest technical event owns the left
+// pill; the newest messenger toast owns the right pill. The two sides coexist.
+IslandSlots ChooseIslandSlots(const SharedState& state, const Settings& settings, double now) {
+    IslandSlots slots;
     if (settings.quickLookup && state.lookup.active && now < state.lookup.expiresAt) {
-        activities.push_back(IslandKind::Lookup);
+        slots.center = IslandKind::Lookup;
+        return slots;
     }
-    if (state.clipboard.active && now < state.clipboard.expiresAt) {
-        activities.push_back(IslandKind::Clipboard);
+    slots.center = (settings.media && state.media.available) ? IslandKind::Media : IslandKind::Idle;
+    double bestAt = -1.0;
+    bool anyLeft = false;
+    auto consider = [&](bool active, IslandKind kind, double raisedAt, bool systemNotice) {
+        if (!active) {
+            return;
+        }
+        if (!anyLeft || raisedAt > bestAt) {
+            anyLeft = true;
+            bestAt = raisedAt;
+            slots.hasLeft = true;
+            slots.left = kind;
+            slots.leftSystemNotice = systemNotice;
+        }
+    };
+    consider(settings.progress && state.progress.active, IslandKind::Progress, state.progress.raisedAt,
+             false);
+    consider(settings.timerEnabled &&
+                 ((state.timer.justFinished && now < state.timer.finishedExpiresAt) || state.timer.active),
+             IslandKind::Timer, state.timer.raisedAt, false);
+    consider(settings.battery && state.battery.active && now < state.battery.expiresAt,
+             IslandKind::BatteryLow, state.battery.raisedAt, false);
+    consider(settings.doNotDisturbIndicator && state.doNotDisturb.active &&
+                 now < state.doNotDisturb.expiresAt,
+             IslandKind::DoNotDisturb, state.doNotDisturb.raisedAt, false);
+    consider(settings.bluetoothIndicator && state.bluetoothDevice.active &&
+                 now < state.bluetoothDevice.expiresAt,
+             IslandKind::Bluetooth, state.bluetoothDevice.raisedAt, false);
+    consider(state.device.active && now < state.device.expiresAt, IslandKind::Device,
+             state.device.raisedAt, false);
+    consider(settings.capsLock && state.capsLock.active && now < state.capsLock.expiresAt,
+             IslandKind::CapsLock, state.capsLock.raisedAt, false);
+    consider(settings.clipboard && state.clipboard.active && now < state.clipboard.expiresAt,
+             IslandKind::Clipboard, state.clipboard.raisedAt, false);
+    if (settings.notifications && state.systemNotification.active &&
+        now < state.systemNotification.expiresAt) {
+        consider(true, IslandKind::Notification, state.systemNotification.raisedAt, true);
     }
-    if (settings.capsLock && state.capsLock.active && now < state.capsLock.expiresAt) {
-        activities.push_back(IslandKind::CapsLock);
-    }
-    if (state.device.active && now < state.device.expiresAt) {
-        activities.push_back(IslandKind::Device);
-    }
-    if (settings.bluetoothIndicator && state.bluetoothDevice.active &&
-        now < state.bluetoothDevice.expiresAt) {
-        activities.push_back(IslandKind::Bluetooth);
-    }
-    if (settings.doNotDisturbIndicator && state.doNotDisturb.active &&
-        now < state.doNotDisturb.expiresAt) {
-        activities.push_back(IslandKind::DoNotDisturb);
-    }
-    if (state.notification.active && now < state.notification.expiresAt) {
-        activities.push_back(IslandKind::Notification);
-    }
-    if (settings.battery && state.battery.active && now < state.battery.expiresAt) {
-        activities.push_back(IslandKind::BatteryLow);
-    }
-    if (settings.progress && state.progress.active) {
-        activities.push_back(IslandKind::Progress);
-    }
-    if (settings.timerEnabled &&
-        ((state.timer.justFinished && now < state.timer.finishedExpiresAt) ||
-         state.timer.active)) {
-        activities.push_back(IslandKind::Timer);
-    }
-    // Media owns volume UI (inline transport scale). External Volume pill disabled.
-    if (settings.media && state.media.available) {
-        activities.push_back(IslandKind::Media);
-    }
-    if (activities.empty()) {
-        activities.push_back(IslandKind::Idle);
-    }
-    return activities;
-}
-// Keep the main island (Media / Idle tabs) as primary. Notifications adapt beside it
-// as a secondary pill — they must not collapse an expanded player or dashboard.
-void StabilizeIslandActivities(std::vector<IslandKind>& kinds, bool islandExpanded,
-                               bool mediaAvailable) {
-    if (kinds.empty()) {
-        return;
-    }
-    // Quick Lookup keeps absolute priority.
-    if (kinds[0] == IslandKind::Lookup) {
-        return;
-    }
-    const bool hasNotification =
-        std::find(kinds.begin(), kinds.end(), IslandKind::Notification) != kinds.end();
-    if (!hasNotification) {
-        return;
-    }
-    if (mediaAvailable ||
-        std::find(kinds.begin(), kinds.end(), IslandKind::Media) != kinds.end()) {
-        kinds.clear();
-        kinds.push_back(IslandKind::Media);
-        kinds.push_back(IslandKind::Notification);
-        return;
-    }
-    // Keep Notification as primary while it is the only toast. Inserting Idle on
-    // hover/expand produced an empty expanded capsule beside a vanishing toast.
-    (void)islandExpanded;
+    slots.hasRight = settings.notifications && state.notification.messenger &&
+                     state.notification.active && now < state.notification.expiresAt;
+    return slots;
 }
 constexpr UINT WM_APP_CAPSLOCK = WM_APP + 0x444;
 HHOOK g_keyboardHook = nullptr;
@@ -23313,7 +23804,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_state.capsLock.capsOn = capsOn;
             g_state.capsLock.numOn = numOn;
             g_state.capsLock.isNumEvent = isNum;
-            g_state.capsLock.expiresAt = NowSeconds() + 3.0;
+            g_state.capsLock.raisedAt = NowSeconds();
+            g_state.capsLock.expiresAt = g_state.capsLock.raisedAt + 3.0;
         }
         g_autoHiddenParked = false;
         g_layoutDirty = true;
@@ -23344,7 +23836,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                                                    : DeviceEventType::Disconnected;
                 g_state.device.deviceName = devName;
                 g_state.device.isBluetoothLike = isBt;
-                g_state.device.expiresAt = NowSeconds() + 3.0;
+                g_state.device.raisedAt = NowSeconds();
+                g_state.device.expiresAt = g_state.device.raisedAt + 3.0;
             }
             TriggerNudge();
         }
@@ -23375,10 +23868,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ScreenToClient(hwnd, &pt);
         const float px = static_cast<float>(pt.x);
         const float py = static_cast<float>(pt.y);
-        if (g_pillClientRect.Contains(px, py) || g_secondaryPillClientRect.Contains(px, py)) {
+        if (g_pillClientRect.Contains(px, py) || g_leftPillClientRect.Contains(px, py) ||
+            g_rightPillClientRect.Contains(px, py)) {
             return HTCLIENT;
         }
-        if (g_pillClientRect.valid || g_secondaryPillClientRect.valid) {
+        if (g_pillClientRect.valid || g_leftPillClientRect.valid || g_rightPillClientRect.valid) {
             return HTTRANSPARENT;
         }
         RECT clientRect = {};
@@ -23833,116 +24327,84 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (HandleLookupClick(xPos, yPos)) {
             return 0;
         }
-        std::vector<IslandKind> kinds;
+        IslandSlots slots;
         {
             std::lock_guard lock(g_stateMutex);
             mediaActive = settings.media && g_state.media.available;
-            kinds = ChooseActivities(g_state, settings, NowSeconds());
+            slots = ChooseIslandSlots(g_state, settings, NowSeconds());
         }
-        const bool islandExpanded =
-            g_pinnedExpanded.load(std::memory_order_relaxed) ||
-            g_clickExpanded.load(std::memory_order_relaxed);
-        StabilizeIslandActivities(kinds, islandExpanded, mediaActive);
         const float tapX = static_cast<float>(xPos);
         const float tapY = static_cast<float>(yPos);
-        bool onSecondaryPill = g_secondaryPillClientRect.Contains(tapX, tapY);
-        const bool onPrimaryPill = g_pillClientRect.Contains(tapX, tapY);
-        // Inflate secondary hit + treat "left of primary" as secondary (toast is on the left).
-        if (!onSecondaryPill && g_secondaryPillClientRect.valid) {
-            const float pad = 10.0f;
-            if (tapX >= g_secondaryPillClientRect.left - pad &&
-                tapX <= g_secondaryPillClientRect.right + pad &&
-                tapY >= g_secondaryPillClientRect.top - pad &&
-                tapY <= g_secondaryPillClientRect.bottom + pad) {
-                onSecondaryPill = true;
-            } else if (g_pillClientRect.valid && tapX < g_pillClientRect.left) {
-                onSecondaryPill = true;
-            }
-        }
+        auto inflatedHit = [](const PillClientRect& rect, float x, float y) {
+            constexpr float pad = 8.0f;
+            return rect.valid && x >= rect.left - pad && x <= rect.right + pad &&
+                   y >= rect.top - pad && y <= rect.bottom + pad;
+        };
+        const bool onLeft = g_leftPillClientRect.Contains(tapX, tapY) ||
+                            (inflatedHit(g_leftPillClientRect, tapX, tapY) &&
+                             !g_pillClientRect.Contains(tapX, tapY));
+        const bool onRight = !onLeft && (g_rightPillClientRect.Contains(tapX, tapY) ||
+                                         (inflatedHit(g_rightPillClientRect, tapX, tapY) &&
+                                          !g_pillClientRect.Contains(tapX, tapY)));
+        const bool onPrimaryPill = g_pillClientRect.Contains(tapX, tapY) && !onLeft && !onRight;
         if (PrivacyDotsHitTest(xPos, yPos)) {
             OpenPrivacySettingsForActiveDevice();
             return 0;
         }
-        bool notificationActive = false;
-        {
-            std::lock_guard lock(g_stateMutex);
-            notificationActive =
-                g_state.notification.active && NowSeconds() < g_state.notification.expiresAt;
-        }
-        const bool notificationIsPrimary =
-            !kinds.empty() && kinds[0] == IslandKind::Notification;
-        const bool notificationIsSecondary =
-            kinds.size() > 1 && kinds[1] == IslandKind::Notification;
-        const bool hasNotificationKind =
-            notificationIsPrimary || notificationIsSecondary ||
-            std::find(kinds.begin(), kinds.end(), IslandKind::Notification) != kinds.end();
-        IslandKind tappedKind = IslandKind::Idle;
-        if (onSecondaryPill && kinds.size() > 1) {
-            tappedKind = kinds[1];
-        } else if (onPrimaryPill && !kinds.empty()) {
-            tappedKind = kinds[0];
-        } else if (notificationIsPrimary) {
-            tappedKind = IslandKind::Notification;
-        }
-        // Universal toast open: primary toast, side toast, or any island click while a
-        // toast is showing alone (no media competing for the primary pill).
-        const bool openNotification =
-            notificationActive && hasNotificationKind &&
-            (notificationIsPrimary || onSecondaryPill ||
-             (onPrimaryPill && notificationIsPrimary) ||
-             (!mediaActive && !notificationIsSecondary));
-        if (openNotification) {
-            tappedKind = IslandKind::Notification;
-        }
-        if (!kinds.empty() &&
-            (openNotification ||
-             (tappedKind == IslandKind::Clipboard &&
-              ((tappedKind == kinds[0] && onPrimaryPill) ||
-               (kinds.size() > 1 && tappedKind == kinds[1] && onSecondaryPill))))) {
-            if (openNotification) {
-                OpenNotificationSource();
-                tappedKind = IslandKind::Notification;
-            } else if (tappedKind == IslandKind::Clipboard) {
-                ClipboardAction action = ClipboardAction::None;
-                std::wstring actionUrl;
-                {
-                    std::lock_guard lock(g_stateMutex);
-                    action = g_state.clipboard.action;
-                    actionUrl = g_state.clipboard.actionUrl;
-                }
-                if (ClipboardActionHitTest(xPos, yPos)) {
-                    if (action == ClipboardAction::OpenUrl && !actionUrl.empty()) {
-                        ShellExecuteW(nullptr, L"open", actionUrl.c_str(), nullptr, nullptr,
-                                      SW_SHOWNORMAL);
-                    } else if (action == ClipboardAction::SaveImage) {
-                        SaveClipboardImageToPictures(hwnd);
-                    }
-                }
-            }
+        if (onRight && slots.hasRight) {
+            NotificationSnapshot snap;
             {
                 std::lock_guard lock(g_stateMutex);
-                if (tappedKind == IslandKind::Notification) {
-                    g_state.notification.active = false;
-                    g_state.notification.expiresAt = 0.0;
-                } else if (tappedKind == IslandKind::Clipboard) {
-                    g_state.clipboard.active = false;
-                    g_state.clipboard.expiresAt = 0.0;
+                snap = g_state.notification;
+                g_state.notification.active = false;
+                g_state.notification.expiresAt = 0.0;
+            }
+            OpenNotificationSource(std::move(snap));
+            g_layoutDirty = true;
+            TriggerNudge();
+            return 0;
+        }
+        if (onLeft && slots.hasLeft && slots.left == IslandKind::Notification) {
+            NotificationSnapshot snap;
+            {
+                std::lock_guard lock(g_stateMutex);
+                snap = g_state.systemNotification;
+                g_state.systemNotification.active = false;
+                g_state.systemNotification.expiresAt = 0.0;
+            }
+            OpenNotificationSource(std::move(snap));
+            g_layoutDirty = true;
+            TriggerNudge();
+            return 0;
+        }
+        if (onLeft && slots.hasLeft && slots.left == IslandKind::Clipboard) {
+            ClipboardAction action = ClipboardAction::None;
+            std::wstring actionUrl;
+            const bool actionHit = ClipboardActionHitTest(xPos, yPos);
+            {
+                std::lock_guard lock(g_stateMutex);
+                action = g_state.clipboard.action;
+                actionUrl = g_state.clipboard.actionUrl;
+                g_state.clipboard.active = false;
+                g_state.clipboard.expiresAt = 0.0;
+            }
+            if (actionHit) {
+                if (action == ClipboardAction::OpenUrl && !actionUrl.empty()) {
+                    ShellExecuteW(nullptr, L"open", actionUrl.c_str(), nullptr, nullptr,
+                                  SW_SHOWNORMAL);
+                } else if (action == ClipboardAction::SaveImage) {
+                    SaveClipboardImageToPictures(hwnd);
                 }
             }
             g_clipActionHitValid.store(false, std::memory_order_relaxed);
-            // Dismissing a side toast must not collapse the main island.
-            if (tappedKind == kinds[0]) {
-                g_clickExpanded = false;
-            }
             g_layoutDirty = true;
             TriggerNudge();
             return 0;
         }
         const bool gameMetricsPresent =
-            !kinds.empty() && kinds[0] == IslandKind::Idle &&
+            slots.center == IslandKind::Idle &&
             (settings.gameOverlay || g_gameOverlayPinned.load());
-        if (settings.expandOnClick && !gameMetricsPresent &&
-            (onPrimaryPill || onSecondaryPill)) {
+        if (settings.expandOnClick && !gameMetricsPresent && onPrimaryPill) {
             const bool wasExpanded =
                 g_pinnedExpanded.load(std::memory_order_relaxed) ||
                 g_clickExpanded.load(std::memory_order_relaxed);
@@ -24119,7 +24581,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     return 0;
                 }
                 OpenRelevantApp();
-            } else if (kinds.empty() || kinds[0] != IslandKind::Idle) {
+            } else if (slots.center != IslandKind::Idle) {
                 HandleStatusClickAtPoint(hwnd, lParam);
             }
         } else {
@@ -24599,6 +25061,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 g_state.timer.running = false;
                 g_state.timer.justFinished = true;
                 g_state.timer.finishedExpiresAt = now + 6.0;
+                g_state.timer.raisedAt = now;
                 timerJustCompleted = true;
             }
             if (g_state.timer.justFinished && now >= g_state.timer.finishedExpiresAt) {
@@ -24609,36 +25072,38 @@ DWORD WINAPI RenderThreadProc(void*) {
                 g_state.clipboard.active = false;
                 snapshot.clipboard.active = false;
             }
-            if (g_state.notification.active) {
-                // Keep toast alive while the cursor rests on it (primary or side pill).
-                bool overNotification = false;
-                if (g_hwnd) {
-                    POINT pt = {};
-                    GetCursorPos(&pt);
-                    if (ScreenToClient(g_hwnd, &pt)) {
-                        const float x = static_cast<float>(pt.x);
-                        const float y = static_cast<float>(pt.y);
-                        const float pad = 12.0f;
-                        auto hit = [&](const PillClientRect& r) {
-                            return r.valid && x >= r.left - pad && x <= r.right + pad &&
-                                   y >= r.top - pad && y <= r.bottom + pad;
-                        };
-                        if (g_secondaryPillClientRect.valid) {
-                            overNotification = hit(g_secondaryPillClientRect);
-                        } else {
-                            overNotification = hit(g_pillClientRect);
-                        }
-                    }
-                }
-                if (overNotification) {
-                    g_state.notification.expiresAt =
-                        (std::max)(g_state.notification.expiresAt, now + 2.0);
-                    snapshot.notification = g_state.notification;
-                } else if (now >= g_state.notification.expiresAt) {
-                    g_state.notification.active = false;
-                    snapshot.notification.active = false;
+            bool overLeftNotice = false;
+            bool overRightNotice = false;
+            if (g_hwnd && (g_state.notification.active || g_state.systemNotification.active)) {
+                POINT pt = {};
+                GetCursorPos(&pt);
+                if (ScreenToClient(g_hwnd, &pt)) {
+                    const float x = static_cast<float>(pt.x);
+                    const float y = static_cast<float>(pt.y);
+                    const float pad = 12.0f;
+                    auto hit = [&](const PillClientRect& r) {
+                        return r.valid && x >= r.left - pad && x <= r.right + pad &&
+                               y >= r.top - pad && y <= r.bottom + pad;
+                    };
+                    overLeftNotice = hit(g_leftPillClientRect);
+                    overRightNotice = hit(g_rightPillClientRect);
                 }
             }
+            auto settleNotice = [&](NotificationSnapshot& note, NotificationSnapshot& snapNote,
+                                    bool overPill) {
+                if (!note.active) {
+                    return;
+                }
+                if (overPill) {
+                    note.expiresAt = (std::max)(note.expiresAt, now + 2.0);
+                    snapNote = note;
+                } else if (now >= note.expiresAt) {
+                    note.active = false;
+                    snapNote.active = false;
+                }
+            };
+            settleNotice(g_state.notification, snapshot.notification, overRightNotice);
+            settleNotice(g_state.systemNotification, snapshot.systemNotification, overLeftNotice);
             if (g_state.volume.active &&
                 (g_volumeDragging.load(std::memory_order_relaxed) ||
                  g_volumeHovering.load(std::memory_order_relaxed))) {
@@ -24672,11 +25137,10 @@ DWORD WINAPI RenderThreadProc(void*) {
             (!frame.quickLookup || !snapshot.lookup.active || now >= snapshot.lookup.expiresAt)) {
             CloseLookupPanel(hwnd);
         }
-        std::vector<IslandKind> kinds = ChooseActivities(snapshot, frame, now);
+        const IslandSlots slots = ChooseIslandSlots(snapshot, frame, now);
         g_lyricsTabAvailable.store(
             frame.lyrics && frame.media && snapshot.media.available,
             std::memory_order_relaxed);
-        const bool mediaAvailable = frame.media && snapshot.media.available;
         const bool pinned = g_pinnedExpanded.load();
         POINT cursor = {};
         GetCursorPos(&cursor);
@@ -24692,7 +25156,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             hoverStage.origin.x + static_cast<int>(std::lround(hoverStage.pillLeft + widthSpring.value)),
             hoverStage.origin.y + static_cast<int>(std::lround(hoverTop + heightSpring.value))};
         bool hover = false;
-        if (g_hwnd && (g_pillClientRect.valid || g_secondaryPillClientRect.valid)) {
+        if (g_hwnd && (g_pillClientRect.valid || g_leftPillClientRect.valid ||
+                       g_rightPillClientRect.valid)) {
             POINT clientPt = cursor;
             if (ScreenToClient(g_hwnd, &clientPt)) {
                 const float pad = 8.0f;
@@ -24702,17 +25167,33 @@ DWORD WINAPI RenderThreadProc(void*) {
                     return r.valid && cx >= r.left - pad && cx <= r.right + pad &&
                            cy >= r.top - pad && cy <= r.bottom + pad;
                 };
-                hover = hit(g_pillClientRect) || hit(g_secondaryPillClientRect);
-                float l = g_pillClientRect.valid ? g_pillClientRect.left : g_secondaryPillClientRect.left;
-                float t = g_pillClientRect.valid ? g_pillClientRect.top : g_secondaryPillClientRect.top;
-                float r = g_pillClientRect.valid ? g_pillClientRect.right : g_secondaryPillClientRect.right;
-                float b = g_pillClientRect.valid ? g_pillClientRect.bottom : g_secondaryPillClientRect.bottom;
-                if (g_secondaryPillClientRect.valid) {
-                    l = std::min(l, g_secondaryPillClientRect.left);
-                    t = std::min(t, g_secondaryPillClientRect.top);
-                    r = std::max(r, g_secondaryPillClientRect.right);
-                    b = std::max(b, g_secondaryPillClientRect.bottom);
-                }
+                hover = hit(g_pillClientRect) || hit(g_leftPillClientRect) ||
+                        hit(g_rightPillClientRect);
+                float l = 0.0f;
+                float t = 0.0f;
+                float r = 0.0f;
+                float b = 0.0f;
+                bool anyPill = false;
+                auto unionPill = [&](const PillClientRect& pill) {
+                    if (!pill.valid) {
+                        return;
+                    }
+                    if (!anyPill) {
+                        l = pill.left;
+                        t = pill.top;
+                        r = pill.right;
+                        b = pill.bottom;
+                        anyPill = true;
+                        return;
+                    }
+                    l = std::min(l, pill.left);
+                    t = std::min(t, pill.top);
+                    r = std::max(r, pill.right);
+                    b = std::max(b, pill.bottom);
+                };
+                unionPill(g_pillClientRect);
+                unionPill(g_leftPillClientRect);
+                unionPill(g_rightPillClientRect);
                 POINT tl = {static_cast<LONG>(std::floor(l)), static_cast<LONG>(std::floor(t))};
                 POINT br = {static_cast<LONG>(std::ceil(r)), static_cast<LONG>(std::ceil(b))};
                 ClientToScreen(g_hwnd, &tl);
@@ -24751,12 +25232,18 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
         const bool clickHeld = frame.expandOnClick && g_clickExpanded.load(std::memory_order_relaxed);
         bool isHoverExpanded = clickHeld || (frame.expandOnHover && hover);
-        // Island stays primary; toast rides as a side pill instead of replacing the dashboard.
-        StabilizeIslandActivities(kinds, pinned || isHoverExpanded, mediaAvailable);
-        Activity primary = ActivityForKind(kinds[0], frame, snapshot);
-        std::optional<Activity> secondary;
-        if (kinds.size() >= 2) {
-            secondary = ActivityForKind(kinds[1], frame, snapshot);
+        // Center keeps media or the clock. Technical and messenger pills sit beside it.
+        Activity primary = ActivityForKind(slots.center, frame, snapshot);
+        std::optional<Activity> leftPill;
+        std::optional<Activity> rightPill;
+        if (slots.center != IslandKind::Lookup) {
+            if (slots.hasLeft) {
+                leftPill = ActivityForKind(slots.left, frame, snapshot);
+                leftPill->systemNotice = slots.leftSystemNotice;
+            }
+            if (slots.hasRight) {
+                rightPill = ActivityForKind(IslandKind::Notification, frame, snapshot);
+            }
         }
         if (primary.kind != previousPrimary) {
             if (primary.kind != IslandKind::Idle) {
@@ -24774,19 +25261,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                                        !snapshot.media.title.empty() &&
                                        (now - snapshot.media.titleChangedAt < 5.0);
         const bool notificationShowing =
-            snapshot.notification.active && now < snapshot.notification.expiresAt;
-        bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
-                                 primary.kind == IslandKind::Notification ||
-                                 primary.kind == IslandKind::Volume ||
-                                 primary.kind == IslandKind::Brightness ||
-                                 primary.kind == IslandKind::BatteryLow ||
-                                 primary.kind == IslandKind::CapsLock ||
-                                 primary.kind == IslandKind::Device ||
-                                 primary.kind == IslandKind::Bluetooth ||
-                                 primary.kind == IslandKind::DoNotDisturb ||
-                                 primary.kind == IslandKind::Lookup ||
-                                 notificationShowing ||
-                                 recentTrackChange);
+            (snapshot.notification.messenger && snapshot.notification.active &&
+             now < snapshot.notification.expiresAt) ||
+            (snapshot.systemNotification.active && now < snapshot.systemNotification.expiresAt);
+        const bool sideAlert = leftPill.has_value() || rightPill.has_value();
+        bool isTransientAlert = sideAlert || primary.kind == IslandKind::Lookup ||
+                                notificationShowing || recentTrackChange;
         const bool unhideGraceActive = (now < g_hotkeyUnhideUntil.load());
         const bool hoverUnhides = frame.unhideOnHover && hover;
         bool currentlyHidden = false;
@@ -24859,10 +25339,13 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (!isFullscreen && (pinned || isHoverExpanded)) {
                 primary.width = MediaLayout::kExpandedWidth * frame.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * frame.sizeScale;
-            } else if (primary.width > 0.0f) {
+            } else if (primary.width > 0.0f || leftPill || rightPill) {
                 primary.width =
                     renderer.MeasureIdleStrip(snapshot, frame, now).totalWidth *
                     frame.sizeScale;
+                if (primary.height < 1.0f) {
+                    primary.height = IdleStripLayout::kHeight * frame.sizeScale;
+                }
             }
         }
         if (!isFullscreen && primary.kind == IslandKind::Idle &&
@@ -24893,52 +25376,45 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
         if (primary.kind == IslandKind::Lookup) {
-            secondary.reset();
+            leftPill.reset();
+            rightPill.reset();
             if (primary.width > 1.0f) {
                 const Settings lookupSettings = frame;
                 primary.height = renderer.MeasureLookupCard(snapshot, lookupSettings) *
                                  lookupSettings.sizeScale;
             }
         }
-        // Toast sizes to content, never larger than the island (primary) box.
         const float sizeScale = std::max(0.01f, frame.sizeScale);
-        if (primary.kind == IslandKind::Notification) {
-            const float soloMaxW =
-                (pinned || isHoverExpanded) ? MediaLayout::kExpandedWidth : 320.0f;
-            const float soloMaxH =
-                (pinned || isHoverExpanded) ? MediaLayout::kExpandedHeight : 64.0f;
-            const auto fit =
-                renderer.MeasureNotificationCard(snapshot, frame, soloMaxW, soloMaxH);
-            primary.width = std::min(fit.width, soloMaxW) * sizeScale;
-            primary.height = std::min(fit.height, soloMaxH) * sizeScale;
+        auto fitSideNotice = [&](Activity& act, bool systemNotice) {
+            const NotificationSnapshot& notice =
+                systemNotice ? snapshot.systemNotification : snapshot.notification;
+            const float capW = std::min(act.width / sizeScale, 280.0f);
+            const float capH = std::min(act.height / sizeScale, std::max(44.0f, primary.height / sizeScale));
+            const auto fit = renderer.MeasureNotificationCard(notice, frame, capW, capH);
+            act.width = std::min(fit.width, capW) * sizeScale;
+            act.height = std::min(fit.height, capH) * sizeScale;
+        };
+        if (leftPill && leftPill->kind == IslandKind::Notification) {
+            fitSideNotice(*leftPill, true);
         }
-        if (secondary && secondary->kind == IslandKind::Notification) {
-            const float islandCapW = primary.width / sizeScale;
-            const float islandCapH = primary.height / sizeScale;
-            const auto fit =
-                renderer.MeasureNotificationCard(snapshot, frame, islandCapW, islandCapH);
-            secondary->width = std::min(fit.width, islandCapW) * sizeScale;
-            secondary->height = std::min(fit.height, islandCapH) * sizeScale;
+        if (rightPill && rightPill->kind == IslandKind::Notification) {
+            fitSideNotice(*rightPill, false);
         }
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
             primary.width = 0.0f;
             primary.height = 0.0f;
-            secondary.reset();
+            leftPill.reset();
+            rightPill.reset();
         }
         const bool mediaWaveformVisible =
-            frame.media && snapshot.media.playing &&
-            ((primary.kind == IslandKind::Media && primary.width > 1.0f && primary.height > 1.0f) ||
-             (secondary && secondary->kind == IslandKind::Media && secondary->width > 1.0f && secondary->height > 1.0f));
+            frame.media && snapshot.media.playing && primary.kind == IslandKind::Media &&
+            primary.width > 1.0f && primary.height > 1.0f;
         g_audioCaptureNeeded.store(mediaWaveformVisible, std::memory_order_relaxed);
-        // Springs track the island only — toast is seam-anchored and must not
-        // recenter the stage when it grows.
+        // Springs track the center island only. Side pills are seam-anchored.
         float targetWidth = primary.width;
         float targetHeight = primary.height;
-        if (secondary) {
-            targetHeight = std::max(primary.height, secondary->height);
-        }
         widthSpring.target = targetWidth;
         heightSpring.target = targetHeight;
         if (justUnhidden || (unhideGraceActive && widthSpring.value < 0.5f && targetWidth > 1.0f)) {
@@ -25012,7 +25488,9 @@ DWORD WINAPI RenderThreadProc(void*) {
             break;
         }
         const bool modifierHoverCT = hover && modifierHeld && !g_lookupUi.open;
-        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned) ||
+        const bool sidePillsVisible = leftPill.has_value() || rightPill.has_value();
+        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !sidePillsVisible &&
+                               !draggingOrHover && !pinned) ||
                                   modifierHoverCT);
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
             std::abs(heightSpring.velocity) > 0.01f || std::abs(heightSpring.target - heightSpring.value) > 0.01f ||
@@ -25057,13 +25535,13 @@ DWORD WINAPI RenderThreadProc(void*) {
             prevHover = hover;
             prevPinned = pinned;
         }
-        const bool mediaShown = primary.kind == IslandKind::Media ||
-                                (secondary && secondary->kind == IslandKind::Media);
+        const bool mediaShown = primary.kind == IslandKind::Media;
         const bool mediaAnimating =
             mediaShown && (snapshot.media.playing || isHoverExpanded || pinned);
         const auto isTransientPill = [](IslandKind kind) {
             return kind == IslandKind::BatteryLow || kind == IslandKind::Clipboard ||
-                   kind == IslandKind::Notification;
+                   kind == IslandKind::Notification || kind == IslandKind::CapsLock ||
+                   kind == IslandKind::Timer;
         };
         const auto hasCountdownBar = [](IslandKind kind) {
             return kind == IslandKind::Device || kind == IslandKind::Bluetooth ||
@@ -25071,10 +25549,10 @@ DWORD WINAPI RenderThreadProc(void*) {
         };
         const bool countdownBarsOn = frame.statusCountdownProgress;
         const bool continuousAnimation =
-            mediaAnimating || isTransientPill(primary.kind) ||
-            (secondary && isTransientPill(secondary->kind)) ||
-            (countdownBarsOn && (hasCountdownBar(primary.kind) ||
-                                 (secondary && hasCountdownBar(secondary->kind))));
+            mediaAnimating ||
+            (leftPill && (isTransientPill(leftPill->kind) ||
+                          (countdownBarsOn && hasCountdownBar(leftPill->kind)))) ||
+            (rightPill && isTransientPill(rightPill->kind));
         if (continuousAnimation) {
             needsRender = true;
         }
@@ -25094,8 +25572,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
         int shownSecond = -1;
-        const bool timerShown = primary.kind == IslandKind::Timer ||
-                                (secondary && secondary->kind == IslandKind::Timer);
+        const bool timerShown = leftPill && leftPill->kind == IslandKind::Timer;
         if (timerShown && snapshot.timer.running) {
             shownSecond = static_cast<int>(std::ceil(snapshot.timer.endsAt - now));
         } else if (clockOnScreen && IslandClockNeedsSecondTicks(frame) && !isHidden) {
@@ -25174,7 +25651,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 !DwmBackdrop::Available()) {
                 renderSettings.backdropMaterial = BackdropMaterial::None;
             }
-            renderer.Render(snapshot, renderSettings, primary, secondary,
+            renderer.Render(snapshot, renderSettings, primary, leftPill, rightPill,
                             widthSpring.value, heightSpring.value, nudgeSpring.value,
                             hover, pinned, now);
         }

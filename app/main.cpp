@@ -10,6 +10,7 @@
 #include "settings_schema.h"
 #include "settings_store.h"
 #include "settings_ui_loc.h"
+#include "island_zones.h"
 
 #include <shellapi.h>
 #include <sddl.h>
@@ -684,12 +685,17 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   if (options.testJson) {
-    const bool ok = SettingsStoreSelfTestJson();
+    const bool jsonOk = SettingsStoreSelfTestJson();
+    const wchar_t* zoneFailure = nullptr;
+    const bool zoneOk = IslandZoneSelfTest(&zoneFailure);
+    if (!zoneOk) {
+      LUX_LOGE(L"island zone self-test failed: %s", zoneFailure ? zoneFailure : L"unknown");
+    }
     SettingsStoreShutdown();
     CleanupProcessHandles(g_app);
     LuxLogShutdown();
-    return ok ? static_cast<int>(LuxExitCode::Ok)
-              : static_cast<int>(LuxExitCode::JsonTestFailure);
+    return (jsonOk && zoneOk) ? static_cast<int>(LuxExitCode::Ok)
+                              : static_cast<int>(LuxExitCode::JsonTestFailure);
   }
 
   g_app.taskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
