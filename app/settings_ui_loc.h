@@ -395,6 +395,13 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Respect Do Not Disturb", L"Поважати «Не турбувати»",
                 L"Учитывать «Не беспокоить»");
   }
+  if (wcscmp(key, L"Modules.Notifications") == 0) {
+    return Pick(lang, L"Windows notifications", L"Сповіщення Windows", L"Уведомления Windows");
+  }
+  if (wcscmp(key, L"Modules.MessengerApps") == 0) {
+    return Pick(lang, L"Messenger apps (comma-separated)", L"Месенджери (через кому)",
+                L"Мессенджеры (через запятую)");
+  }
   if (wcscmp(key, L"Modules.WeatherCity") == 0) {
     return Pick(lang, L"Weather city (blank uses your IP)",
                 L"Місто для погоди (порожнє — за IP)",
