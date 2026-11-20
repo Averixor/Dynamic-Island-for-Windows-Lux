@@ -334,6 +334,15 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Auto-expand on track change", L"Авторозгортання при зміні треку",
                 L"Автораскрытие при смене трека");
   }
+  if (wcscmp(key, L"Modules.MediaLikeBridge") == 0) {
+    return Pick(lang, L"YouTube / YouTube Music like bridge",
+                L"Міст лайків YouTube і YouTube Music",
+                L"Мост лайков YouTube и YouTube Music");
+  }
+  if (wcscmp(key, L"Modules.MediaLikeBridgePort") == 0) {
+    return Pick(lang, L"Like bridge loopback port", L"Порт моста лайків (127.0.0.1)",
+                L"Порт моста лайков (127.0.0.1)");
+  }
   if (wcscmp(key, L"Modules.MediaExpandBlocklist") == 0) {
     return Pick(lang, L"Media expand blocklist", L"Чорний список авторозгортання медіа",
                 L"Чёрный список автораскрытия медиа");

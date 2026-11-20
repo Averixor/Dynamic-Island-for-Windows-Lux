@@ -31,6 +31,7 @@ add_executable(DynamicIslandLux WIN32
   menu_theme.cpp
   autostart.cpp
   lux_overlay.cpp
+  media_like_bridge.cpp
   # Island implementation TU (Windhawk archive + standalone body).
   "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"
   "${CMAKE_CURRENT_BINARY_DIR}/resources.gen.rc"
