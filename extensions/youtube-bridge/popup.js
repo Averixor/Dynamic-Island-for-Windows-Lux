@@ -1,4 +1,37 @@
-const ext = globalThis.browser || globalThis.chrome;
+function sendExtension(message) {
+  const browserRuntime = globalThis.browser && globalThis.browser.runtime;
+  if (browserRuntime && browserRuntime.sendMessage) {
+    try {
+      const result = browserRuntime.sendMessage(message);
+      if (result && typeof result.then === "function") {
+        return result.then(
+          (response) => response || { connected: false, error: "empty status" },
+          (error) => ({ connected: false, error: String(error && error.message ? error.message : error) })
+        );
+      }
+    } catch (error) {
+      return Promise.resolve({
+        connected: false,
+        error: String(error && error.message ? error.message : error),
+      });
+    }
+  }
+  const chromeRuntime = globalThis.chrome && globalThis.chrome.runtime;
+  return new Promise((resolve) => {
+    try {
+      chromeRuntime.sendMessage(message, (response) => {
+        const runtimeError = chromeRuntime.lastError;
+        if (runtimeError) {
+          resolve({ connected: false, error: runtimeError.message || String(runtimeError) });
+          return;
+        }
+        resolve(response || { connected: false, error: "empty status" });
+      });
+    } catch (error) {
+      resolve({ connected: false, error: String(error) });
+    }
+  });
+}
 const dot = document.getElementById("dot");
 const status = document.getElementById("status");
 const title = document.getElementById("title");
@@ -43,19 +76,14 @@ function render(payload) {
 }
 
 function askStatus() {
-  ext.runtime.sendMessage({ type: "status" }, (payload) => {
-    const runtime = ext.runtime;
-    if (runtime.lastError) {
-      render({ connected: false, error: runtime.lastError.message, port: Number(portInput.value) || 18473 });
-      return;
-    }
+  sendExtension({ type: "status" }).then((payload) => {
     render(payload || { connected: false, error: "empty status" });
   });
 }
 
 document.getElementById("save").addEventListener("click", () => {
   const port = Number(portInput.value);
-  ext.runtime.sendMessage({ type: "setPort", port }, (payload) => {
+  sendExtension({ type: "setPort", port }).then((payload) => {
     render(payload || { connected: false, error: "could not save port" });
   });
 });

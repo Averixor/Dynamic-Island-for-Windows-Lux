@@ -30,7 +30,7 @@ Installed YouTube and YouTube Music apps (Chrome/Edge PWAs) are normal `https://
 
 ## Install on Firefox
 
-Firefox 115+ can load the same folder. `manifest.json` already contains `browser_specific_settings` for Firefox. `manifest.firefox.json` is the same document if you keep a separate copy.
+Firefox 115 and newer run this folder's Manifest V3 service worker (`background.service_worker` in `manifest.json`). `browser_specific_settings` gives the extension a stable id. `manifest.firefox.json` is the same document if a workflow expects a separate file. The extension uses `browser.runtime` promises in Firefox and callback messaging in Chromium.
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on…**.

@@ -207,7 +207,7 @@ bool IsBrowserSource(const std::string& lower) {
 
 bool SourceOpensBridge(const std::string& sourceRaw) {
   if (TrimAscii(sourceRaw).empty()) {
-    return true;
+    return false;
   }
   const std::string source = LowerAscii(sourceRaw);
   if (source.find("youtube") != std::string::npos) {
@@ -233,8 +233,12 @@ int SiteAffinity(BridgeSite site, const std::string& sourceRaw) {
   return 0;
 }
 
-bool AcceptMatch(int titleScore, int artistScore, const std::string& source, BridgeSite site) {
+bool AcceptMatch(int titleScore, int artistScore, const std::string& hintArtist,
+                 const std::string& tabArtist, const std::string& source, BridgeSite site) {
   if (!SourceOpensBridge(source)) {
+    return false;
+  }
+  if (!NormalizeMatch(hintArtist).empty() && !NormalizeMatch(tabArtist).empty() && artistScore < 40) {
     return false;
   }
   if (titleScore >= 86) {
@@ -1081,8 +1085,48 @@ const char* RateActionJson(RateAction action) {
   return "like";
 }
 
+std::string EscapeJson(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (unsigned char ch : value) {
+    switch (ch) {
+    case '"':
+      out += "\\\"";
+      break;
+    case '\\':
+      out += "\\\\";
+      break;
+    case '\b':
+      out += "\\b";
+      break;
+    case '\f':
+      out += "\\f";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    case '\t':
+      out += "\\t";
+      break;
+    default:
+      if (ch < 0x20) {
+        char hex[8] = {};
+        std::snprintf(hex, sizeof(hex), "\\u%04x", ch);
+        out += hex;
+      } else {
+        out.push_back(static_cast<char>(ch));
+      }
+      break;
+    }
+  }
+  return out;
+}
+
 std::string FormatCommandsJson(const std::vector<QueuedCommand>& commands) {
-  std::string out = "{\"ok\":true,\"commands\":[";
+  std::string out = "{\"ok\":true,\"service\":\"dynamic-island-lux\",\"commands\":[";
   for (size_t i = 0; i < commands.size(); ++i) {
     if (i != 0) {
       out.push_back(',');
@@ -1091,6 +1135,8 @@ std::string FormatCommandsJson(const std::vector<QueuedCommand>& commands) {
     out += std::to_string(commands[i].id);
     out += ",\"action\":\"";
     out += RateActionJson(commands[i].action);
+    out += "\",\"videoId\":\"";
+    out += EscapeJson(commands[i].videoId);
     out += "\"}";
   }
   out += "]}";
@@ -1230,7 +1276,8 @@ int TabRegistry::BestIndexLocked(const SmtcHint& hint, uint64_t nowTick, uint64_
     }
     const int titleScore = Similarity(slot.state.title, hint.title);
     const int artistScore = Similarity(slot.state.artist, hint.artist);
-    if (!AcceptMatch(titleScore, artistScore, hint.source, slot.state.site)) {
+    if (!AcceptMatch(titleScore, artistScore, hint.artist, slot.state.artist, hint.source,
+                     slot.state.site)) {
       continue;
     }
     const int score = RankMatch(slot.state, hint, titleScore, artistScore);
@@ -1251,11 +1298,20 @@ bool TabRegistry::Upsert(TabState state, uint64_t nowTick) {
     if (slot.state.tabId != state.tabId) {
       continue;
     }
+    if (state.clientTimestamp > 0 && slot.state.clientTimestamp > 0 &&
+        state.clientTimestamp < slot.state.clientTimestamp) {
+      return false;
+    }
+    const bool videoChanged = !slot.state.videoId.empty() && !state.videoId.empty() &&
+                              slot.state.videoId != state.videoId;
     const bool changed = slot.state.title != state.title || slot.state.artist != state.artist ||
                          slot.state.playing != state.playing || slot.state.like != state.like ||
                          slot.state.canRate != state.canRate || slot.state.site != state.site ||
-                         slot.state.videoId != state.videoId;
+                         videoChanged;
     auto commands = std::move(slot.commands);
+    if (videoChanged) {
+      commands.clear();
+    }
     slot.state = std::move(state);
     slot.commands = std::move(commands);
     return changed;
@@ -1320,6 +1376,7 @@ bool TabRegistry::EnqueueBest(const SmtcHint& hint, RateAction action, uint64_t 
     nextCommandId_ = 1;
   }
   command.action = action;
+  command.videoId = slot.state.videoId;
   slot.commands.push_back(command);
   if (tabIdOut) {
     *tabIdOut = slot.state.tabId;
@@ -1638,6 +1695,18 @@ bool MediaLikeBridgeSelfTest() {
                   5000);
   BRIDGE_CHECK(registry.BestMatch(chromeAlpha, 5000, 8000, &matched));
   BRIDGE_CHECK(matched.tabId == "alpha");
+  registry.Upsert(MakeTab("impostor", BridgeSite::YouTube, "Alpha Song", "Not Ada", true,
+                          BridgeLikeState::None, true, 5000),
+                  5000);
+  BRIDGE_CHECK(registry.BestMatch(chromeAlpha, 5000, 8000, &matched));
+  BRIDGE_CHECK(matched.tabId == "alpha");
+  SmtcHint blankSource = chromeAlpha;
+  blankSource.source.clear();
+  BRIDGE_CHECK(!registry.BestMatch(blankSource, 5000, 8000, &matched));
+  SmtcHint otherArtist = chromeAlpha;
+  otherArtist.artist = "Not Ada";
+  BRIDGE_CHECK(registry.BestMatch(otherArtist, 5000, 8000, &matched));
+  BRIDGE_CHECK(matched.tabId == "impostor");
 
   registry.Upsert(MakeTab("locked", BridgeSite::YouTube, "Locked Song", "Ada", true,
                           BridgeLikeState::None, false, 5000),
@@ -1656,6 +1725,7 @@ bool MediaLikeBridgeSelfTest() {
   const std::vector<QueuedCommand> pending = registry.Peek("alpha");
   BRIDGE_CHECK(pending.size() == 2);
   BRIDGE_CHECK(pending[0].action == RateAction::Like);
+  BRIDGE_CHECK(pending[0].videoId == "video");
   BRIDGE_CHECK(pending[1].action == RateAction::Dislike);
   BRIDGE_CHECK(registry.Peek("beta").empty());
   registry.Upsert(MakeTab("alpha", BridgeSite::YouTube, "Alpha Song", "Ada", true,
@@ -1669,10 +1739,34 @@ bool MediaLikeBridgeSelfTest() {
   registry.Ack("alpha", {afterAck[0].id});
   BRIDGE_CHECK(registry.Peek("alpha").empty());
 
-  BRIDGE_CHECK(std::string(FormatCommandsJson({})) == "{\"ok\":true,\"commands\":[]}");
-  BRIDGE_CHECK(FormatCommandsJson({{7, RateAction::Like}, {8, RateAction::Dislike}}) ==
-               "{\"ok\":true,\"commands\":[{\"id\":7,\"action\":\"like\"},{\"id\":8,\"action\":"
-               "\"dislike\"}]}");
+  BRIDGE_CHECK(registry.EnqueueBest(chromeAlpha, RateAction::Like, 5200, 8000, &queuedTab, &queued));
+  TabState moved = MakeTab("alpha", BridgeSite::YouTube, "Next Song", "Ada", true, BridgeLikeState::None,
+                           true, 5300);
+  moved.videoId = "next-video";
+  moved.clientTimestamp = 80;
+  BRIDGE_CHECK(registry.Upsert(moved, 5300));
+  BRIDGE_CHECK(registry.Peek("alpha").empty());
+  moved.clientTimestamp = 70;
+  moved.like = BridgeLikeState::Liked;
+  BRIDGE_CHECK(!registry.Upsert(moved, 5400));
+  SmtcHint nextHint = chromeAlpha;
+  nextHint.title = "Next Song";
+  BRIDGE_CHECK(registry.BestMatch(nextHint, 5400, 8000, &matched));
+  BRIDGE_CHECK(matched.like == BridgeLikeState::None);
+  BRIDGE_CHECK(matched.clientTimestamp == 80);
+  moved.clientTimestamp = 90;
+  moved.title = "Alpha Song";
+  moved.like = BridgeLikeState::Disliked;
+  BRIDGE_CHECK(registry.Upsert(moved, 5500));
+  BRIDGE_CHECK(registry.BestMatch(chromeAlpha, 5500, 8000, &matched));
+  BRIDGE_CHECK(matched.like == BridgeLikeState::Disliked);
+  BRIDGE_CHECK(matched.videoId == "next-video");
+
+  BRIDGE_CHECK(std::string(FormatCommandsJson({})) ==
+               "{\"ok\":true,\"service\":\"dynamic-island-lux\",\"commands\":[]}");
+  BRIDGE_CHECK(FormatCommandsJson({{7, RateAction::Like, "vid"}, {8, RateAction::Dislike, "v2"}}) ==
+               "{\"ok\":true,\"service\":\"dynamic-island-lux\",\"commands\":[{\"id\":7,\"action\":"
+               "\"like\",\"videoId\":\"vid\"},{\"id\":8,\"action\":\"dislike\",\"videoId\":\"v2\"}]}");
   BRIDGE_CHECK(std::string(RateActionJson(RateAction::Like)) == "like");
   BRIDGE_CHECK(std::string(RateActionJson(RateAction::Dislike)) == "dislike");
 

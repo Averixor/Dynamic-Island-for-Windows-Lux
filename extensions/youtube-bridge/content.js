@@ -225,10 +225,29 @@
   }
 
   function send(message) {
+    const browserRuntime = globalThis.browser && globalThis.browser.runtime;
+    if (browserRuntime && browserRuntime.sendMessage) {
+      try {
+        const result = browserRuntime.sendMessage(message);
+        if (result && typeof result.then === "function") {
+          return result.then(
+            function (response) {
+              return response || { ok: false, error: "empty" };
+            },
+            function (error) {
+              return { ok: false, error: String(error && error.message ? error.message : error) };
+            }
+          );
+        }
+      } catch (error) {
+        return Promise.resolve({ ok: false, error: String(error && error.message ? error.message : error) });
+      }
+    }
+    const chromeRuntime = globalThis.chrome && globalThis.chrome.runtime;
     return new Promise(function (resolve) {
       try {
-        ext.runtime.sendMessage(message, function (response) {
-          const runtimeError = ext.runtime.lastError;
+        chromeRuntime.sendMessage(message, function (response) {
+          const runtimeError = chromeRuntime.lastError;
           if (runtimeError) {
             resolve({ ok: false, error: runtimeError.message || String(runtimeError) });
             return;
@@ -264,32 +283,56 @@
     target.click();
   }
 
-  function rememberCommand(id) {
-    if (seen.has(id)) {
-      return false;
+  function clickKey(id) {
+    return "dilux-rate-" + id;
+  }
+
+  function clickStamp(id) {
+    try {
+      const value = Number(sessionStorage.getItem(clickKey(id)));
+      return Number.isFinite(value) ? value : 0;
+    } catch (error) {
+      return 0;
     }
-    seen.add(id);
-    if (seen.size > 40) {
-      const oldest = seen.values().next().value;
-      seen.delete(oldest);
+  }
+
+  function rememberClick(id) {
+    try {
+      sessionStorage.setItem(clickKey(id), String(Date.now()));
+    } catch (error) {
+      seen.add(id);
     }
-    return true;
+  }
+
+  function forgetClick(id) {
+    try {
+      sessionStorage.removeItem(clickKey(id));
+    } catch (error) {
+      seen.delete(id);
+    }
+  }
+
+  function queueAck(id) {
+    if (pendingAck.indexOf(id) === -1) {
+      pendingAck.push(id);
+    }
   }
 
   async function runCommand(action) {
     const before = readRate();
     const target = action === "dislike" ? before.dislike : before.like;
     if (!target) {
-      return;
+      return false;
     }
     press(target);
     const started = Date.now();
     while (Date.now() - started < 900) {
       await delay(70);
       if (readRate().likeState !== before.likeState) {
-        break;
+        return true;
       }
     }
+    return false;
   }
 
   async function handleCommands(commands) {
@@ -300,14 +343,45 @@
     try {
       for (let i = 0; i < commands.length; i++) {
         const command = commands[i];
-        if (!command || !rememberCommand(command.id)) {
+        if (!command || command.id == null) {
           continue;
         }
-        await runCommand(command.action === "dislike" ? "dislike" : "like");
-        pendingAck.push(command.id);
+        const videoId = currentVideoId();
+        if (command.videoId && videoId && command.videoId !== videoId) {
+          queueAck(command.id);
+          continue;
+        }
+        if (clickStamp(command.id) > 0) {
+          queueAck(command.id);
+          continue;
+        }
+        const before = readRate();
+        const target = command.action === "dislike" ? before.dislike : before.like;
+        if (!target) {
+          continue;
+        }
+        rememberClick(command.id);
+        const applied = await runCommand(command.action === "dislike" ? "dislike" : "like");
+        if (applied) {
+          queueAck(command.id);
+        } else {
+          forgetClick(command.id);
+        }
       }
     } finally {
       applying = false;
+    }
+  }
+
+  function trustedBridge(response) {
+    return !!(response && response.ok === true && response.service === "dynamic-island-lux");
+  }
+
+  function dropAcked(sent) {
+    for (let i = pendingAck.length - 1; i >= 0; i--) {
+      if (sent.indexOf(pendingAck[i]) !== -1) {
+        pendingAck.splice(i, 1);
+      }
     }
   }
 
@@ -334,17 +408,15 @@
         playing: state.playing,
         likeState: state.likeState,
         canRate: state.canRate,
+        timestamp: Date.now(),
         ack: ack,
       },
     });
-    if (response && response.ok) {
-      for (let i = pendingAck.length - 1; i >= 0; i--) {
-        if (ack.indexOf(pendingAck[i]) !== -1) {
-          pendingAck.splice(i, 1);
-        }
-      }
+    if (!trustedBridge(response)) {
+      return;
     }
-    if (response && Array.isArray(response.commands) && response.commands.length) {
+    dropAcked(ack);
+    if (Array.isArray(response.commands) && response.commands.length) {
       await handleCommands(response.commands);
       const fresh = collect();
       const followAck = pendingAck.slice();
@@ -358,19 +430,52 @@
           playing: fresh.playing,
           likeState: fresh.likeState,
           canRate: fresh.canRate,
+          timestamp: Date.now(),
           ack: followAck,
         },
       });
-      if (follow && follow.ok) {
-        for (let i = pendingAck.length - 1; i >= 0; i--) {
-          if (followAck.indexOf(pendingAck[i]) !== -1) {
-            pendingAck.splice(i, 1);
-          }
-        }
+      if (trustedBridge(follow)) {
+        dropAcked(followAck);
       }
       lastSignature = JSON.stringify(fresh);
       lastSentAt = Date.now();
     }
+  }
+
+  let pushRunning = false;
+  let pushQueued = false;
+  let queuedForce = false;
+
+  function requestPush(force) {
+    if (pushRunning) {
+      pushQueued = true;
+      queuedForce = queuedForce || !!force;
+      return;
+    }
+    pushRunning = true;
+    const useForce = !!force;
+    Promise.resolve()
+      .then(async function () {
+        let nextForce = useForce;
+        do {
+          pushQueued = false;
+          const runForce = nextForce;
+          nextForce = false;
+          queuedForce = false;
+          await push(runForce);
+          if (pushQueued) {
+            nextForce = queuedForce;
+          }
+        } while (pushQueued);
+      })
+      .then(
+        function () {
+          pushRunning = false;
+        },
+        function () {
+          pushRunning = false;
+        }
+      );
   }
 
   function schedule() {
@@ -380,7 +485,7 @@
     scanTimer = setTimeout(function () {
       scanTimer = 0;
       watchRoot();
-      push(false);
+      requestPush(false);
     }, 250);
   }
 
@@ -420,11 +525,11 @@
   document.addEventListener("pause", schedule, true);
 
   watchRoot();
-  push(true);
+  requestPush(true);
   setInterval(function () {
     if (document.hidden && Date.now() - lastSentAt < 2400) {
       return;
     }
-    push(true);
+    requestPush(true);
   }, 1000);
 })();

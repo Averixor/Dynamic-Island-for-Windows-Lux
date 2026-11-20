@@ -54,6 +54,7 @@ struct SmtcHint {
 struct QueuedCommand {
   uint64_t id = 0;
   RateAction action = RateAction::Like;
+  std::string videoId;
 };
 
 struct HttpHeaderSet {
