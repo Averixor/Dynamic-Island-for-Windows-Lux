@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cwchar>
 #include <cwctype>
 #include <new>
@@ -40,6 +41,9 @@ constexpr UINT_PTR kSubCombo = 1;
 constexpr UINT_PTR kSubButton = 2;
 constexpr UINT_PTR kSubEdit = 3;
 constexpr UINT_PTR kSubHeader = 4;
+constexpr UINT_PTR kSubLabel = 5;
+constexpr UINT_PTR kSubComboList = 6;
+constexpr UINT kMoveNoPaint = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
 constexpr UINT kSliderSetRange = WM_USER + 40;
 constexpr UINT kSliderSetPos = WM_USER + 41;
 constexpr UINT kSliderGetPos = WM_USER + 42;
@@ -69,6 +73,9 @@ const wchar_t kPreviewClass[] = L"DynamicIslandLux.SettingsPreview";
 const wchar_t kHotProp[] = L"LuxHot";
 const wchar_t kNavProp[] = L"LuxNav";
 const wchar_t kSwatchProp[] = L"LuxSwatch";
+const wchar_t kMutedProp[] = L"LuxMuted";
+const wchar_t kListHookProp[] = L"LuxListHook";
+const wchar_t kDropMinProp[] = L"LuxDropMin";
 
 struct RowRef {
   size_t schemaIndex = 0;
@@ -265,9 +272,12 @@ HBRUSH HandleCtlColor(DialogState& st, HDC hdc, HWND child) {
   } else if (child && child == st.emptyLabel) {
     text = st.palette.muted;
     bg = st.palette.windowBg;
-  } else if (_wcsicmp(cls, L"EDIT") == 0 || _wcsicmp(cls, L"LISTBOX") == 0) {
+  } else if (_wcsicmp(cls, L"EDIT") == 0 || _wcsicmp(cls, L"LISTBOX") == 0 || _wcsicmp(cls, L"COMBOLBOX") == 0) {
     bg = st.palette.controlBg;
     brush = st.controlBrush ? st.controlBrush : st.windowBrush;
+    if (!enabled) {
+      text = st.palette.muted;
+    }
   } else if (_wcsicmp(cls, L"STATIC") == 0) {
     bg = st.palette.elevated;
     brush = st.elevatedBrush ? st.elevatedBrush : st.windowBrush;
@@ -315,6 +325,9 @@ void FrameControl(HWND hwnd, COLORREF color) {
   ReleaseDC(hwnd, hdc);
 }
 
+// Off-screen buffer. Flush() copies pixels while `dest` is still valid.
+// The destructor never blits: a paint DC is released by EndPaint, and a blit
+// from ~BufferedDc after that call draws nothing.
 struct BufferedDc {
   HDC dest = nullptr;
   HDC mem = nullptr;
@@ -322,31 +335,102 @@ struct BufferedDc {
   HGDIOBJ old = nullptr;
   int width = 1;
   int height = 1;
-  explicit BufferedDc(HDC target, int w, int h) : dest(target), width((std::max)(1, w)), height((std::max)(1, h)) {
+  bool pending = false;
+
+  BufferedDc() = default;
+  BufferedDc(const BufferedDc&) = delete;
+  BufferedDc& operator=(const BufferedDc&) = delete;
+
+  void Attach(HDC target, int w, int h) {
+    Release();
+    dest = target;
+    width = (std::max)(1, w);
+    height = (std::max)(1, h);
+    if (!dest) {
+      return;
+    }
     mem = CreateCompatibleDC(dest);
     bmp = mem ? CreateCompatibleBitmap(dest, width, height) : nullptr;
     if (mem && bmp) {
       old = SelectObject(mem, bmp);
+      pending = true;
     }
   }
-  ~BufferedDc() {
-    if (mem && bmp && dest) {
+
+  void Flush() {
+    if (pending && mem && bmp && dest) {
       BitBlt(dest, 0, 0, width, height, mem, 0, 0, SRCCOPY);
     }
+    pending = false;
+  }
+
+  void Release() {
+    pending = false;
     if (mem && old) {
       SelectObject(mem, old);
     }
+    old = nullptr;
     if (bmp) {
       DeleteObject(bmp);
     }
+    bmp = nullptr;
     if (mem) {
       DeleteDC(mem);
     }
+    mem = nullptr;
+    dest = nullptr;
   }
+
+  ~BufferedDc() { Release(); }
+
   HDC dc() const { return mem ? mem : dest; }
-  BufferedDc(const BufferedDc&) = delete;
-  BufferedDc& operator=(const BufferedDc&) = delete;
 };
+
+// Owns BeginPaint / Flush / EndPaint in that order. Declaring a BufferedDc in
+// the same block as EndPaint runs EndPaint first and the blit lands on a
+// released DC.
+struct PaintSession {
+  HWND hwnd = nullptr;
+  PAINTSTRUCT ps{};
+  HDC paint = nullptr;
+  BufferedDc buffer;
+
+  explicit PaintSession(HWND window, int blitHeight = 0) : hwnd(window) {
+    paint = hwnd ? BeginPaint(hwnd, &ps) : nullptr;
+    RECT rc{};
+    if (hwnd) {
+      GetClientRect(hwnd, &rc);
+    }
+    int width = (std::max)(1, static_cast<int>(rc.right - rc.left));
+    int height = (std::max)(1, static_cast<int>(rc.bottom - rc.top));
+    if (blitHeight > 0 && blitHeight < height) {
+      height = blitHeight;
+    }
+    buffer.Attach(paint, width, height);
+  }
+
+  PaintSession(const PaintSession&) = delete;
+  PaintSession& operator=(const PaintSession&) = delete;
+
+  ~PaintSession() {
+    buffer.Flush();
+    if (paint && hwnd) {
+      EndPaint(hwnd, &ps);
+    }
+    paint = nullptr;
+  }
+
+  HDC dc() const { return buffer.dc(); }
+};
+
+void InvalidateWindowTree(HWND hwnd) {
+  if (!hwnd || !IsWindow(hwnd)) {
+    return;
+  }
+  // WS_CLIPCHILDREN excludes children from InvalidateRect. RDW_ALLCHILDREN
+  // is what actually marks STATIC labels and custom controls dirty.
+  RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+}
 
 SliderState* SliderFrom(HWND hwnd) {
   return reinterpret_cast<SliderState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -491,15 +575,14 @@ LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   case WM_ERASEBKGND:
     return 1;
   case WM_PAINT: {
-    PAINTSTRUCT ps = {};
-    HDC hdc = BeginPaint(hwnd, &ps);
-    if (st && data) {
+    PaintSession session(hwnd);
+    if (st && data && session.dc()) {
+      PaintSlider(hwnd, session.dc(), *st, *data);
+    } else if (session.dc()) {
       RECT rc = {};
       GetClientRect(hwnd, &rc);
-      BufferedDc buffer(hdc, rc.right, rc.bottom);
-      PaintSlider(hwnd, buffer.dc(), *st, *data);
+      FillRect(session.dc(), &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
     }
-    EndPaint(hwnd, &ps);
     return 0;
   }
   case WM_ENABLE:
@@ -664,9 +747,6 @@ void PaintPushButton(HWND hwnd, HDC hdc, const DialogState& st) {
 void PaintCheckbox(HWND hwnd, HDC hdc, const DialogState& st) {
   RECT rc = {};
   GetClientRect(hwnd, &rc);
-  if (st.elevatedBrush) {
-    FillRect(hdc, &rc, st.elevatedBrush);
-  }
   const int dpi = st.dpi > 0 ? st.dpi : 96;
   const int box = (std::max)(14, MulDiv(16, dpi, 96));
   const int boxTop = (std::max)(0, static_cast<int>(rc.bottom - rc.top - box) / 2);
@@ -674,6 +754,10 @@ void PaintCheckbox(HWND hwnd, HDC hdc, const DialogState& st) {
   const bool enabled = IsWindowEnabled(hwnd) != FALSE;
   const bool checked = SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
   const bool hot = GetPropW(hwnd, kHotProp) != nullptr;
+  HBRUSH bg = st.elevatedBrush ? st.elevatedBrush : st.windowBrush;
+  if (bg) {
+    FillRect(hdc, &rc, bg);
+  }
   HBRUSH fill = CreateSolidBrush(checked && enabled ? st.palette.accent : st.palette.controlBg);
   HPEN pen = CreatePen(PS_SOLID, 1, !enabled ? st.palette.muted : (hot || checked ? st.palette.accent : st.palette.border));
   HGDIOBJ oldBrush = fill ? SelectObject(hdc, fill) : nullptr;
@@ -817,27 +901,22 @@ LRESULT CALLBACK ButtonThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
   switch (msg) {
   case WM_ERASEBKGND:
     return 1;
-  case WM_PAINT:
-    if (st) {
-      PAINTSTRUCT ps = {};
-      HDC hdc = BeginPaint(hwnd, &ps);
-      RECT rc = {};
-      GetClientRect(hwnd, &rc);
-      BufferedDc buffer(hdc, rc.right, rc.bottom);
+  case WM_PAINT: {
+    PaintSession session(hwnd);
+    if (st && session.dc()) {
       const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
       if (GetPropW(hwnd, kNavProp)) {
-        PaintNavButton(hwnd, buffer.dc(), *st);
+        PaintNavButton(hwnd, session.dc(), *st);
       } else if (GetPropW(hwnd, kSwatchProp)) {
-        PaintSwatch(hwnd, buffer.dc(), *st);
+        PaintSwatch(hwnd, session.dc(), *st);
       } else if ((style & BS_TYPEMASK) == BS_AUTOCHECKBOX || (style & BS_TYPEMASK) == BS_CHECKBOX) {
-        PaintCheckbox(hwnd, buffer.dc(), *st);
+        PaintCheckbox(hwnd, session.dc(), *st);
       } else {
-        PaintPushButton(hwnd, buffer.dc(), *st);
+        PaintPushButton(hwnd, session.dc(), *st);
       }
-      EndPaint(hwnd, &ps);
-      return 0;
     }
-    break;
+    return 0;
+  }
   case WM_MOUSEMOVE:
     if (!GetPropW(hwnd, kHotProp)) {
       SetPropW(hwnd, kHotProp, reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(1)));
@@ -852,10 +931,16 @@ LRESULT CALLBACK ButtonThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     break;
   case WM_SETFOCUS:
   case WM_KILLFOCUS:
-  case WM_ENABLE:
-  case BM_SETCHECK:
     InvalidateRect(hwnd, nullptr, FALSE);
     break;
+  case WM_ENABLE:
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return 0;
+  case BM_SETCHECK: {
+    const LRESULT hit = DefSubclassProc(hwnd, msg, wParam, lParam);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return hit;
+  }
   case WM_NCDESTROY:
     RemovePropW(hwnd, kHotProp);
     RemovePropW(hwnd, kNavProp);
@@ -900,9 +985,29 @@ LRESULT CALLBACK EditThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
   return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+int ComboPaintHeight(HWND hwnd) {
+  RECT rc = {};
+  GetClientRect(hwnd, &rc);
+  const int full = (std::max)(1, static_cast<int>(rc.bottom - rc.top));
+  COMBOBOXINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!GetComboBoxInfo(hwnd, &info)) {
+    return full;
+  }
+  const int band = (std::max)(info.rcItem.bottom, info.rcButton.bottom);
+  if (band <= 0) {
+    return full;
+  }
+  return (std::min)(full, band + 1);
+}
+
 void PaintCombo(HWND hwnd, HDC hdc, const DialogState& st) {
   RECT rc = {};
   GetClientRect(hwnd, &rc);
+  const int band = ComboPaintHeight(hwnd);
+  if (band > 0 && band < rc.bottom - rc.top) {
+    rc.bottom = rc.top + band;
+  }
   const bool enabled = IsWindowEnabled(hwnd) != FALSE;
   HBRUSH bg = st.controlBrush ? st.controlBrush : st.windowBrush;
   if (bg) {
@@ -948,27 +1053,130 @@ void PaintCombo(HWND hwnd, HDC hdc, const DialogState& st) {
   }
 }
 
+LRESULT CALLBACK ComboListProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR);
+
+void EnsureComboListTheme(HWND combo, const DialogState& st) {
+  if (!combo) {
+    return;
+  }
+  COMBOBOXINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!GetComboBoxInfo(combo, &info) || !info.hwndList) {
+    return;
+  }
+  if (!GetPropW(info.hwndList, kListHookProp)) {
+    SetWindowSubclass(info.hwndList, ComboListProc, kSubComboList, 0);
+    SetPropW(info.hwndList, kListHookProp, reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(1)));
+    SetWindowTheme(info.hwndList, L"", L"");
+  }
+  if (HFONT font = reinterpret_cast<HFONT>(SendMessageW(combo, WM_GETFONT, 0, 0))) {
+    SendMessageW(info.hwndList, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+  }
+  int itemH = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+  if (itemH < Px(st, 16)) {
+    itemH = Px(st, kControlH);
+  }
+  const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+  const int visible = (std::clamp)((std::max)(count, 1), 1, 8);
+  SetPropW(info.hwndList, kDropMinProp,
+           reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(itemH * visible + Px(st, 2))));
+}
+
+void RestoreClosedComboHeight(HWND combo, const DialogState& st) {
+  if (!combo) {
+    return;
+  }
+  RECT rc = {};
+  GetWindowRect(combo, &rc);
+  POINT origin = {rc.left, rc.top};
+  if (HWND parent = GetParent(combo)) {
+    ScreenToClient(parent, &origin);
+  }
+  const int width = (std::max)(1, static_cast<int>(rc.right - rc.left));
+  const int height = (std::max)(1, Px(st, kControlH));
+  if (rc.bottom - rc.top == height) {
+    return;
+  }
+  SetWindowPos(combo, nullptr, origin.x, origin.y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+LRESULT CALLBACK ComboListProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+  DialogState* st = StateFrom(hwnd);
+  switch (msg) {
+  case WM_ERASEBKGND:
+    if (st && st->controlBrush) {
+      RECT rc = {};
+      GetClientRect(hwnd, &rc);
+      FillRect(reinterpret_cast<HDC>(wParam), &rc, st->controlBrush);
+      return 1;
+    }
+    break;
+  case WM_NCPAINT: {
+    const LRESULT hit = DefSubclassProc(hwnd, msg, wParam, lParam);
+    if (st) {
+      FrameControl(hwnd, st->palette.border);
+    }
+    return hit;
+  }
+  case WM_WINDOWPOSCHANGING: {
+    auto* pos = reinterpret_cast<WINDOWPOS*>(lParam);
+    const int minH = static_cast<int>(reinterpret_cast<ULONG_PTR>(GetPropW(hwnd, kDropMinProp)));
+    if (pos && minH > 0 && !(pos->flags & SWP_NOSIZE) && !(pos->flags & SWP_HIDEWINDOW) && pos->cy > 0 &&
+        pos->cy < minH) {
+      pos->cy = minH;
+    }
+    break;
+  }
+  case WM_NCDESTROY:
+    RemovePropW(hwnd, kListHookProp);
+    RemovePropW(hwnd, kDropMinProp);
+    break;
+  default:
+    break;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
 LRESULT CALLBACK ComboThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
   DialogState* st = StateFrom(hwnd);
   switch (msg) {
   case WM_ERASEBKGND:
     return 1;
-  case WM_PAINT:
+  case WM_PAINT: {
     if (st) {
-      PAINTSTRUCT ps = {};
-      HDC hdc = BeginPaint(hwnd, &ps);
-      RECT rc = {};
-      GetClientRect(hwnd, &rc);
-      BufferedDc buffer(hdc, rc.right, rc.bottom);
-      PaintCombo(hwnd, buffer.dc(), *st);
-      EndPaint(hwnd, &ps);
-      return 0;
+      EnsureComboListTheme(hwnd, *st);
+    }
+    const int band = ComboPaintHeight(hwnd);
+    PaintSession session(hwnd, band);
+    if (st && session.dc()) {
+      PaintCombo(hwnd, session.dc(), *st);
+    }
+    return 0;
+  }
+  case WM_CTLCOLORLISTBOX:
+    if (st) {
+      return reinterpret_cast<LRESULT>(
+          HandleCtlColor(*st, reinterpret_cast<HDC>(wParam), reinterpret_cast<HWND>(lParam)));
     }
     break;
   case WM_SETFOCUS:
   case WM_KILLFOCUS:
+  case WM_ENABLE:
     InvalidateRect(hwnd, nullptr, FALSE);
+    if (msg == WM_ENABLE) {
+      return 0;
+    }
     break;
+  case WM_NCDESTROY: {
+    COMBOBOXINFO info = {};
+    info.cbSize = sizeof(info);
+    if (GetComboBoxInfo(hwnd, &info) && info.hwndList) {
+      RemoveWindowSubclass(info.hwndList, ComboListProc, kSubComboList);
+      RemovePropW(info.hwndList, kListHookProp);
+      RemovePropW(info.hwndList, kDropMinProp);
+    }
+    break;
+  }
   case WM_MOUSEWHEEL:
     if (SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0) == FALSE) {
       if (HWND parent = GetParent(hwnd)) {
@@ -1015,14 +1223,76 @@ LRESULT CALLBACK HeaderThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
   switch (msg) {
   case WM_ERASEBKGND:
     return 1;
-  case WM_PAINT:
-    if (st) {
-      PAINTSTRUCT ps = {};
-      HDC hdc = BeginPaint(hwnd, &ps);
-      PaintHeader(hwnd, hdc, *st);
-      EndPaint(hwnd, &ps);
-      return 0;
+  case WM_PAINT: {
+    PaintSession session(hwnd);
+    if (st && session.dc()) {
+      PaintHeader(hwnd, session.dc(), *st);
     }
+    return 0;
+  }
+  case WM_MOUSEWHEEL:
+    if (HWND parent = GetParent(hwnd)) {
+      return SendMessageW(parent, msg, wParam, lParam);
+    }
+    break;
+  default:
+    break;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void PaintLabel(HWND hwnd, HDC hdc, const DialogState& st) {
+  RECT rc = {};
+  GetClientRect(hwnd, &rc);
+  const bool banner = hwnd == st.banner;
+  const bool empty = hwnd == st.emptyLabel;
+  const bool muted = GetPropW(hwnd, kMutedProp) != nullptr || IsWindowEnabled(hwnd) == FALSE;
+  HBRUSH bg = st.elevatedBrush ? st.elevatedBrush : st.windowBrush;
+  COLORREF text = muted ? st.palette.muted : st.palette.text;
+  if (banner) {
+    bg = st.bannerBrush ? st.bannerBrush : st.windowBrush;
+    text = st.palette.bannerText;
+  } else if (empty) {
+    bg = st.windowBrush ? st.windowBrush : st.elevatedBrush;
+    text = st.palette.muted;
+  }
+  if (bg) {
+    FillRect(hdc, &rc, bg);
+  }
+  wchar_t textBuf[512] = {};
+  GetWindowTextW(hwnd, textBuf, ARRAYSIZE(textBuf));
+  SetBkMode(hdc, TRANSPARENT);
+  SetTextColor(hdc, text);
+  HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+  HGDIOBJ old = font ? SelectObject(hdc, font) : nullptr;
+  DrawTextW(hdc, textBuf, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+  if (old) {
+    SelectObject(hdc, old);
+  }
+}
+
+LRESULT CALLBACK LabelThemeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+  DialogState* st = StateFrom(hwnd);
+  switch (msg) {
+  case WM_ERASEBKGND:
+    return 1;
+  case WM_PAINT: {
+    PaintSession session(hwnd);
+    if (st && session.dc()) {
+      PaintLabel(hwnd, session.dc(), *st);
+    }
+    return 0;
+  }
+  case WM_ENABLE:
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return 0;
+  case WM_SETTEXT: {
+    const LRESULT hit = DefSubclassProc(hwnd, msg, wParam, lParam);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return hit;
+  }
+  case WM_NCDESTROY:
+    RemovePropW(hwnd, kMutedProp);
     break;
   case WM_MOUSEWHEEL:
     if (HWND parent = GetParent(hwnd)) {
@@ -1162,15 +1432,14 @@ LRESULT CALLBACK PreviewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
   case WM_ERASEBKGND:
     return 1;
   case WM_PAINT: {
-    PAINTSTRUCT ps = {};
-    HDC hdc = BeginPaint(hwnd, &ps);
-    if (st) {
+    PaintSession session(hwnd);
+    if (st && session.dc()) {
+      PaintPreview(hwnd, session.dc(), *st);
+    } else if (session.dc()) {
       RECT rc = {};
       GetClientRect(hwnd, &rc);
-      BufferedDc buffer(hdc, rc.right, rc.bottom);
-      PaintPreview(hwnd, buffer.dc(), *st);
+      FillRect(session.dc(), &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
     }
-    EndPaint(hwnd, &ps);
     return 0;
   }
   case WM_MOUSEWHEEL:
@@ -1341,6 +1610,43 @@ bool IsSlider(HWND hwnd) {
   wchar_t cls[64] = {};
   GetClassNameW(hwnd, cls, ARRAYSIZE(cls));
   return wcscmp(cls, kSliderClass) == 0;
+}
+
+bool IsComboBox(HWND hwnd) {
+  wchar_t cls[32] = {};
+  if (!hwnd) {
+    return false;
+  }
+  GetClassNameW(hwnd, cls, ARRAYSIZE(cls));
+  return _wcsicmp(cls, L"COMBOBOX") == 0;
+}
+
+void SyncComboItemHeight(HWND combo, const DialogState& st) {
+  if (!combo) {
+    return;
+  }
+  HFONT font = reinterpret_cast<HFONT>(SendMessageW(combo, WM_GETFONT, 0, 0));
+  if (!font) {
+    return;
+  }
+  HDC hdc = GetDC(combo);
+  if (!hdc) {
+    return;
+  }
+  HGDIOBJ old = SelectObject(hdc, font);
+  TEXTMETRICW metrics = {};
+  const BOOL measured = GetTextMetricsW(hdc, &metrics);
+  if (old) {
+    SelectObject(hdc, old);
+  }
+  ReleaseDC(combo, hdc);
+  if (!measured) {
+    return;
+  }
+  const int itemH = (std::max)(Px(st, 16), static_cast<int>(metrics.tmHeight) + Px(st, 6));
+  SendMessageW(combo, CB_SETITEMHEIGHT, 0, itemH);
+  const int selection = (std::min)(itemH, (std::max)(Px(st, 16), Px(st, kControlH) - Px(st, 2)));
+  SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), selection);
 }
 
 int EnumIndexForValue(const SettingDef& def, const std::wstring& value) {
@@ -1521,6 +1827,10 @@ void ApplyFonts(DialogState& st) {
     assign(row.label, st.uiFont);
     assign(row.control, st.uiFont);
     assign(row.swatch, st.uiFont);
+    if (IsComboBox(row.control)) {
+      SyncComboItemHeight(row.control, st);
+      EnsureComboListTheme(row.control, st);
+    }
   }
 }
 
@@ -1692,7 +2002,8 @@ SettingsUiLoc::SettingsCard CardForKey(const wchar_t* key, SettingGroup group) {
     return SettingsUiLoc::SettingsCard::ThemeAura;
   }
   if (KeyEquals(key, L"Modules.Media") || KeyEquals(key, L"Modules.MediaAutoExpand") ||
-      KeyEquals(key, L"Modules.MediaExpandBlocklist")) {
+      KeyEquals(key, L"Modules.MediaExpandBlocklist") || KeyEquals(key, L"Modules.MediaLikeBridge") ||
+      KeyEquals(key, L"Modules.MediaLikeBridgePort")) {
     return SettingsUiLoc::SettingsCard::Media;
   }
   if (KeyEquals(key, L"Modules.MediaPillClock") || KeyEquals(key, L"Modules.MediaPillDate") ||
@@ -1731,7 +2042,8 @@ SettingsUiLoc::SettingsCard CardForKey(const wchar_t* key, SettingGroup group) {
   if (KeyPrefix(key, L"Modules.Bluetooth")) {
     return SettingsUiLoc::SettingsCard::Bluetooth;
   }
-  if (KeyEquals(key, L"Modules.DoNotDisturbIndicator") || KeyEquals(key, L"Modules.NotificationRespectDnD")) {
+  if (KeyEquals(key, L"Modules.DoNotDisturbIndicator") || KeyEquals(key, L"Modules.NotificationRespectDnD") ||
+      KeyEquals(key, L"Modules.Notifications") || KeyEquals(key, L"Modules.MessengerApps")) {
     return SettingsUiLoc::SettingsCard::DoNotDisturb;
   }
   if (KeyPrefix(key, L"Modules.Timer")) {
@@ -1782,33 +2094,123 @@ HWND HeaderFor(const DialogState& st, SettingsUiLoc::SettingsCard card) {
   return nullptr;
 }
 
+struct RowPlacement {
+  RECT label{};
+  RECT control{};
+  RECT swatch{};
+  bool hasLabel = false;
+  bool hasSwatch = false;
+  int rowAdvance = 0;
+};
+
+int Dip(int dpi, int dip) {
+  return MulDiv(dip, dpi > 0 ? dpi : 96, 96);
+}
+
+struct RowBand {
+  int left = 0;
+  int width = 0;
+};
+
+RowBand RowBandForView(int dpi, int viewW) {
+  const int margin = Dip(dpi, 8);
+  const int pad = Dip(dpi, 12);
+  RowBand band;
+  band.left = margin + pad;
+  band.width = (std::max)(Dip(dpi, 80), viewW - margin - pad - band.left);
+  return band;
+}
+
+void ClampBottom(RECT& rc, int limit) {
+  if (rc.bottom > limit) {
+    rc.bottom = (std::max)(rc.top, limit);
+  }
+}
+
+RowPlacement MeasureRow(int dpi, SettingType type, bool colorSwatch, int left, int top, int width) {
+  RowPlacement out;
+  out.rowAdvance = (std::max)(1, Dip(dpi, kRowH));
+  width = (std::max)(1, width);
+  const int controlH = (std::max)(1, Dip(dpi, kControlH));
+  const int bottomLimit = top + out.rowAdvance;
+  if (type == SettingType::Bool) {
+    out.control = {left, top, left + width, top + (std::min)(controlH, out.rowAdvance)};
+    return out;
+  }
+  const int gap = Dip(dpi, 8);
+  const int minControl = Dip(dpi, colorSwatch ? 40 : 48);
+  int labelW = (std::clamp)(width * 42 / 100, Dip(dpi, 120), Dip(dpi, 260));
+  int maxLabel = width - gap - minControl;
+  if (maxLabel < Dip(dpi, 48)) {
+    maxLabel = (std::max)(0, width / 2);
+  }
+  if (labelW > maxLabel) {
+    labelW = maxLabel;
+  }
+  if (labelW < 0) {
+    labelW = 0;
+  }
+  const int labelGap = labelW > 0 ? gap : 0;
+  int controlW = width - labelW - labelGap;
+  if (controlW < 1) {
+    labelW = (std::max)(0, width / 2);
+    controlW = (std::max)(1, width - labelW - (labelW > 0 ? gap : 0));
+  }
+  const int controlX = left + labelW + (labelW > 0 ? gap : 0);
+  if (labelW > 0) {
+    const int labelY = top + Dip(dpi, 3);
+    out.hasLabel = true;
+    out.label = {left, labelY, left + labelW, labelY + Dip(dpi, 18)};
+    ClampBottom(out.label, bottomLimit);
+  }
+  if (colorSwatch) {
+    const int swatch = (std::min)(controlH, (std::max)(1, controlW));
+    const int swatchGap = (std::min)(Dip(dpi, 6), (std::max)(0, controlW - swatch));
+    int editW = controlW - swatch - swatchGap;
+    if (editW < 1) {
+      editW = (std::max)(1, controlW / 2);
+    }
+    out.control = {controlX, top, controlX + editW, top + (std::min)(controlH, out.rowAdvance)};
+    out.hasSwatch = true;
+    const int swatchX = controlX + controlW - swatch;
+    out.swatch = {swatchX, top, swatchX + swatch, top + (std::min)(controlH, out.rowAdvance)};
+    if (out.control.right > out.swatch.left) {
+      out.control.right = out.swatch.left;
+    }
+    if (out.control.right < out.control.left) {
+      out.control.right = out.control.left;
+    }
+    ClampBottom(out.control, bottomLimit);
+    ClampBottom(out.swatch, bottomLimit);
+    return out;
+  }
+  // Closed combo, edit, and slider occupy one row. The dropdown is a popup
+  // (CB_SETMINVISIBLE), not an 8-row-tall HWND that clips the rows below it.
+  out.control = {controlX, top, controlX + (std::max)(1, controlW), top + (std::min)(controlH, out.rowAdvance)};
+  ClampBottom(out.control, bottomLimit);
+  return out;
+}
+
+void PlaceControl(HWND hwnd, const RECT& rc, UINT flags) {
+  if (!hwnd) {
+    return;
+  }
+  const int width = (std::max)(1, static_cast<int>(rc.right - rc.left));
+  const int height = (std::max)(1, static_cast<int>(rc.bottom - rc.top));
+  SetWindowPos(hwnd, nullptr, rc.left, rc.top, width, height, flags);
+}
+
 void PlaceRow(DialogState& st, RowRef& row, int left, int top, int width) {
   const SettingDef& def = kSettingSchema[row.schemaIndex];
-  const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_SHOWWINDOW;
-  if (def.type == SettingType::Bool) {
-    SetWindowPos(row.control, nullptr, left, top, (std::max)(Px(st, 80), width), Px(st, kControlH), flags);
-    return;
+  const UINT flags = kMoveNoPaint | SWP_SHOWWINDOW;
+  const RowPlacement place = MeasureRow(st.dpi, def.type, row.swatch != nullptr, left, top, width);
+  if (place.hasLabel) {
+    PlaceControl(row.label, place.label, flags);
   }
-  int labelW = (std::clamp)(width * 42 / 100, Px(st, 120), Px(st, 260));
-  if (labelW > width - Px(st, 96)) {
-    labelW = (std::max)(Px(st, 96), width / 2);
+  PlaceControl(row.control, place.control, flags);
+  if (place.hasSwatch) {
+    PlaceControl(row.swatch, place.swatch, flags);
   }
-  const int gap = Px(st, 8);
-  const int controlX = left + labelW + gap;
-  const int controlW = (std::max)(Px(st, 80), left + width - controlX);
-  if (row.label) {
-    SetWindowPos(row.label, nullptr, left, top + Px(st, 3), labelW, Px(st, 18), flags);
-  }
-  if (row.swatch) {
-    const int swatch = Px(st, kControlH);
-    const int swatchGap = Px(st, 6);
-    SetWindowPos(row.control, nullptr, controlX, top, (std::max)(Px(st, 40), controlW - swatch - swatchGap),
-                 Px(st, kControlH), flags);
-    SetWindowPos(row.swatch, nullptr, controlX + controlW - swatch, top, swatch, Px(st, kControlH), flags);
-    return;
-  }
-  const int controlH = def.type == SettingType::Enum ? Px(st, kControlH) * 8 : Px(st, kControlH);
-  SetWindowPos(row.control, nullptr, controlX, top, controlW, controlH, flags);
 }
 
 void LayoutContent(DialogState& st) {
@@ -1907,9 +2309,8 @@ void LayoutContent(DialogState& st) {
       }
       y += Px(st, 8) + Px(st, kHeaderH);
     }
-    const int rowLeft = margin + pad;
-    const int rowWidth = (std::max)(Px(st, 80), width - margin - pad - rowLeft);
-    PlaceRow(st, row, rowLeft, y, rowWidth);
+    const RowBand band = RowBandForView(st.dpi, width);
+    PlaceRow(st, row, band.left, y, band.width);
     y += Px(st, kRowH);
   }
   if (open) {
@@ -1919,11 +2320,9 @@ void LayoutContent(DialogState& st) {
   st.contentHeight = y + margin;
   UpdateScrollBar(st);
   PlaceContent(st);
-  if (st.content) {
-    InvalidateRect(st.content, nullptr, TRUE);
-  }
+  InvalidateWindowTree(st.content);
   if (st.scroll) {
-    InvalidateRect(st.scroll, nullptr, TRUE);
+    InvalidateWindowTree(st.scroll);
   }
 }
 
@@ -1961,7 +2360,7 @@ void LayoutShell(HWND hwnd, DialogState& st, bool placeOuter) {
   const int bannerH = st.bannerText.empty() ? 0 : Px(st, 28);
   const int footerTop = clientH - Px(st, 40);
   if (st.search) {
-    SetWindowPos(st.search, nullptr, pad, pad, (std::max)(1, clientW - pad * 2), Px(st, kSearchH), SWP_NOZORDER);
+    SetWindowPos(st.search, nullptr, pad, pad, (std::max)(1, clientW - pad * 2), Px(st, kSearchH), kMoveNoPaint);
   }
   const int navTop = pad + Px(st, kSearchH) + Px(st, 8);
   const int navW = Px(st, kSidebarW);
@@ -1969,21 +2368,21 @@ void LayoutShell(HWND hwnd, DialogState& st, bool placeOuter) {
   const int navGap = Px(st, 2);
   for (size_t i = 0; i < st.nav.size(); ++i) {
     SetWindowPos(st.nav[i].button, nullptr, Px(st, 8), navTop + static_cast<int>(i) * (navBtnH + navGap),
-                 (std::max)(1, navW - Px(st, 16)), navBtnH, SWP_NOZORDER);
+                 (std::max)(1, navW - Px(st, 16)), navBtnH, kMoveNoPaint);
   }
   const int contentX = navW + Px(st, 4);
   const int contentW = (std::max)(1, clientW - contentX - pad);
   const int contentBottom = footerTop - bannerH - Px(st, 8);
   const int contentH = (std::max)(Px(st, 80), contentBottom - navTop);
   if (st.scroll) {
-    SetWindowPos(st.scroll, nullptr, contentX, navTop, contentW, contentH, SWP_NOZORDER);
+    SetWindowPos(st.scroll, nullptr, contentX, navTop, contentW, contentH, kMoveNoPaint);
   }
   if (st.banner) {
     if (bannerH > 0) {
       SetWindowPos(st.banner, nullptr, contentX, navTop + contentH + Px(st, 4), contentW, bannerH,
-                   SWP_NOZORDER | SWP_SHOWWINDOW);
+                   kMoveNoPaint | SWP_SHOWWINDOW);
     } else {
-      ShowWindow(st.banner, SW_HIDE);
+      SetWindowPos(st.banner, nullptr, 0, 0, 0, 0, kMoveNoPaint | SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE);
     }
   }
   const int btnY = footerTop;
@@ -1992,21 +2391,21 @@ void LayoutShell(HWND hwnd, DialogState& st, bool placeOuter) {
   int x = clientW - pad;
   if (st.okBtn) {
     x -= Px(st, 80);
-    SetWindowPos(st.okBtn, nullptr, x, btnY, Px(st, 80), btnH, SWP_NOZORDER);
+    SetWindowPos(st.okBtn, nullptr, x, btnY, Px(st, 80), btnH, kMoveNoPaint);
   }
   if (st.applyBtn) {
     x -= gap + Px(st, 128);
-    SetWindowPos(st.applyBtn, nullptr, x, btnY, Px(st, 128), btnH, SWP_NOZORDER);
+    SetWindowPos(st.applyBtn, nullptr, x, btnY, Px(st, 128), btnH, kMoveNoPaint);
   }
   if (st.cancelBtn) {
     x -= gap + Px(st, 118);
-    SetWindowPos(st.cancelBtn, nullptr, x, btnY, Px(st, 118), btnH, SWP_NOZORDER);
+    SetWindowPos(st.cancelBtn, nullptr, x, btnY, Px(st, 118), btnH, kMoveNoPaint);
   }
   if (st.resetBtn) {
-    SetWindowPos(st.resetBtn, nullptr, pad, btnY, Px(st, 188), btnH, SWP_NOZORDER);
+    SetWindowPos(st.resetBtn, nullptr, pad, btnY, Px(st, 188), btnH, kMoveNoPaint);
   }
   LayoutContent(st);
-  InvalidateRect(hwnd, nullptr, TRUE);
+  InvalidateWindowTree(hwnd);
   st.layingOut = false;
 }
 
@@ -2025,7 +2424,23 @@ void UpdateEnabled(DialogState& st) {
     };
     apply(row.control);
     apply(row.swatch);
-    apply(row.label);
+    // Leave the STATIC label enabled. With visual styles stripped, a disabled
+    // static ignores WM_CTLCOLORSTATIC and draws embossed gray text.
+    if (row.label) {
+      const bool wasMuted = GetPropW(row.label, kMutedProp) != nullptr;
+      const bool shouldMute = !enabled;
+      if (wasMuted != shouldMute) {
+        if (shouldMute) {
+          SetPropW(row.label, kMutedProp, reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(1)));
+        } else {
+          RemovePropW(row.label, kMutedProp);
+        }
+        InvalidateRect(row.label, nullptr, FALSE);
+      }
+      if (IsWindowEnabled(row.label) == FALSE) {
+        EnableWindow(row.label, TRUE);
+      }
+    }
   }
 }
 
@@ -2043,7 +2458,9 @@ void RefreshTheme(HWND hwnd, DialogState& st) {
     AllowSettingsControlDarkMode(st.scroll, st.palette.dark);
   }
   ThemeAllControls(st);
-  InvalidateChrome(hwnd, st);
+  if (st.ready) {
+    InvalidateChrome(hwnd, st);
+  }
 }
 
 void OnSettingChanged(HWND hwnd, DialogState& st, const wchar_t* key) {
@@ -2326,6 +2743,9 @@ void BuildControls(HWND hwnd, DialogState& st) {
   st.emptyLabel = CreateWindowExW(0, L"STATIC", SettingsUiLoc::NoMatches(st.lang),
                                   WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE, 0, 0, 0, 0, st.content,
                                   nullptr, instance, nullptr);
+  if (st.emptyLabel) {
+    SetWindowSubclass(st.emptyLabel, LabelThemeProc, kSubLabel, 0);
+  }
 
   for (SettingsUiLoc::SettingsCard card : kAllCards) {
     CardHead head;
@@ -2362,6 +2782,9 @@ void BuildControls(HWND hwnd, DialogState& st) {
       row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
                                   WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 0, 0, st.content,
                                   nullptr, instance, nullptr);
+      if (row.label) {
+        SetWindowSubclass(row.label, LabelThemeProc, kSubLabel, 0);
+      }
       row.control = CreateWindowExW(0, L"COMBOBOX", L"",
                                     WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0,
                                     0, 0, st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance,
@@ -2377,6 +2800,9 @@ void BuildControls(HWND hwnd, DialogState& st) {
       row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
                                   WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 0, 0, st.content,
                                   nullptr, instance, nullptr);
+      if (row.label) {
+        SetWindowSubclass(row.label, LabelThemeProc, kSubLabel, 0);
+      }
       row.control = CreateWindowExW(0, kSliderClass, row.labelText.c_str(), WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
                                     0, 0, 0, 0, st.content, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                     instance, nullptr);
@@ -2389,6 +2815,9 @@ void BuildControls(HWND hwnd, DialogState& st) {
       row.label = CreateWindowExW(0, L"STATIC", row.labelText.c_str(),
                                   WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 0, 0, st.content,
                                   nullptr, instance, nullptr);
+      if (row.label) {
+        SetWindowSubclass(row.label, LabelThemeProc, kSubLabel, 0);
+      }
       const std::wstring value = SettingsGetString(def.key, def.defaultString);
       const DWORD editStyle = WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS | ES_AUTOHSCROLL |
                               (wcscmp(def.key, L"app.version") == 0 ? ES_READONLY : 0);
@@ -2409,6 +2838,9 @@ void BuildControls(HWND hwnd, DialogState& st) {
 
   st.banner = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE | SS_ENDELLIPSIS,
                               0, 0, 0, 0, hwnd, nullptr, instance, nullptr);
+  if (st.banner) {
+    SetWindowSubclass(st.banner, LabelThemeProc, kSubLabel, 0);
+  }
   st.resetBtn = CreateWindowExW(0, L"BUTTON", SettingsUiLoc::ResetDefaults(st.lang),
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdResetDefaults)), instance, nullptr);
@@ -2441,6 +2873,8 @@ void RemoveSubclasses(DialogState& st) {
     }
   };
   drop(st.search, EditThemeProc, kSubEdit);
+  drop(st.emptyLabel, LabelThemeProc, kSubLabel);
+  drop(st.banner, LabelThemeProc, kSubLabel);
   drop(st.okBtn, ButtonThemeProc, kSubButton);
   drop(st.cancelBtn, ButtonThemeProc, kSubButton);
   drop(st.applyBtn, ButtonThemeProc, kSubButton);
@@ -2452,6 +2886,19 @@ void RemoveSubclasses(DialogState& st) {
     drop(head.hwnd, HeaderThemeProc, kSubHeader);
   }
   for (RowRef& row : st.rows) {
+    drop(row.label, LabelThemeProc, kSubLabel);
+    if (row.label) {
+      RemovePropW(row.label, kMutedProp);
+    }
+    if (IsComboBox(row.control)) {
+      COMBOBOXINFO info = {};
+      info.cbSize = sizeof(info);
+      if (GetComboBoxInfo(row.control, &info) && info.hwndList) {
+        drop(info.hwndList, ComboListProc, kSubComboList);
+        RemovePropW(info.hwndList, kListHookProp);
+        RemovePropW(info.hwndList, kDropMinProp);
+      }
+    }
     drop(row.control, ButtonThemeProc, kSubButton);
     drop(row.control, EditThemeProc, kSubEdit);
     drop(row.control, ComboThemeProc, kSubCombo);
@@ -2482,8 +2929,19 @@ LRESULT CALLBACK ContentProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
   case WM_COMMAND: {
     const WORD code = HIWORD(wParam);
     const int id = LOWORD(wParam);
+    if (st && code == CBN_DROPDOWN) {
+      if (RowRef* row = RowForControlId(*st, id)) {
+        EnsureComboListTheme(row->control, *st);
+      }
+    }
     if (st && code == CBN_CLOSEUP) {
       st->suppressCloseUntil = GetTickCount64() + 50;
+      if (RowRef* row = RowForControlId(*st, id)) {
+        // Opening the list can stretch the combo HWND over the rows under it.
+        // Put the closed control back to one row and repaint what it covered.
+        RestoreClosedComboHeight(row->control, *st);
+        InvalidateWindowTree(hwnd);
+      }
     }
     if (st && parent &&
         (code == CBN_SELCHANGE || code == BN_CLICKED || code == EN_CHANGE || code == kSliderChanged)) {
@@ -2561,7 +3019,7 @@ LRESULT CALLBACK ScrollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
   }
   case WM_SIZE:
-    if (st) {
+    if (st && !st->layingOut) {
       UpdateScrollBar(*st);
       PlaceContent(*st);
     }
@@ -2810,7 +3268,294 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
   }
   return FALSE;
 }
+
+bool RectsOverlap(const RECT& a, const RECT& b) {
+  if (a.right <= a.left || a.bottom <= a.top || b.right <= b.left || b.bottom <= b.top) {
+    return false;
+  }
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+bool RectInside(const RECT& rc, int left, int top, int right, int bottom) {
+  return rc.left >= left && rc.top >= top && rc.right <= right && rc.bottom <= bottom && rc.right > rc.left &&
+         rc.bottom > rc.top;
+}
+
+int ScrollClientForDialog(int dpi, int clientDip) {
+  const int clientW = Dip(dpi, clientDip);
+  const int outerPad = Dip(dpi, 12);
+  const int contentX = Dip(dpi, kSidebarW) + Dip(dpi, 4);
+  const int contentW = (std::max)(1, clientW - contentX - outerPad);
+  const int scrollbar = Dip(dpi, 17);
+  return (std::max)(Dip(dpi, 120), contentW - scrollbar);
+}
+
+bool RowFits(const RowPlacement& place, int left, int top, int width) {
+  const int right = left + width;
+  const int bottom = top + place.rowAdvance;
+  if (!RectInside(place.control, left, top, right, bottom)) {
+    return false;
+  }
+  if (place.control.bottom - place.control.top > place.rowAdvance) {
+    return false;
+  }
+  if (place.hasLabel) {
+    if (!RectInside(place.label, left, top, right, bottom) || RectsOverlap(place.label, place.control)) {
+      return false;
+    }
+  }
+  if (place.hasSwatch) {
+    if (!RectInside(place.swatch, left, top, right, bottom) || RectsOverlap(place.control, place.swatch)) {
+      return false;
+    }
+    if (place.swatch.right > right || place.control.right > place.swatch.left) {
+      return false;
+    }
+  }
+  if (place.control.right > right || place.control.left < left) {
+    return false;
+  }
+  return true;
+}
+
+bool LayoutRowsFit(int dpi, int viewW) {
+  const RowBand band = RowBandForView(dpi, viewW);
+  const struct Sample {
+    SettingType type;
+    bool swatch;
+  } samples[] = {
+      {SettingType::Bool, false}, {SettingType::Enum, false}, {SettingType::Int, false},
+      {SettingType::String, false}, {SettingType::String, true},
+  };
+  int top = Dip(dpi, 40);
+  int previousBottom = top;
+  for (const Sample& sample : samples) {
+    const RowPlacement place = MeasureRow(dpi, sample.type, sample.swatch, band.left, top, band.width);
+    if (place.rowAdvance <= 0 || top < previousBottom || !RowFits(place, band.left, top, band.width)) {
+      return false;
+    }
+    if (sample.type == SettingType::Enum &&
+        place.control.bottom - place.control.top > Dip(dpi, kControlH)) {
+      return false;
+    }
+    previousBottom = place.control.bottom;
+    top += place.rowAdvance;
+  }
+  return true;
+}
+
+COLORREF g_probePixel = CLR_INVALID;
+
+LRESULT CALLBACK PaintProbeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+  switch (msg) {
+  case WM_ERASEBKGND:
+    return 1;
+  case WM_PAINT: {
+    {
+      PaintSession session(hwnd);
+      if (HDC hdc = session.dc()) {
+        RECT rc = {};
+        GetClientRect(hwnd, &rc);
+        HBRUSH brush = CreateSolidBrush(RGB(18, 52, 86));
+        if (brush) {
+          FillRect(hdc, &rc, brush);
+          DeleteObject(brush);
+        }
+      }
+    }
+    HDC hdc = GetDC(hwnd);
+    if (hdc) {
+      g_probePixel = GetPixel(hdc, 4, 4);
+      ReleaseDC(hwnd, hdc);
+    }
+    return 0;
+  }
+  default:
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+  }
+}
+
+bool PaintSessionSelfTest() {
+  g_probePixel = CLR_INVALID;
+  const wchar_t* className = L"DynamicIslandLux.PaintProbe";
+  WNDCLASSEXW wc = {};
+  wc.cbSize = sizeof(wc);
+  wc.lpfnWndProc = PaintProbeProc;
+  wc.hInstance = GetModuleHandleW(nullptr);
+  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+  wc.lpszClassName = className;
+  if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    LUX_LOGE(L"Settings dialog self-test failed: paint probe class");
+    return false;
+  }
+  HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"", WS_POPUP, -3200, -3200, 80,
+                              48, nullptr, nullptr, wc.hInstance, nullptr);
+  if (!hwnd) {
+    UnregisterClassW(className, wc.hInstance);
+    LUX_LOGE(L"Settings dialog self-test failed: paint probe window");
+    return false;
+  }
+  ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+  UpdateWindow(hwnd);
+  const COLORREF pixel = g_probePixel;
+  DestroyWindow(hwnd);
+  UnregisterClassW(className, wc.hInstance);
+  if (pixel != RGB(18, 52, 86)) {
+    LUX_LOGE(L"Settings dialog self-test failed: PaintSession blit before EndPaint");
+    return false;
+  }
+  return true;
+}
+
+bool BufferedDcFlushSelfTest() {
+  bool createdScreen = false;
+  HDC screen = GetDC(nullptr);
+  if (!screen) {
+    screen = CreateDCW(L"DISPLAY", nullptr, nullptr, nullptr);
+    createdScreen = screen != nullptr;
+  }
+  if (!screen) {
+    LUX_LOGE(L"Settings dialog self-test failed: screen DC");
+    return false;
+  }
+  HDC mem = CreateCompatibleDC(screen);
+  HBITMAP bmp = mem ? CreateCompatibleBitmap(screen, 24, 24) : nullptr;
+  HGDIOBJ old = (mem && bmp) ? SelectObject(mem, bmp) : nullptr;
+  bool ok = mem && bmp && old;
+  if (ok) {
+    RECT rc = {0, 0, 24, 24};
+    HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
+    if (white) {
+      FillRect(mem, &rc, white);
+      DeleteObject(white);
+    }
+    {
+      BufferedDc buffer;
+      buffer.Attach(mem, 24, 24);
+      HBRUSH ink = CreateSolidBrush(RGB(200, 16, 32));
+      if (buffer.dc() && ink) {
+        FillRect(buffer.dc(), &rc, ink);
+      }
+      if (ink) {
+        DeleteObject(ink);
+      }
+      if (GetPixel(mem, 4, 4) != RGB(255, 255, 255)) {
+        ok = false;
+      }
+      buffer.Flush();
+      if (GetPixel(mem, 4, 4) != RGB(200, 16, 32)) {
+        ok = false;
+      }
+    }
+    if (GetPixel(mem, 4, 4) != RGB(200, 16, 32)) {
+      ok = false;
+    }
+  }
+  if (old) {
+    SelectObject(mem, old);
+  }
+  if (bmp) {
+    DeleteObject(bmp);
+  }
+  if (mem) {
+    DeleteDC(mem);
+  }
+  if (createdScreen) {
+    DeleteDC(screen);
+  } else {
+    ReleaseDC(nullptr, screen);
+  }
+  if (!ok) {
+    LUX_LOGE(L"Settings dialog self-test failed: BufferedDc flush");
+  }
+  return ok;
+}
+
+void ReportSettingsSelfTest(const wchar_t* name) {
+  fwprintf(stderr, L"Settings dialog self-test failed: %s\n", name ? name : L"");
+  LUX_LOGE(L"Settings dialog self-test failed: %s", name);
+}
+
+bool SettingsDialogSelfTestImpl() {
+  bool failed = false;
+  auto check = [&](bool condition, const wchar_t* name) {
+    if (!condition) {
+      ReportSettingsSelfTest(name);
+      failed = true;
+    }
+  };
+
+  check(CardForKey(L"Modules.MediaLikeBridge", SettingGroup::Modules) == SettingsUiLoc::SettingsCard::Media,
+        L"like bridge card");
+  check(CardForKey(L"Modules.MediaLikeBridgePort", SettingGroup::Modules) == SettingsUiLoc::SettingsCard::Media,
+        L"like bridge port card");
+  check(CardForKey(L"Modules.Notifications", SettingGroup::Modules) == SettingsUiLoc::SettingsCard::DoNotDisturb,
+        L"notifications card");
+  check(CardForKey(L"Modules.MessengerApps", SettingGroup::Modules) == SettingsUiLoc::SettingsCard::DoNotDisturb,
+        L"messenger apps card");
+  check(CardForKey(L"Themes.ThemePreset", SettingGroup::Themes) == SettingsUiLoc::SettingsCard::ThemeLook,
+        L"preset card");
+
+  const SettingsUiLoc::Lang langs[] = {SettingsUiLoc::Lang::En, SettingsUiLoc::Lang::Uk, SettingsUiLoc::Lang::Ru};
+  for (const SettingDef& def : kSettingSchema) {
+    if (def.group == SettingGroup::Runtime) {
+      continue;
+    }
+    check(CardRank(CardForKey(def.key, def.group)) < 100, def.key);
+    for (SettingsUiLoc::Lang lang : langs) {
+      const wchar_t* label = SettingsUiLoc::SettingLabel(lang, def.key);
+      if (!label || !label[0] || wcscmp(label, def.key) == 0) {
+        wchar_t detail[192] = {};
+        swprintf_s(detail, L"missing label %s", def.key);
+        ReportSettingsSelfTest(detail);
+        failed = true;
+      }
+    }
+  }
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::En, L"Modules.Notifications"),
+               L"Windows notifications") == 0,
+        L"notifications en");
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::Uk, L"Modules.Notifications"),
+               L"Сповіщення Windows") == 0,
+        L"notifications uk");
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::En, L"Modules.MessengerApps"),
+               L"Messenger apps (comma-separated)") == 0,
+        L"messenger en");
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::Uk, L"Modules.MessengerApps"),
+               L"Месенджери (через кому)") == 0,
+        L"messenger uk");
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::En, L"Modules.MediaLikeBridge"),
+               L"YouTube / YouTube Music like bridge") == 0,
+        L"like bridge en");
+  check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::Uk, L"Modules.MediaLikeBridgePort"),
+               L"Порт моста лайків (127.0.0.1)") == 0,
+        L"like bridge port uk");
+
+  const int dpis[] = {96, 120, 144, 192};
+  const int clients[] = {kMinClientW, kDlgClientW, 1280, 1920, 2560};
+  for (int dpi : dpis) {
+    check(LayoutRowsFit(dpi, Dip(dpi, 160)), L"narrow row fit");
+    for (int client : clients) {
+      if (!LayoutRowsFit(dpi, ScrollClientForDialog(dpi, client))) {
+        wchar_t detail[96] = {};
+        swprintf_s(detail, L"row fit dpi %d client %d", dpi, client);
+        ReportSettingsSelfTest(detail);
+        failed = true;
+      }
+    }
+  }
+
+  check(BufferedDcFlushSelfTest(), L"buffer flush");
+  check(PaintSessionSelfTest(), L"paint session");
+  return !failed;
+}
+
 }  // namespace
+
+bool SettingsDialogSelfTest() {
+  return SettingsDialogSelfTestImpl();
+}
 
 void OpenSettingsDialog(HWND owner) {
   if (IsWindow(GetApp().settingsHwnd)) {
