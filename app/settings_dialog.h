@@ -2,11 +2,11 @@
 
 #include <windows.h>
 
-// Architecture (Step D — locked):
-// Custom single-dialog UI driven by kSettingSchema — NOT Win32 PROPSHEETHEADER.
-// Reasons: seed keys will grow past ~100; we need a search box, group headers,
-// and non-standard controls later. Property sheets have no search and fight
-// custom DPI/layout. Keep one schema-driven dialog + filter.
+// Schema-driven settings dialog. A category sidebar plus a global search box
+// replaces one long list. Colors, caption chrome, and controls follow the
+// island theme (presets, custom hex, accent mode, adaptive). Changing theme
+// controls repaints the dialog immediately; Apply/OK persist, Cancel restores
+// the last baseline and does not write those edits.
 //
 // Modal DialogBox on the *main* (host) thread — OK because the island renders on
 // RenderThreadProc. DialogBox runs its own IsDialogMessage loop (Tab/Enter work).
