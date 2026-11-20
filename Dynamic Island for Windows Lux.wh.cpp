@@ -5539,9 +5539,6 @@ bool RunSelfTest(const wchar_t** failure) {
     return true;
 }
 }  // namespace IslandZones
-bool IslandZoneSelfTest(const wchar_t** failure) {
-    return IslandZones::RunSelfTest(failure);
-}
 uint64_t PublishNotification(NotificationSnapshot snapshot) {
     const Settings settings = GetSettingsCopy();
     if (!settings.notifications) {
@@ -25968,6 +25965,10 @@ void StopThreads() {
     g_renderStarted.store(false, std::memory_order_relaxed);
     g_hwnd = nullptr;
 }
+}
+// Outside the anonymous namespace so main.cpp can link --test-json.
+bool IslandZoneSelfTest(const wchar_t** failure) {
+    return IslandZones::RunSelfTest(failure);
 }
 // Real module body. Windhawk's Wh_ModInit only launches this tool-mod
 // process; workers and the overlay live here.
