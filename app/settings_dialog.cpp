@@ -2123,7 +2123,7 @@ RowBand RowBandForView(int dpi, int viewW) {
 
 void ClampBottom(RECT& rc, int limit) {
   if (rc.bottom > limit) {
-    rc.bottom = (std::max)(rc.top, limit);
+    rc.bottom = (std::max)(rc.top, static_cast<LONG>(limit));
   }
 }
 
