@@ -33,7 +33,7 @@ Collapsed pill: clock, date, media glance. Expand on hover or click for tabs and
 
 | Area | Features |
 | --- | --- |
-| **Media** | SMTC player, artwork, transport, queue mode, inline volume, scrubber, lyrics |
+| **Media** | SMTC player, artwork, transport, queue mode, inline volume, scrubber, lyrics, Like/Dislike |
 | **System** | Volume, battery, clipboard, Caps/Num Lock, privacy dots (mic/cam) |
 | **Info** | Weather (wttr.in), calendar, system monitor (CPU / RAM / GPU / net / disk) |
 | **Extras** | File tray, Bluetooth, Do Not Disturb, focus timer, Quick Lookup (dictionary / Wikipedia) |
@@ -50,6 +50,12 @@ Collapsed pill: clock, date, media glance. Expand on hover or click for tabs and
 - **Right-click** → Hide / Reset position / Exit / Settings.
 - **Tray** → Show / Settings / Exit.
 - **Fullscreen** apps can auto-hide the island (setting).
+
+Like and Dislike sit on the title row of the expanded player. The same toggle covers three ways to reach the real button, and only the app that owns the current system media session is used:
+
+- **Browser** — the companion extension in `extensions/youtube-bridge` talks to `127.0.0.1` (default port **18473**).
+- **YouTube Music Desktop** — [Pear Desktop](https://github.com/pear-devs/pear-desktop) (`th-ch/youtube-music`) API server on `127.0.0.1:26538`, and [ytmdesktop](https://github.com/ytmdesktop/ytmdesktop) companion server on `127.0.0.1:9863`, when those local servers are enabled.
+- **Other desktop players** — Windows UI Automation finds Like / Dislike (or Spotify’s Save to Your Library) in YouTube Music, Spotify, TIDAL, Deezer, Apple Music, and Chrome/Edge YouTube Music windows. No plugin is required. A player that only exposes Like does not get a fake Dislike.
 
 ---
 

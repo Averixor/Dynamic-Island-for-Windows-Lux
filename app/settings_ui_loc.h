@@ -366,13 +366,13 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
                 L"Автораскрытие при смене трека");
   }
   if (wcscmp(key, L"Modules.MediaLikeBridge") == 0) {
-    return Pick(lang, L"YouTube / YouTube Music like bridge",
-                L"Міст лайків YouTube і YouTube Music",
-                L"Мост лайков YouTube и YouTube Music");
+    return Pick(lang, L"Like / Dislike for players",
+                L"Лайк / дизлайк для плеєрів",
+                L"Лайк / дизлайк для плееров");
   }
   if (wcscmp(key, L"Modules.MediaLikeBridgePort") == 0) {
-    return Pick(lang, L"Like bridge loopback port", L"Порт моста лайків (127.0.0.1)",
-                L"Порт моста лайков (127.0.0.1)");
+    return Pick(lang, L"Browser bridge port (127.0.0.1)", L"Порт браузерного моста (127.0.0.1)",
+                L"Порт браузерного моста (127.0.0.1)");
   }
   if (wcscmp(key, L"Modules.MediaExpandBlocklist") == 0) {
     return Pick(lang, L"Media expand blocklist", L"Чорний список авторозгортання медіа",

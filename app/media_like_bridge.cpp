@@ -11,6 +11,7 @@
 #endif
 
 #include "media_like_bridge.h"
+#include "media_desktop_rate.h"
 
 #ifdef _WIN32
 #include "logging.h"
@@ -1031,6 +1032,7 @@ DWORD WINAPI BridgeThreadProc(LPVOID) {
 }
 
 void StopLocked() {
+  DesktopRateStop();
   g_stop.store(true, std::memory_order_release);
   const SOCKET listenSock = g_listen.exchange(INVALID_SOCKET);
   if (listenSock != INVALID_SOCKET) {
@@ -1052,6 +1054,7 @@ void StopLocked() {
 }
 
 void StartLocked(int port) {
+  DesktopRateStart();
   if (g_thread) {
     return;
   }
@@ -1072,6 +1075,163 @@ void StartLocked(int port) {
 }  // namespace
 
 void MediaLikeBridgeSetWake(void (*wake)()) { g_wake.store(wake, std::memory_order_release); }
+
+void MediaRateNotifyUi() {
+#ifdef _WIN32
+  NotifyUi();
+#endif
+}
+
+namespace {
+
+struct RateClickFeedback {
+  uint64_t generation = 0;
+  uint64_t until = 0;
+  RateAction action = RateAction::Like;
+  RateFeedback phase = RateFeedback::None;
+};
+
+std::mutex g_feedbackMu;
+RateClickFeedback g_feedback;
+
+void ApplyRateFeedback(MediaLikeBridgeView* view) {
+  if (!view) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(g_feedbackMu);
+  const uint64_t now = GetTickCount64();
+  if (g_feedback.phase != RateFeedback::None && now > g_feedback.until) {
+    g_feedback.phase = RateFeedback::None;
+  }
+  if (!view->connected || g_feedback.phase == RateFeedback::None) {
+    return;
+  }
+  if (g_feedback.phase == RateFeedback::Pending) {
+    const BridgeLikeState target = OptimisticRate(view->like, g_feedback.action);
+    if (view->like == target) {
+      g_feedback.phase = RateFeedback::None;
+      return;
+    }
+    view->like = target;
+  }
+  view->feedback = g_feedback.phase;
+  view->feedbackAction = g_feedback.action;
+}
+
+ParsedLike BridgeLikeToParsed(BridgeLikeState like) {
+  switch (like) {
+  case BridgeLikeState::Liked:
+    return ParsedLike::Liked;
+  case BridgeLikeState::Disliked:
+    return ParsedLike::Disliked;
+  case BridgeLikeState::None:
+    return ParsedLike::None;
+  }
+  const BridgeLikeState unhandled = like;
+  (void)unhandled;
+  return ParsedLike::Unknown;
+}
+
+struct ResolvedRate {
+  MediaLikeBridgeView view;
+  DesktopRateBackend backend = DesktopRateBackend::None;
+  SmtcHint hint;
+  std::string aumid;
+};
+
+ResolvedRate ResolveMediaRate(const std::wstring& title, const std::wstring& artist,
+                              const std::wstring& source, bool playing,
+                              const std::wstring& appUserModelId) {
+  ResolvedRate resolved;
+  resolved.hint.title = WideToUtf8(title);
+  resolved.hint.artist = WideToUtf8(artist);
+  resolved.hint.source = WideToUtf8(source);
+  resolved.hint.playing = playing;
+  resolved.aumid = WideToUtf8(appUserModelId);
+  const SourceRoute route = ClassifyPlaybackSource(resolved.hint.source, resolved.aumid);
+  TabState matched;
+  const bool browserMatch =
+      route.allowBrowserBridge &&
+      g_registry.BestMatch(resolved.hint, GetTickCount64(), kMediaLikeBridgeStaleMs, &matched);
+  DesktopRateNoteSession(resolved.hint, resolved.aumid, browserMatch && !route.preferDesktopApi);
+  BackendOffer offer;
+  if (browserMatch) {
+    offer.browserMatch = true;
+    offer.browserCanLike = matched.canRate;
+    offer.browserCanDislike = matched.canRate;
+    offer.browserLike = BridgeLikeToParsed(matched.like);
+  }
+  BackendOffer desktop;
+  if (DesktopRateReadOffer(&desktop)) {
+    offer.pearReachable = desktop.pearReachable;
+    offer.pearTrackMatch = desktop.pearTrackMatch;
+    offer.pearCanLike = desktop.pearCanLike;
+    offer.pearCanDislike = desktop.pearCanDislike;
+    offer.pearLike = desktop.pearLike;
+    offer.ytmReachable = desktop.ytmReachable;
+    offer.ytmTrackMatch = desktop.ytmTrackMatch;
+    offer.ytmCanLike = desktop.ytmCanLike;
+    offer.ytmCanDislike = desktop.ytmCanDislike;
+    offer.ytmLike = desktop.ytmLike;
+    offer.ytmLegacy = desktop.ytmLegacy;
+    offer.uiaReady = desktop.uiaReady;
+    offer.uiaCanLike = desktop.uiaCanLike;
+    offer.uiaCanDislike = desktop.uiaCanDislike;
+    offer.uiaLike = desktop.uiaLike;
+  }
+  const BackendChoice choice = ChooseRateBackend(route, offer);
+  resolved.backend = choice.backend;
+  if (choice.backend == DesktopRateBackend::None) {
+    resolved.view.reserveButtons = route.allowBrowserBridge;
+    return resolved;
+  }
+  resolved.view.connected = true;
+  resolved.view.canLike = choice.canLike;
+  resolved.view.canDislike = choice.canDislike;
+  resolved.view.canRate = choice.canLike || choice.canDislike;
+  resolved.view.like = ParsedLikeToBridge(choice.like);
+  ApplyRateFeedback(&resolved.view);
+  return resolved;
+}
+
+}  // namespace
+
+uint64_t MediaRateNotePending(RateAction action) {
+#ifdef _WIN32
+  std::lock_guard<std::mutex> lock(g_feedbackMu);
+  ++g_feedback.generation;
+  if (g_feedback.generation == 0) {
+    g_feedback.generation = 1;
+  }
+  g_feedback.phase = RateFeedback::Pending;
+  g_feedback.action = action;
+  g_feedback.until = GetTickCount64() + 2500;
+  return g_feedback.generation;
+#else
+  (void)action;
+  return 0;
+#endif
+}
+
+void MediaRateNoteResult(uint64_t generation, bool ok, RateAction action) {
+#ifdef _WIN32
+  std::lock_guard<std::mutex> lock(g_feedbackMu);
+  if (generation == 0 || generation != g_feedback.generation) {
+    return;
+  }
+  if (ok) {
+    g_feedback.phase = RateFeedback::None;
+    return;
+  }
+  g_feedback.phase = RateFeedback::Error;
+  g_feedback.action = action;
+  g_feedback.until = GetTickCount64() + 1600;
+#else
+  (void)generation;
+  (void)ok;
+  (void)action;
+#endif
+}
 
 const char* RateActionJson(RateAction action) {
   switch (action) {
@@ -1446,41 +1606,47 @@ void MediaLikeBridgeStop() {
 }
 
 MediaLikeBridgeView MediaLikeBridgeQuery(const std::wstring& title, const std::wstring& artist,
-                                         const std::wstring& source, bool playing) {
-  MediaLikeBridgeView view;
+                                         const std::wstring& source, bool playing,
+                                         const std::wstring& appUserModelId) {
 #ifdef _WIN32
-  SmtcHint hint;
-  hint.title = WideToUtf8(title);
-  hint.artist = WideToUtf8(artist);
-  hint.source = WideToUtf8(source);
-  hint.playing = playing;
-  TabState matched;
-  if (!g_registry.BestMatch(hint, GetTickCount64(), kMediaLikeBridgeStaleMs, &matched)) {
-    return view;
-  }
-  view.connected = true;
-  view.canRate = matched.canRate;
-  view.like = matched.like;
+  return ResolveMediaRate(title, artist, source, playing, appUserModelId).view;
 #else
   (void)title;
   (void)artist;
   (void)source;
   (void)playing;
+  (void)appUserModelId;
+  return {};
 #endif
-  return view;
 }
 
 bool MediaLikeBridgeEnqueue(const std::wstring& title, const std::wstring& artist,
-                            const std::wstring& source, bool playing, RateAction action) {
+                            const std::wstring& source, bool playing, RateAction action,
+                            const std::wstring& appUserModelId) {
 #ifdef _WIN32
-  SmtcHint hint;
-  hint.title = WideToUtf8(title);
-  hint.artist = WideToUtf8(artist);
-  hint.source = WideToUtf8(source);
-  hint.playing = playing;
-  std::string tabId;
-  if (!g_registry.EnqueueBest(hint, action, GetTickCount64(), kMediaLikeBridgeStaleMs, &tabId,
-                              nullptr)) {
+  const ResolvedRate resolved = ResolveMediaRate(title, artist, source, playing, appUserModelId);
+  if (resolved.backend == DesktopRateBackend::None || !resolved.view.connected) {
+    return false;
+  }
+  if (action == RateAction::Like && !resolved.view.canLike) {
+    return false;
+  }
+  if (action == RateAction::Dislike && !resolved.view.canDislike) {
+    return false;
+  }
+  if (resolved.backend == DesktopRateBackend::BrowserBridge) {
+    std::string tabId;
+    if (!g_registry.EnqueueBest(resolved.hint, action, GetTickCount64(), kMediaLikeBridgeStaleMs,
+                                &tabId, nullptr)) {
+      return false;
+    }
+    MediaRateNotePending(action);
+    NotifyUi();
+    return true;
+  }
+  const uint64_t generation = MediaRateNotePending(action);
+  if (!DesktopRateEnqueue(resolved.hint, resolved.aumid, action, resolved.backend, generation)) {
+    MediaRateNoteResult(generation, false, action);
     return false;
   }
   NotifyUi();
@@ -1491,6 +1657,7 @@ bool MediaLikeBridgeEnqueue(const std::wstring& title, const std::wstring& artis
   (void)source;
   (void)playing;
   (void)action;
+  (void)appUserModelId;
   return false;
 #endif
 }
@@ -1769,6 +1936,7 @@ bool MediaLikeBridgeSelfTest() {
                "\"like\",\"videoId\":\"vid\"},{\"id\":8,\"action\":\"dislike\",\"videoId\":\"v2\"}]}");
   BRIDGE_CHECK(std::string(RateActionJson(RateAction::Like)) == "like");
   BRIDGE_CHECK(std::string(RateActionJson(RateAction::Dislike)) == "dislike");
+  BRIDGE_CHECK(DesktopRateSelfTest());
 
 #undef BRIDGE_CHECK
 #ifdef _WIN32

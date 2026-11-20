@@ -1692,7 +1692,8 @@ SettingsUiLoc::SettingsCard CardForKey(const wchar_t* key, SettingGroup group) {
     return SettingsUiLoc::SettingsCard::ThemeAura;
   }
   if (KeyEquals(key, L"Modules.Media") || KeyEquals(key, L"Modules.MediaAutoExpand") ||
-      KeyEquals(key, L"Modules.MediaExpandBlocklist")) {
+      KeyEquals(key, L"Modules.MediaExpandBlocklist") || KeyEquals(key, L"Modules.MediaLikeBridge") ||
+      KeyEquals(key, L"Modules.MediaLikeBridgePort")) {
     return SettingsUiLoc::SettingsCard::Media;
   }
   if (KeyEquals(key, L"Modules.MediaPillClock") || KeyEquals(key, L"Modules.MediaPillDate") ||
