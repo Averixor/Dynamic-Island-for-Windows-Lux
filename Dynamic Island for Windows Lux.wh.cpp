@@ -2721,7 +2721,7 @@ bool ComputeMediaControlRow(float playerWidth, int dockSlots, bool wantLyrics, M
     *out = packed;
     return packed.volRight > packed.volLeft + 16.0f;
 }
-D2D1_MATRIX_3X2_F RateGlyphTransform(D2D1_POINT_2F center, bool thumbsUp, float scale) {
+D2D1::Matrix3x2F RateGlyphTransform(D2D1_POINT_2F center, bool thumbsUp, float scale) {
     // Geometry is authored around the origin. Scale there (Y flip for dislike),
     // then move it onto the button. Scaling around `center` first throws the
     // flipped glyph down the control row.
@@ -5911,10 +5911,11 @@ bool RunSelfTest(const wchar_t** failure) {
     }
     const D2D1_POINT_2F glyphCenter = D2D1::Point2F(340.0f, 48.0f);
     const D2D1_POINT_2F localTip = D2D1::Point2F(-3.4f, -6.4f);
-    const D2D1_POINT_2F downTip = RateGlyphTransform(glyphCenter, false, 1.0f).TransformPoint(localTip);
-    const D2D1_POINT_2F upTip = RateGlyphTransform(glyphCenter, true, 1.0f).TransformPoint(localTip);
-    const D2D1_POINT_2F downOrigin =
-        RateGlyphTransform(glyphCenter, false, 1.0f).TransformPoint(D2D1::Point2F(0.0f, 0.0f));
+    const D2D1::Matrix3x2F downMatrix = RateGlyphTransform(glyphCenter, false, 1.0f);
+    const D2D1::Matrix3x2F upMatrix = RateGlyphTransform(glyphCenter, true, 1.0f);
+    const D2D1_POINT_2F downTip = downMatrix.TransformPoint(localTip);
+    const D2D1_POINT_2F upTip = upMatrix.TransformPoint(localTip);
+    const D2D1_POINT_2F downOrigin = downMatrix.TransformPoint(D2D1::Point2F(0.0f, 0.0f));
     if (std::fabs(downOrigin.x - glyphCenter.x) > 0.05f || std::fabs(downOrigin.y - glyphCenter.y) > 0.05f ||
         upTip.y > glyphCenter.y - 4.0f || downTip.y < glyphCenter.y + 4.0f || downTip.y > glyphCenter.y + 10.0f ||
         std::fabs(downTip.x - (glyphCenter.x + localTip.x)) > 0.2f) {
