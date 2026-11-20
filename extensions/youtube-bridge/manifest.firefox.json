@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Dynamic Island Lux — YouTube Bridge",
+  "version": "1.0.0",
+  "description": "Reports YouTube and YouTube Music like state to Dynamic Island for Windows Lux and applies like or dislike from the island. Talks only to 127.0.0.1.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://music.youtube.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dynamic Island Lux Bridge"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "dynamic-island-lux-bridge@averixor.github.io",
+      "strict_min_version": "115.0"
+    }
+  }
+}

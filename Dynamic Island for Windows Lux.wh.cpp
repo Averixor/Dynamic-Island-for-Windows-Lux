@@ -47,7 +47,7 @@
 
 Центр острова завжди лишає плеєр або годинник. Короткі технічні події з’являються ліворуч, сповіщення месенджерів — праворуч:
 
-- відтворення: назва, виконавець, обкладинка, спектр, попередній / play / наступний, смуга перемотки;
+- відтворення: назва, виконавець, обкладинка, спектр, попередній / play / наступний, смуга перемотки, Like/Dislike для YouTube і YouTube Music (локальний міст і розширення `extensions/youtube-bridge`);
 - гучність і яскравість;
 - копіювання тексту або зображення;
 - заряд батареї і живлення;
@@ -265,6 +265,12 @@
   - Media: true
     $name: Медіа
     $description: Показує плеєр, обкладинку та керування відтворенням
+  - MediaLikeBridge: true
+    $name: Міст лайків YouTube
+    $description: Локальний міст Like/Dislike для YouTube і YouTube Music (лише 127.0.0.1). Потрібне розширення extensions/youtube-bridge
+  - MediaLikeBridgePort: 18473
+    $name: Порт моста лайків
+    $description: Порт петлі 127.0.0.1 для розширення браузера (від 1024 до 65535)
   - Volume: true
     $name: Гучність
     $description: Показує пігулку зміни гучності системи
@@ -423,6 +429,7 @@
 #include "app_context.h"
 #include "island_zones.h"
 #include "main.h"
+#include "media_like_bridge.h"
 #include "menu_theme.h"
 #include "resource.h"
 #endif
@@ -554,6 +561,16 @@ namespace MediaLayout {
     constexpr float kArtInsetX = 24.0f;
     constexpr float kArtInsetY = 20.0f;
     constexpr float kArtSize = 64.0f;
+    constexpr float kHeaderRightInset = 24.0f;
+    constexpr float kWaveWidth = 32.0f;
+    constexpr float kRateButtonRadius = 11.0f;
+    constexpr float kRateHitPad = 4.0f;
+    constexpr float kRateCenterGap = 30.0f;
+    constexpr float kRateTextGap = 10.0f;
+    constexpr float kRateEqualizerGap = 12.0f;
+    constexpr float kRateButtonY = 32.0f;
+    constexpr int kRateLikeCommand = 4;
+    constexpr int kRateDislikeCommand = 5;
     constexpr float kExpandedMinHeight = 60.0f;
     constexpr float kDockLeft = 20.0f;
     constexpr float kDockHeight = 30.0f;
@@ -895,6 +912,8 @@ struct Settings {
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
+    bool mediaLikeBridge = true;
+    int mediaLikeBridgePort = 18473;
     bool clipboard = true;
     bool statusCountdownProgress = false;
     bool battery = true;
@@ -1401,6 +1420,7 @@ HANDLE g_lyricsThread = nullptr;
 HANDLE g_notificationThread = nullptr;
 HANDLE g_bluetoothThread = nullptr;
 std::atomic<bool> g_running = false;
+std::atomic<bool> g_mediaLikeBridgeRun{false};
 
 // Short-lived asynchronous actions must not outlive the Windhawk module.
 // Keeping their thread handles here lets shutdown join every task before unload.
@@ -2022,6 +2042,10 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Auto", L"Авто"},
         {L"Playing from %s", L"Грає з %s"},
         {L"Paused in %s", L"Пауза в %s"},
+        {L"Like", L"Подобається"},
+        {L"Dislike", L"Не подобається"},
+        {L"YouTube / YouTube Music like bridge", L"Міст лайків YouTube і YouTube Music"},
+        {L"Like bridge loopback port", L"Порт моста лайків (127.0.0.1)"},
         {L"Focus Complete", L"Фокус завершено"},
         {L"Break Complete", L"Перерву завершено"},
         {L"Focus Timer", L"Таймер фокусу"},
@@ -2167,6 +2191,10 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Auto", L"Авто"},
         {L"Playing from %s", L"Воспроизводится из %s"},
         {L"Paused in %s", L"Пауза в %s"},
+        {L"Like", L"Нравится"},
+        {L"Dislike", L"Не нравится"},
+        {L"YouTube / YouTube Music like bridge", L"Мост лайков YouTube и YouTube Music"},
+        {L"Like bridge loopback port", L"Порт моста лайков (127.0.0.1)"},
         {L"Focus Complete", L"Фокус завершён"},
         {L"Break Complete", L"Перерыв завершён"},
         {L"Focus Timer", L"Таймер фокуса"},
@@ -2415,6 +2443,107 @@ MediaContentPoint MediaPlayerZonePoint(const MediaContentPoint& pt) {
 }
 bool MediaLyricsButtonHitTest(const MediaContentPoint& rawPt);
 bool MediaInlineVolumeTrackX(float playerWidth, float* outLeft, float* outRight);
+struct MediaRateLayout {
+    float likeCx = 0.0f;
+    float dislikeCx = 0.0f;
+    float cy = 0.0f;
+    float textRight = 0.0f;
+    float radius = 0.0f;
+};
+bool ComputeMediaRateLayout(float playerWidth, MediaRateLayout* out) {
+    if (!out || playerWidth < 200.0f) {
+        return false;
+    }
+    const float waveLeft = playerWidth - MediaLayout::kHeaderRightInset - MediaLayout::kWaveWidth;
+    const float radius = MediaLayout::kRateButtonRadius;
+    const float dislikeCx = waveLeft - MediaLayout::kRateEqualizerGap - radius;
+    const float likeCx = dislikeCx - MediaLayout::kRateCenterGap;
+    const float textRight = likeCx - radius - MediaLayout::kRateTextGap;
+    const float textLeft = MediaLayout::kArtInsetX + MediaLayout::kArtSize + 18.0f;
+    if (likeCx - radius < textLeft + 24.0f || textRight < textLeft + 36.0f) {
+        return false;
+    }
+    out->likeCx = likeCx;
+    out->dislikeCx = dislikeCx;
+    out->cy = MediaLayout::kRateButtonY;
+    out->textRight = textRight;
+    out->radius = radius;
+    return true;
+}
+int MediaRateHitTest(const MediaContentPoint& rawPt) {
+    if (!rawPt.valid || rawPt.height <= MediaLayout::kExpandedMinHeight) {
+        return -1;
+    }
+    if (g_immersiveMixPub.load(std::memory_order_relaxed) > 0.20f) {
+        return -1;
+    }
+    MediaRateLayout layout;
+    if (!ComputeMediaRateLayout(rawPt.width, &layout)) {
+        return -1;
+    }
+    const float reach = layout.radius + MediaLayout::kRateHitPad;
+    const float likeDistance = std::hypot(rawPt.x - layout.likeCx, rawPt.y - layout.cy);
+    const float dislikeDistance = std::hypot(rawPt.x - layout.dislikeCx, rawPt.y - layout.cy);
+    if (likeDistance <= reach && likeDistance <= dislikeDistance) {
+        return MediaLayout::kRateLikeCommand;
+    }
+    if (dislikeDistance <= reach) {
+        return MediaLayout::kRateDislikeCommand;
+    }
+    return -1;
+}
+bool MediaLikeButtonsEnabled(const Settings& settings) {
+#ifdef LUX_STANDALONE
+    return settings.mediaLikeBridge;
+#else
+    (void)settings;
+    return false;
+#endif
+}
+bool CopyActiveMediaIdentity(std::wstring* title, std::wstring* artist, std::wstring* source,
+                             bool* playing) {
+    if (!title || !artist || !source || !playing) {
+        return false;
+    }
+    std::lock_guard lock(g_stateMutex);
+    if (!g_state.media.available) {
+        return false;
+    }
+    *title = g_state.media.title;
+    *artist = g_state.media.artist;
+    *source = g_state.media.sourceName;
+    *playing = g_state.media.playing;
+    return true;
+}
+bool MediaRateActionableAt(const MediaContentPoint& pt, const Settings& settings) {
+#ifdef LUX_STANDALONE
+    if (!MediaLikeButtonsEnabled(settings) || MediaRateHitTest(pt) < 0) {
+        return false;
+    }
+    std::wstring title;
+    std::wstring artist;
+    std::wstring source;
+    bool playing = false;
+    if (!CopyActiveMediaIdentity(&title, &artist, &source, &playing)) {
+        return false;
+    }
+    const MediaLikeBridgeView view = MediaLikeBridgeQuery(title, artist, source, playing);
+    return view.connected && view.canRate;
+#else
+    (void)pt;
+    (void)settings;
+    return false;
+#endif
+}
+void SyncMediaLikeBridge() {
+#ifdef LUX_STANDALONE
+    if (!g_mediaLikeBridgeRun.load(std::memory_order_acquire)) {
+        return;
+    }
+    const Settings copy = GetSettingsCopy();
+    MediaLikeBridgeApply(copy.mediaLikeBridge, copy.mediaLikeBridgePort);
+#endif
+}
 int MediaTransportHitTest(const MediaContentPoint& rawPt) {
     const MediaContentPoint pt = MediaPlayerZonePoint(rawPt);
     if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
@@ -3361,6 +3490,11 @@ void LoadSettings() {
     }
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
+    next.mediaLikeBridge = Wh_GetIntSetting(L"Modules.MediaLikeBridge") != 0;
+    next.mediaLikeBridgePort = Wh_GetIntSetting(L"Modules.MediaLikeBridgePort");
+    if (next.mediaLikeBridgePort < 1024 || next.mediaLikeBridgePort > 65535) {
+        next.mediaLikeBridgePort = 18473;
+    }
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
         std::lock_guard lock(g_stateMutex);
@@ -3844,6 +3978,8 @@ void LoadSettings() {
         const Settings defaults{};
         next.media = defaults.media;
         next.mediaAutoExpand = defaults.mediaAutoExpand;
+        next.mediaLikeBridge = defaults.mediaLikeBridge;
+        next.mediaLikeBridgePort = defaults.mediaLikeBridgePort;
         next.clipboard = defaults.clipboard;
         next.statusCountdownProgress = defaults.statusCountdownProgress;
         next.battery = defaults.battery;
@@ -3952,6 +4088,7 @@ void LoadSettings() {
     g_capsLockEnabled.store(nextCapsLock, std::memory_order_relaxed);
     g_unhideOnHoverEnabled.store(nextUnhideOnHover, std::memory_order_relaxed);
     g_layoutDirty = true;
+    SyncMediaLikeBridge();
     if (cityChanged && g_settingsChangedEvent) {
         SetEvent(g_settingsChangedEvent);
     }
@@ -17864,7 +18001,8 @@ private:
             if (tabIdx >= maxTabs)
                 tabIdx = maxTabs - 1;
             auto drawTabContent = [&](int activeTabId) {
-                if (activeTabId == 0) {
+                    if (activeTabId == 0) {
+                    UpdateMediaButtonAnimations(now, state.media.playing);
                     const D2D1_RECT_F fullIslandRect = rect;
                     const D2D1_RECT_F rect = D2D1::RectF(fullIslandRect.left, fullIslandRect.top,
                                                          fullIslandRect.right - sideLyricsExtra,
@@ -17884,14 +18022,20 @@ private:
                         }
                         const bool normalFaded = BeginImmersiveFade(1.0f - immersiveMix);
                         if (immersiveMix < 0.999f) {
-                            const float waveW = 32.0f;
+                            const float waveW = MediaLayout::kWaveWidth;
                             const float waveH = 20.0f;
-                            D2D1_RECT_F waveRect = D2D1::RectF(rect.right - 24.0f - waveW,
+                            D2D1_RECT_F waveRect = D2D1::RectF(rect.right - MediaLayout::kHeaderRightInset - waveW,
                                                                rect.top + 20.0f + (artSize - waveH) * 0.5f,
-                                                               rect.right - 24.0f,
+                                                               rect.right - MediaLayout::kHeaderRightInset,
                                                                rect.top + 20.0f + (artSize + waveH) * 0.5f);
                             const float textLeft = artRect.right + 18.0f;
-                            const float textRight = waveRect.left - 16.0f;
+                            float textRight = waveRect.left - 16.0f;
+                            MediaRateLayout rateLayout{};
+                            const bool showRate = MediaLikeButtonsEnabled(settings) &&
+                                                  ComputeMediaRateLayout(rect.right - rect.left, &rateLayout);
+                            if (showRate) {
+                                textRight = std::min(textRight, rect.left + rateLayout.textRight);
+                            }
                             IDWriteTextFormat* titleFmt = mediaTitleFormat_ ? mediaTitleFormat_.Get()
                                                                             : (textFormat_ ? textFormat_.Get() : boldTextFormat_.Get());
                             IDWriteTextFormat* artistFmt = mediaArtistFormat_ ? mediaArtistFormat_.Get()
@@ -17903,22 +18047,34 @@ private:
                                 state.media.title.empty() ? std::wstring(Loc(L"Unknown")) : state.media.title;
                             if (!DrawTitleTransition(titleText, titleRect, textBrush_.Get(), now, !state.media.title.empty())) {
                                 if (titleFmt) {
-                                    DrawMarqueeText(titleText, titleRect, titleFmt, textBrush_.Get(), now, 42.0f,
-                                                    marqueeTitleCache_);
+                                    if (showRate) {
+                                        DrawEllipsisLine(titleText, titleRect, titleFmt, textBrush_.Get());
+                                    } else {
+                                        DrawMarqueeText(titleText, titleRect, titleFmt, textBrush_.Get(), now, 42.0f,
+                                                        marqueeTitleCache_);
+                                    }
                                 }
                             }
                             D2D1_RECT_F artistRect = D2D1::RectF(textLeft, rect.top + 46.0f, textRight, rect.top + 68.0f);
                             mutedBrush_->SetOpacity(0.94f);
                             if (artistFmt) {
-                                DrawSwapMarquee(swapArtist_, state.media.artist, artistRect, artistFmt,
-                                                mutedBrush_.Get(), now, 30.0f, marqueeArtistCache_, 0.06f);
+                                if (showRate) {
+                                    DrawEllipsisLine(state.media.artist, artistRect, artistFmt, mutedBrush_.Get());
+                                } else {
+                                    DrawSwapMarquee(swapArtist_, state.media.artist, artistRect, artistFmt,
+                                                    mutedBrush_.Get(), now, 30.0f, marqueeArtistCache_, 0.06f);
+                                }
                             }
                             mutedBrush_->SetOpacity(0.88f);
                             if (!state.media.albumTitle.empty()) {
                                 D2D1_RECT_F albumRect = D2D1::RectF(textLeft, rect.top + 66.0f, textRight, rect.top + 86.0f);
                                 if (metaFmt) {
-                                    DrawSwapMarquee(swapAlbum_, state.media.albumTitle, albumRect, metaFmt,
-                                                    mutedBrush_.Get(), now, 28.0f, marqueeAlbumCache_, 0.12f);
+                                    if (showRate) {
+                                        DrawEllipsisLine(state.media.albumTitle, albumRect, metaFmt, mutedBrush_.Get());
+                                    } else {
+                                        DrawSwapMarquee(swapAlbum_, state.media.albumTitle, albumRect, metaFmt,
+                                                        mutedBrush_.Get(), now, 28.0f, marqueeAlbumCache_, 0.12f);
+                                    }
                                 }
                             }
                             mutedBrush_->SetOpacity(0.75f);
@@ -17938,7 +18094,26 @@ private:
                                 }
                             }
                             const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 88.0f);
-                            DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 18.0f), now);
+                            DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 18.0f), now, showRate);
+                            if (showRate) {
+                                bool rateConnected = false;
+                                bool rateCan = false;
+                                int rateLike = 0;
+#ifdef LUX_STANDALONE
+                                static_assert(static_cast<int>(BridgeLikeState::None) == 0, "like none");
+                                static_assert(static_cast<int>(BridgeLikeState::Liked) == 1, "like liked");
+                                static_assert(static_cast<int>(BridgeLikeState::Disliked) == 2, "like disliked");
+                                const MediaLikeBridgeView rateView = MediaLikeBridgeQuery(
+                                    state.media.title, state.media.artist, state.media.sourceName,
+                                    state.media.playing);
+                                rateConnected = rateView.connected;
+                                rateCan = rateView.canRate;
+                                rateLike = static_cast<int>(rateView.like);
+#endif
+                                DrawMediaRateButtons(D2D1::Point2F(rect.left + rateLayout.likeCx, rect.top + rateLayout.cy),
+                                                     D2D1::Point2F(rect.left + rateLayout.dislikeCx, rect.top + rateLayout.cy),
+                                                     rateConnected, rateCan, rateLike);
+                            }
                             // Volume wheel zone = title/artist/album/source text strip only (not scrub/controls).
                             PublishMediaCenterHitRect(
                                 D2D1::RectF(textLeft, rect.top + 18.0f, textRight, srcLineTop + 18.0f));
@@ -19089,7 +19264,28 @@ private:
         target_->SetTransform(swapGroupOldTransform_);
         swapGroupLayer_.Reset();
     }
-    void DrawSourceLine(const MediaSnapshot& media, D2D1_RECT_F area, double now) {
+    void DrawEllipsisLine(const std::wstring& text, D2D1_RECT_F rect, IDWriteTextFormat* format,
+                          ID2D1Brush* brush) {
+        if (!format || !brush || text.empty() || !dwriteFactory_) {
+            return;
+        }
+        const float width = rect.right - rect.left;
+        const float height = rect.bottom - rect.top;
+        if (width < 8.0f || height < 4.0f) {
+            return;
+        }
+        DWRITE_TEXT_METRICS metrics{};
+        ComPtr<IDWriteTextLayout> layout = MakeLineLayout(text, format, width, &metrics, true);
+        if (!layout) {
+            return;
+        }
+        const float y = rect.top + std::max(0.0f, (height - metrics.height) * 0.5f);
+        target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        target_->DrawTextLayout(D2D1::Point2F(rect.left, y), layout.Get(), brush,
+                                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        target_->PopAxisAlignedClip();
+    }
+    void DrawSourceLine(const MediaSnapshot& media, D2D1_RECT_F area, double now, bool ellipsis = false) {
         IDWriteTextFormat* srcFmt = mediaMetaFormat_ ? mediaMetaFormat_.Get()
                                                      : (smallTextFormat_ ? smallTextFormat_.Get() : textFormat_.Get());
         if (media.sourceName.empty() || !srcFmt)
@@ -19107,8 +19303,12 @@ private:
         if (!scratchColorBrush_)
             return;
         scratchColorBrush_->SetOpacity(0.92f);
-        DrawMarqueeText(text, area, srcFmt, scratchColorBrush_.Get(), now, 26.0f,
-                        marqueeSourceCache_);
+        if (ellipsis) {
+            DrawEllipsisLine(text, area, srcFmt, scratchColorBrush_.Get());
+        } else {
+            DrawMarqueeText(text, area, srcFmt, scratchColorBrush_.Get(), now, 26.0f,
+                            marqueeSourceCache_);
+        }
         scratchColorBrush_->SetOpacity(1.0f);
     }
     void DrawSourceDock(const SharedState& state, D2D1_RECT_F rect, double now) {
@@ -19263,7 +19463,7 @@ private:
         lastMediaBtnTime_ = now;
         const int pressedCmd = g_pressedMediaButton.load();
         bool isStillAnimating = false;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             const float target = (pressedCmd == i) ? 1.0f : 0.0f;
             const float tau = ((target > mediaBtnPress_[i]) ? 0.025f : 0.075f) / AnimSpeedOf(frameSettings_);
             const float k = 1.0f - std::exp(-dt / tau);
@@ -19539,10 +19739,133 @@ private:
             target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, cy), thumbR, thumbR), thumb);
         }
     }
+    ID2D1Geometry* EnsureThumbIcon() {
+        if (thumbIconGeom_) {
+            return thumbIconGeom_.Get();
+        }
+        if (!d2dFactory_) {
+            return nullptr;
+        }
+        ComPtr<ID2D1RoundedRectangleGeometry> thumb;
+        ComPtr<ID2D1RoundedRectangleGeometry> palm;
+        if (FAILED(d2dFactory_->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(-6.5f, -7.6f, -1.15f, 1.35f), 2.45f, 2.45f), &thumb)) ||
+            !thumb) {
+            return nullptr;
+        }
+        ComPtr<ID2D1TransformedGeometry> thumbTilt;
+        if (FAILED(d2dFactory_->CreateTransformedGeometry(
+                thumb.Get(), D2D1::Matrix3x2F::Rotation(-18.0f, D2D1::Point2F(-3.8f, -0.6f)),
+                &thumbTilt)) ||
+            !thumbTilt) {
+            return nullptr;
+        }
+        if (FAILED(d2dFactory_->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(-2.15f, -1.15f, 6.7f, 6.7f), 2.25f, 2.25f), &palm)) ||
+            !palm) {
+            return nullptr;
+        }
+        ComPtr<ID2D1PathGeometry> united;
+        if (FAILED(d2dFactory_->CreatePathGeometry(&united)) || !united) {
+            return nullptr;
+        }
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(united->Open(&sink)) || !sink) {
+            return nullptr;
+        }
+        if (FAILED(thumbTilt->CombineWithGeometry(palm.Get(), D2D1_COMBINE_MODE_UNION, nullptr, 0.2f,
+                                                  sink.Get())) ||
+            FAILED(sink->Close())) {
+            return nullptr;
+        }
+        thumbIconGeom_ = united;
+        return thumbIconGeom_.Get();
+    }
+    void DrawThumbIcon(D2D1_POINT_2F center, bool up, bool filled, float opacity, float press,
+                       const D2D1_COLOR_F& color) {
+        D2D1_MATRIX_3X2_F oldTransform;
+        target_->GetTransform(&oldTransform);
+        const float scale = 1.0f - 0.13f * Clamp(press, 0.0f, 1.0f);
+        const float flip = up ? 1.0f : -1.0f;
+        target_->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale * flip, center) *
+                              D2D1::Matrix3x2F::Translation(center.x - 0.15f, center.y + 0.45f) *
+                              oldTransform);
+        ID2D1SolidColorBrush* brush =
+            AcquireBrush(D2D1::ColorF(color.r, color.g, color.b, Clamp(opacity, 0.0f, 1.0f)));
+        ID2D1Geometry* geometry = EnsureThumbIcon();
+        if (brush && geometry) {
+            if (filled) {
+                target_->FillGeometry(geometry, brush);
+            } else if (RoundStroke()) {
+                target_->DrawGeometry(geometry, brush, 1.45f, RoundStroke());
+            } else {
+                target_->DrawGeometry(geometry, brush, 1.45f);
+            }
+        } else if (brush) {
+            const D2D1_ROUNDED_RECT palm =
+                D2D1::RoundedRect(D2D1::RectF(-2.15f, -1.15f, 6.7f, 6.7f), 2.25f, 2.25f);
+            const D2D1_ROUNDED_RECT thumb =
+                D2D1::RoundedRect(D2D1::RectF(-6.2f, -7.2f, -1.3f, 1.2f), 2.2f, 2.2f);
+            if (filled) {
+                target_->FillRoundedRectangle(palm, brush);
+                target_->FillRoundedRectangle(thumb, brush);
+            } else {
+                target_->DrawRoundedRectangle(palm, brush, 1.45f);
+                target_->DrawRoundedRectangle(thumb, brush, 1.45f);
+            }
+        }
+        target_->SetTransform(oldTransform);
+    }
+    void DrawMediaRateButtons(D2D1_POINT_2F likeCenter, D2D1_POINT_2F dislikeCenter, bool connected,
+                              bool canRate, int likeState) {
+        const bool enabled = connected && canRate;
+        const int hovered = g_hoveredMediaButton.load();
+        auto drawOne = [&](D2D1_POINT_2F center, int command, bool thumbsUp, bool active) {
+            const bool isHovered = hovered == command;
+            const float press = (command >= 0 && command < 6) ? mediaBtnPress_[command] : 0.0f;
+            const float radius = 13.0f * (1.0f - 0.13f * press);
+            D2D1_COLOR_F icon = material_.textPrimary.a > 0.01f ? material_.textPrimary
+                                                                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+            float bgAlpha = isHovered ? 0.09f : 0.04f;
+            float iconAlpha = isHovered ? 0.95f : 0.72f;
+            bool filled = false;
+            if (!enabled) {
+                bgAlpha = isHovered ? 0.05f : 0.025f;
+                iconAlpha = isHovered ? 0.42f : 0.30f;
+                icon = material_.textSecondary.a > 0.01f ? material_.textSecondary : icon;
+                filled = false;
+            } else if (active) {
+                if (thumbsUp) {
+                    icon = currentAccent_;
+                } else {
+                    icon = D2D1::ColorF(Clamp(currentAccent_.r * 0.25f + 0.78f, 0.0f, 1.0f),
+                                        Clamp(currentAccent_.g * 0.20f + 0.28f, 0.0f, 1.0f),
+                                        Clamp(currentAccent_.b * 0.20f + 0.32f, 0.0f, 1.0f), 1.0f);
+                }
+                bgAlpha = isHovered ? 0.22f : 0.14f;
+                iconAlpha = 1.0f;
+                filled = true;
+            }
+            const D2D1_COLOR_F restingBg = D2D1::ColorF(1.0f, 1.0f, 1.0f, bgAlpha);
+            const D2D1_COLOR_F pressedBg =
+                D2D1::ColorF(currentAccent_.r, currentAccent_.g, currentAccent_.b, enabled ? 0.20f : 0.06f);
+            const D2D1_COLOR_F background = D2D1::ColorF(
+                restingBg.r + (pressedBg.r - restingBg.r) * press,
+                restingBg.g + (pressedBg.g - restingBg.g) * press,
+                restingBg.b + (pressedBg.b - restingBg.b) * press,
+                restingBg.a + (pressedBg.a - restingBg.a) * press);
+            if (ID2D1SolidColorBrush* plate = AcquireBrush(background)) {
+                target_->FillEllipse(D2D1::Ellipse(center, radius, radius), plate);
+            }
+            DrawThumbIcon(center, thumbsUp, filled, iconAlpha, press, icon);
+        };
+        drawOne(likeCenter, MediaLayout::kRateLikeCommand, true, enabled && likeState == 1);
+        drawOne(dislikeCenter, MediaLayout::kRateDislikeCommand, false, enabled && likeState == 2);
+    }
     void DrawMediaControls(bool playing, D2D1_POINT_2F cycle, D2D1_POINT_2F prev, D2D1_POINT_2F play,
                            D2D1_POINT_2F next, MediaQueueMode queueMode, bool queueEnabled,
                            int volumePercent, bool muted, double now) {
-        UpdateMediaButtonAnimations(now, playing);
+        (void)now;
         DrawMediaQueueModeButton(cycle, queueMode, queueEnabled);
         DrawMediaButton(prev, MediaLayout::kNavButtonRadius, 0, false);
         DrawMediaButton(play, MediaLayout::kPlayButtonRadius, playing ? 1 : 2, true);
@@ -22654,7 +22977,8 @@ private:
     MaterialTokens material_{};
     D2D1_COLOR_F currentAccent_ = D2D1::ColorF(0x4cc9f0);
     double lastAccentTime_ = -1.0;
-    float mediaBtnPress_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float mediaBtnPress_[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    ComPtr<ID2D1PathGeometry> thumbIconGeom_;
     double lastMediaBtnTime_ = -1.0;
     ComPtr<ID2D1PathGeometry> skipTriFull_;
     ComPtr<ID2D1PathGeometry> skipTriNotch_;
@@ -23931,6 +24255,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const MediaContentPoint cp = MediaContentFromClient(pt.x, pt.y);
                 const bool hoverClickable = MediaArtHitTest(cp) || SpectrumHitTest(cp) ||
                                             MediaTransportHitTest(cp) != -1 ||
+                                            MediaRateActionableAt(cp, settings) ||
                                             MediaInlineVolumeFractionFromContent(cp, true) >= 0.0f ||
                                             MediaScrubFractionFromContent(cp) >= 0.0f ||
                                             g_hoveredSourceSlot.load(std::memory_order_relaxed) >= 0 ||
@@ -23985,6 +24310,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const DockHit dock = ResolveSourceDockHit(cp);
                 if (dock.slot >= 0) {
                     g_pressedSourceSlot = dock.slot;
+                    g_layoutDirty = true;
+                    return 0;
+                }
+            }
+            if (MediaLikeButtonsEnabled(settings)) {
+                const int rate = MediaRateHitTest(cp);
+                if (rate != -1) {
+                    if (MediaRateActionableAt(cp, settings)) {
+                        g_pressedMediaButton = rate;
+                        SetCapture(hwnd);
+                    }
                     g_layoutDirty = true;
                     return 0;
                 }
@@ -24155,6 +24491,12 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             const MediaContentPoint mediaPt = MediaContentFromClient(xPos, yPos);
             hoveredSlot = ResolveSourceDockHit(mediaPt).slot;
             hovered = hoveredSlot >= 0 ? -1 : MediaTransportHitTest(mediaPt);
+            if (hovered < 0 && hoveredSlot < 0 && MediaLikeButtonsEnabled(settings)) {
+                const int rate = MediaRateHitTest(mediaPt);
+                if (rate != -1) {
+                    hovered = rate;
+                }
+            }
         }
         if (g_hoveredMediaButton.exchange(hovered) != hovered) {
             g_layoutDirty = true;
@@ -24523,6 +24865,29 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 g_immersiveLyrics.store(!g_immersiveLyrics.load());
                 g_layoutDirty = true;
                 return 0;
+            }
+            if (MediaLikeButtonsEnabled(settings)) {
+                const int rate = MediaRateHitTest(cp);
+                if (rate != -1) {
+#ifdef LUX_STANDALONE
+                    std::wstring rateTitle;
+                    std::wstring rateArtist;
+                    std::wstring rateSource;
+                    bool ratePlaying = false;
+                    if (CopyActiveMediaIdentity(&rateTitle, &rateArtist, &rateSource, &ratePlaying)) {
+                        const RateAction action = rate == MediaLayout::kRateDislikeCommand
+                                                      ? RateAction::Dislike
+                                                      : RateAction::Like;
+                        if (MediaLikeBridgeEnqueue(rateTitle, rateArtist, rateSource, ratePlaying,
+                                                   action)) {
+                            g_layoutDirty = true;
+                        }
+                    }
+#else
+                    (void)rate;
+#endif
+                    return 0;
+                }
             }
             const int cmd = MediaTransportHitTest(cp);
             if (cmd != -1) {
@@ -25750,6 +26115,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     }
     return 0;
 }
+void WakeMediaLikeBridgeUi();
 bool StartThreads() {
     {
         std::lock_guard<std::mutex> lock(g_backgroundTasksMutex);
@@ -25819,10 +26185,25 @@ bool StartThreads() {
     }
 
     SubscribeDndNotification();
+#ifdef LUX_STANDALONE
+    MediaLikeBridgeSetWake(WakeMediaLikeBridgeUi);
+    g_mediaLikeBridgeRun.store(true, std::memory_order_release);
+    SyncMediaLikeBridge();
+#endif
     return true;
 }
 
+void WakeMediaLikeBridgeUi() {
+    g_layoutDirty = true;
+    if (g_hwnd && IsWindow(g_hwnd)) {
+        PostMessageW(g_hwnd, WM_APP_LAYOUT_CHANGED, 0, 0);
+    }
+}
 void StopThreads() {
+#ifdef LUX_STANDALONE
+    g_mediaLikeBridgeRun.store(false, std::memory_order_release);
+    MediaLikeBridgeStop();
+#endif
     // Stop accepting asynchronous work before asking worker threads to exit.
     {
         std::lock_guard<std::mutex> lock(g_backgroundTasksMutex);

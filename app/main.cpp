@@ -6,9 +6,11 @@
 #include "app_context.h"
 #include "lux_overlay.h"
 #include "menu_theme.h"
+#include "settings_theme.h"
 #include "settings_dialog.h"
 #include "settings_schema.h"
 #include "settings_store.h"
+#include "media_like_bridge.h"
 #include "settings_ui_loc.h"
 #include "island_zones.h"
 
@@ -564,7 +566,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
 
   INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
   InitCommonControlsEx(&icc);
-  MenuTheme::EnableSystemMenus();
 
   const bool ephemeral = options.ephemeral || options.smokeTest || options.testJson;
   LuxLogInit(ephemeral);
@@ -621,6 +622,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   SettingsStoreInit(ephemeral);
+  MenuTheme::EnableSystemMenus();
   LUX_LOGI(L"Dynamic Island Lux %s starting", LUX_APP_VERSION_STRING);
 
   // Sync HKCU Run with JSON, but honor Task Manager "Disabled" (StartupApproved).
@@ -685,7 +687,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
   }
 
   if (options.testJson) {
-    const bool jsonOk = SettingsStoreSelfTestJson();
+    const bool jsonOk = SettingsStoreSelfTestJson() && SettingsThemeSelfTest() && MediaLikeBridgeSelfTest();
     const wchar_t* zoneFailure = nullptr;
     const bool zoneOk = IslandZoneSelfTest(&zoneFailure);
     if (!zoneOk) {

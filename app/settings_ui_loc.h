@@ -12,6 +12,37 @@ namespace SettingsUiLoc {
 
 enum class Lang { En, Uk, Ru };
 
+enum class SettingsCard {
+  ThemeLook,
+  ThemeAccent,
+  ThemeSurface,
+  ThemeBackdrop,
+  ThemeAura,
+  Media,
+  MediaClock,
+  Volume,
+  Clipboard,
+  Battery,
+  Progress,
+  CapsLock,
+  Weather,
+  Calendar,
+  Monitor,
+  Bluetooth,
+  DoNotDisturb,
+  FocusTimer,
+  Lyrics,
+  QuickLookup,
+  FileTray,
+  GameOverlay,
+  Appearance,
+  Behavior,
+  Animations,
+  Indicators,
+  Shortcuts,
+  General,
+};
+
 inline Lang ResolveLang() {
   std::wstring code = SettingsGetString(L"General.Language", L"uk");
   if (_wcsicmp(code.c_str(), L"auto") == 0) {
@@ -333,6 +364,15 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Modules.MediaAutoExpand") == 0) {
     return Pick(lang, L"Auto-expand on track change", L"Авторозгортання при зміні треку",
                 L"Автораскрытие при смене трека");
+  }
+  if (wcscmp(key, L"Modules.MediaLikeBridge") == 0) {
+    return Pick(lang, L"YouTube / YouTube Music like bridge",
+                L"Міст лайків YouTube і YouTube Music",
+                L"Мост лайков YouTube и YouTube Music");
+  }
+  if (wcscmp(key, L"Modules.MediaLikeBridgePort") == 0) {
+    return Pick(lang, L"Like bridge loopback port", L"Порт моста лайків (127.0.0.1)",
+                L"Порт моста лайков (127.0.0.1)");
   }
   if (wcscmp(key, L"Modules.MediaExpandBlocklist") == 0) {
     return Pick(lang, L"Media expand blocklist", L"Чорний список авторозгортання медіа",
@@ -775,6 +815,84 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   }
   // Language / modifiers: keep schema labels (endonyms / chord names).
   return def.enums[index].label;
+}
+
+inline const wchar_t* CardTitle(Lang lang, SettingsCard card) {
+  switch (card) {
+  case SettingsCard::ThemeLook:
+    return Pick(lang, L"Theme", L"Тема", L"Тема");
+  case SettingsCard::ThemeAccent:
+    return Pick(lang, L"Accent", L"Акцент", L"Акцент");
+  case SettingsCard::ThemeSurface:
+    return Pick(lang, L"Surface", L"Поверхня", L"Поверхность");
+  case SettingsCard::ThemeBackdrop:
+    return Pick(lang, L"Backdrop", L"Підложка", L"Подложка");
+  case SettingsCard::ThemeAura:
+    return Pick(lang, L"Aura", L"Ореол", L"Ореол");
+  case SettingsCard::Media:
+    return Pick(lang, L"Media", L"Медіа", L"Медиа");
+  case SettingsCard::MediaClock:
+    return Pick(lang, L"Clock and date", L"Годинник і дата", L"Часы и дата");
+  case SettingsCard::Volume:
+    return Pick(lang, L"Volume", L"Гучність", L"Громкость");
+  case SettingsCard::Clipboard:
+    return Pick(lang, L"Clipboard", L"Буфер обміну", L"Буфер обмена");
+  case SettingsCard::Battery:
+    return Pick(lang, L"Battery", L"Батарея", L"Батарея");
+  case SettingsCard::Progress:
+    return Pick(lang, L"Progress", L"Прогрес", L"Прогресс");
+  case SettingsCard::CapsLock:
+    return Pick(lang, L"Caps Lock", L"Caps Lock", L"Caps Lock");
+  case SettingsCard::Weather:
+    return Pick(lang, L"Weather", L"Погода", L"Погода");
+  case SettingsCard::Calendar:
+    return Pick(lang, L"Calendar", L"Календар", L"Календарь");
+  case SettingsCard::Monitor:
+    return Pick(lang, L"System monitor", L"Системний монітор", L"Системный монитор");
+  case SettingsCard::Bluetooth:
+    return Pick(lang, L"Bluetooth", L"Bluetooth", L"Bluetooth");
+  case SettingsCard::DoNotDisturb:
+    return Pick(lang, L"Do not disturb", L"Не турбувати", L"Не беспокоить");
+  case SettingsCard::FocusTimer:
+    return Pick(lang, L"Focus timer", L"Таймер фокусу", L"Таймер фокуса");
+  case SettingsCard::Lyrics:
+    return Pick(lang, L"Lyrics", L"Текст пісні", L"Текст песни");
+  case SettingsCard::QuickLookup:
+    return Pick(lang, L"Quick lookup", L"Швидкий пошук", L"Быстрый поиск");
+  case SettingsCard::FileTray:
+    return Pick(lang, L"File tray", L"Лоток файлів", L"Лоток файлов");
+  case SettingsCard::GameOverlay:
+    return Pick(lang, L"Game overlay", L"Ігровий оверлей", L"Игровой оверлей");
+  case SettingsCard::Appearance:
+    return GroupTitle(lang, SettingGroup::Appearance);
+  case SettingsCard::Behavior:
+    return GroupTitle(lang, SettingGroup::Behavior);
+  case SettingsCard::Animations:
+    return GroupTitle(lang, SettingGroup::Animations);
+  case SettingsCard::Indicators:
+    return GroupTitle(lang, SettingGroup::Indicators);
+  case SettingsCard::Shortcuts:
+    return GroupTitle(lang, SettingGroup::Shortcuts);
+  case SettingsCard::General:
+    return GroupTitle(lang, SettingGroup::General);
+  default: {
+    const SettingsCard unhandled = card;
+    (void)unhandled;
+    return Pick(lang, L"Settings", L"Налаштування", L"Настройки");
+  }
+  }
+}
+
+inline const wchar_t* PreviewTitle(Lang lang) {
+  return Pick(lang, L"Preview", L"Попередній перегляд", L"Предпросмотр");
+}
+
+inline const wchar_t* ColorPickerLabel(Lang lang) {
+  return Pick(lang, L"Choose color", L"Обрати колір", L"Выбрать цвет");
+}
+
+inline const wchar_t* NoMatches(Lang lang) {
+  return Pick(lang, L"No matching settings", L"Немає збігів", L"Нет совпадений");
 }
 
 }  // namespace SettingsUiLoc
