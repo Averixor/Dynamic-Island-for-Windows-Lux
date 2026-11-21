@@ -1,18 +1,17 @@
-# Dynamic Island for Windows Lux — v1.0.10
+# Dynamic Island for Windows Lux — v1.0.11
 
 Windows application release.
 
-- **Tag:** `v1.0.10`
+- **Tag:** `v1.0.11`
 - **Date:** 2026-11-21
 
 The git tag is the source of truth for the release commit. Do not paste a commit hash here — editing the notes after the tag moves HEAD off the tag.
 
-## Highlights since v1.0.9
+## Highlights since v1.0.10
 
-- Fully autonomous Win32 app: island code lives only in `app/island.cpp`; host/mod dual paths removed
-- Settings and storage go through `settings_api.h` → SettingsStore / LuxLog (no host shims)
-- Dropped legacy `modstorage` migration and leftover host-related IDE/dictionary entries
-- Version fallbacks and YTM companion self-test stay aligned with `project(VERSION …)`
+- Removed theme aura (glow / rays / rings / orbit), cover-spin on the pill, and wavy / squiggle progress styles
+- Polished Ukrainian and Russian settings labels (volume step, Direct Composition, privacy dots, backdrop materials, Bluetooth, and related strings)
+- clangd / VS Code indexing for `.h` headers as C++; editor word wrap enabled in the workspace
 
 ## Origin
 
@@ -45,7 +44,7 @@ See `app/README.md` → **Known limitations**.
 
 ## Attachments (GitHub Release)
 
-- `DynamicIslandLux-Setup-1.0.10.exe` (Inno Setup, per-user, no admin)
+- `DynamicIslandLux-Setup-1.0.11.exe` (Inno Setup, per-user, no admin)
 - `Dynamic Island Lux.exe` (portable Release x64, `/MT`)
 - `LICENSE`
 - `NOTICE`
@@ -64,4 +63,4 @@ app\build.bat
 scripts\make-release-assets.bat
 ```
 
-Verify Properties → Details on the exe shows **File version 1.0.10**, CompanyName Dynamic Island Lux, ProductName Dynamic Island for Windows Lux.
+Verify Properties → Details on the exe shows **File version 1.0.11**, CompanyName Dynamic Island Lux, ProductName Dynamic Island for Windows Lux.

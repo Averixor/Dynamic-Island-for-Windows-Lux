@@ -20,7 +20,7 @@
         "WIN32_LEAN_AND_MEAN",
         "_CRT_SECURE_NO_WARNINGS",
         "_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS",
-        "LUX_APP_VERSION_STR=\"1.0.10\""
+        "LUX_APP_VERSION_STR=\"1.0.11\""
       ],
       "windowsSdkVersion": "10.0.26100.0",
       "compilerPath": "cl.exe",

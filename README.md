@@ -2,7 +2,7 @@
 
 Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island. A Win32 application with its own settings, tray icon, and autostart.
 
-**Current release:** v1.0.10
+**Current release:** v1.0.11
 **License:** [MIT](LICENSE)
 
 ---
@@ -11,7 +11,7 @@ Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island. 
 
 ### Recommended (installer)
 
-1. Download `DynamicIslandLux-Setup-1.0.10.exe` from the project release.
+1. Download `DynamicIslandLux-Setup-1.0.11.exe` from the project release.
 2. Run the wizard (per-user install to `%LOCALAPPDATA%\DynamicIslandLux\`, no admin).
 3. Optional: enable **Start with Windows** in the wizard or later in Settings.
 4. Tray icon appears — right-click for **Settings…** / **Show island**.

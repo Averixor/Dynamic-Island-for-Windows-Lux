@@ -19,7 +19,7 @@
 #include "media_desktop_rate.h"
 
 #ifndef LUX_APP_VERSION_STR
-#define LUX_APP_VERSION_STR "1.0.10"
+#define LUX_APP_VERSION_STR "1.0.11"
 #endif
 
 #include <shlobj.h>
