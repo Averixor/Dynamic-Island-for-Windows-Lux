@@ -36,7 +36,7 @@ Collapsed pill: clock, date, media glance. Expand on hover or click for tabs and
 | **System** | Volume, battery, clipboard, Caps/Num Lock, privacy dots (mic/cam) |
 | **Info** | Weather (wttr.in), calendar, system monitor (CPU / RAM / GPU / net / disk) |
 | **Extras** | File tray, Bluetooth, Do Not Disturb, focus timer, Quick Lookup (dictionary / Wikipedia) |
-| **Look** | Pill / Win11 flyout / notch shapes, theme presets, adaptive theme, DWM blur / acrylic, aura |
+| **Look** | Pill / Win11 flyout / notch shapes, theme presets, adaptive theme, DWM blur / acrylic |
 
 **Languages:** Ukrainian (default), English, Russian, and more via `General.Language`.
 

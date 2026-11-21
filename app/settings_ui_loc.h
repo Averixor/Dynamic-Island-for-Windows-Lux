@@ -17,7 +17,6 @@ enum class SettingsCard {
   ThemeAccent,
   ThemeSurface,
   ThemeBackdrop,
-  ThemeAura,
   Media,
   MediaClock,
   Volume,
@@ -209,9 +208,6 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Expanded media transitions", L"Анімації розгорнутого медіа",
                 L"Анимации раскрытого медиа");
   }
-  if (wcscmp(key, L"Animations.PillCoverSpin") == 0) {
-    return Pick(lang, L"Cover spin on pill", L"Обертання обкладинки", L"Вращение обложки");
-  }
   if (wcscmp(key, L"Animations.TargetFPS") == 0) {
     return Pick(lang, L"Target FPS", L"Цільовий FPS", L"Целевой FPS");
   }
@@ -246,7 +242,7 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
                 L"Модификатор сквозных кликов");
   }
   if (wcscmp(key, L"Behavior.WheelStep") == 0) {
-    return Pick(lang, L"Wheel step (%)", L"Крок колеса (%)", L"Шаг колеса (%)");
+    return Pick(lang, L"Volume step", L"Крок гучности", L"Шаг громкости");
   }
   if (wcscmp(key, L"Behavior.AppBlacklist") == 0) {
     return Pick(lang, L"App blacklist (exe names)", L"Чорний список додатків (exe)",
@@ -262,8 +258,7 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Backdrop material", L"Матеріал підложки", L"Материал подложки");
   }
   if (wcscmp(key, L"Appearance.UseDirectComposition") == 0) {
-    return Pick(lang, L"DirectComposition rendering", L"Рендер DirectComposition",
-                L"Рендер DirectComposition");
+    return Pick(lang, L"Direct Composition", L"Пряма композиція", L"Прямая композиция");
   }
   if (wcscmp(key, L"Appearance.ShapeStyle") == 0) {
     return Pick(lang, L"Island shape", L"Форма острова", L"Форма острова");
@@ -279,7 +274,7 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Custom accent (#hex)", L"Власний акцент (#hex)", L"Свой акцент (#hex)");
   }
   if (wcscmp(key, L"Themes.AccentBloom") == 0) {
-    return Pick(lang, L"Accent bloom", L"Свічення акценту", L"Свечение акцента");
+    return Pick(lang, L"Accent bloom", L"Світіння акценту", L"Свечение акцента");
   }
   if (wcscmp(key, L"Themes.TintIntensity") == 0) {
     return Pick(lang, L"Tint intensity", L"Інтенсивність тону", L"Интенсивность тона");
@@ -291,7 +286,7 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Drop shadow", L"Тінь", L"Тень");
   }
   if (wcscmp(key, L"Themes.ClockAccentGlow") == 0) {
-    return Pick(lang, L"Clock accent glow", L"Свічення годинника", L"Свечение часов");
+    return Pick(lang, L"Clock accent glow", L"Світіння годинника", L"Свечение часов");
   }
   if (wcscmp(key, L"Themes.ContourBorderMode") == 0) {
     return Pick(lang, L"Border mode", L"Режим контуру", L"Режим контура");
@@ -335,19 +330,13 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Privacy dots", L"Індикатори приватності", L"Индикаторы приватности");
   }
   if (wcscmp(key, L"Indicators.PrivacyDotsMic") == 0) {
-    return Pick(lang, L"Microphone dot", L"Точка мікрофона", L"Точка микрофона");
+    return Pick(lang, L"Microphone dot", L"Крапка мікрофона", L"Точка микрофона");
   }
   if (wcscmp(key, L"Indicators.PrivacyDotsCam") == 0) {
-    return Pick(lang, L"Camera dot", L"Точка камери", L"Точка камеры");
+    return Pick(lang, L"Camera dot", L"Крапка камери", L"Точка камеры");
   }
   if (wcscmp(key, L"Themes.BackdropMaterial") == 0) {
     return Pick(lang, L"Backdrop material", L"Матеріал фону", L"Материал фона");
-  }
-  if (wcscmp(key, L"Themes.AuraStyle") == 0) {
-    return Pick(lang, L"Aura", L"Ореол", L"Ореол");
-  }
-  if (wcscmp(key, L"Themes.AuraIntensity") == 0) {
-    return Pick(lang, L"Aura intensity", L"Сила ореолу", L"Сила ореола");
   }
   if (wcscmp(key, L"Themes.AdaptiveTheme") == 0) {
     return Pick(lang, L"Adaptive theme", L"Адаптивна тема", L"Адаптивная тема");
@@ -457,7 +446,7 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
     return Pick(lang, L"Hardware monitor", L"Монітор системи", L"Монитор системы");
   }
   if (wcscmp(key, L"Modules.BluetoothIndicator") == 0) {
-    return Pick(lang, L"Bluetooth", L"Bluetooth", L"Bluetooth");
+    return Pick(lang, L"Bluetooth", L"Блютуз", L"Блютуз");
   }
   if (wcscmp(key, L"Modules.DoNotDisturbIndicator") == 0) {
     return Pick(lang, L"Do Not Disturb", L"Не турбувати", L"Не беспокоить");
@@ -566,35 +555,16 @@ inline const wchar_t* BackdropLabel(Lang lang, const wchar_t* value) {
     return Pick(lang, L"Blur", L"Розмиття", L"Размытие");
   }
   if (_wcsicmp(value, L"acrylic") == 0) {
-    return Pick(lang, L"Acrylic", L"Acrylic", L"Acrylic");
+    return Pick(lang, L"Acrylic", L"Акрил", L"Акрил");
   }
   if (_wcsicmp(value, L"mica") == 0) {
-    return Pick(lang, L"Mica", L"Mica", L"Mica");
+    return Pick(lang, L"Mica", L"Слюда", L"Слюда");
   }
   if (_wcsicmp(value, L"solid") == 0) {
     return Pick(lang, L"Solid", L"Суцільний", L"Сплошной");
   }
   if (_wcsicmp(value, L"auto") == 0) {
-    return Pick(lang, L"Auto (Themes)", L"Авто (Themes)", L"Авто (Themes)");
-  }
-  return value;
-}
-
-inline const wchar_t* AuraLabel(Lang lang, const wchar_t* value) {
-  if (_wcsicmp(value, L"off") == 0) {
-    return Pick(lang, L"Off", L"Вимкнено", L"Выключено");
-  }
-  if (_wcsicmp(value, L"glow") == 0) {
-    return Pick(lang, L"Glow", L"Свічення", L"Свечение");
-  }
-  if (_wcsicmp(value, L"rays") == 0) {
-    return Pick(lang, L"Rays", L"Промені", L"Лучи");
-  }
-  if (_wcsicmp(value, L"pulse") == 0) {
-    return Pick(lang, L"Rings", L"Кільця", L"Кольца");
-  }
-  if (_wcsicmp(value, L"orbit") == 0) {
-    return Pick(lang, L"Orbit", L"Орбіта", L"Орбита");
+    return Pick(lang, L"Auto (Themes)", L"Авто (Теми)", L"Авто (Темы)");
   }
   return value;
 }
@@ -652,9 +622,6 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   if (wcscmp(def.key, L"Themes.BackdropMaterial") == 0 ||
       wcscmp(def.key, L"Appearance.BackdropMaterial") == 0) {
     return BackdropLabel(lang, def.enums[index].value);
-  }
-  if (wcscmp(def.key, L"Themes.AuraStyle") == 0) {
-    return AuraLabel(lang, def.enums[index].value);
   }
   if (wcscmp(def.key, L"Appearance.TargetMonitor") == 0) {
     return TargetMonitorLabel(lang, def.enums[index].value);
@@ -727,12 +694,6 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
     if (_wcsicmp(v, L"bar") == 0) {
       return Pick(lang, L"Bar", L"Смуга", L"Полоса");
     }
-    if (_wcsicmp(v, L"wavy") == 0) {
-      return Pick(lang, L"Wavy", L"Хвилястий", L"Волнистый");
-    }
-    if (_wcsicmp(v, L"squiggle") == 0) {
-      return Pick(lang, L"Squiggle", L"Зигзаг", L"Зигзаг");
-    }
     if (_wcsicmp(v, L"smooth") == 0) {
       return Pick(lang, L"Smooth", L"Плавний", L"Плавный");
     }
@@ -799,8 +760,6 @@ inline const wchar_t* CardTitle(Lang lang, SettingsCard card) {
     return Pick(lang, L"Surface", L"Поверхня", L"Поверхность");
   case SettingsCard::ThemeBackdrop:
     return Pick(lang, L"Backdrop", L"Підложка", L"Подложка");
-  case SettingsCard::ThemeAura:
-    return Pick(lang, L"Aura", L"Ореол", L"Ореол");
   case SettingsCard::Media:
     return Pick(lang, L"Media", L"Медіа", L"Медиа");
   case SettingsCard::MediaClock:
@@ -822,7 +781,7 @@ inline const wchar_t* CardTitle(Lang lang, SettingsCard card) {
   case SettingsCard::Monitor:
     return Pick(lang, L"System monitor", L"Системний монітор", L"Системный монитор");
   case SettingsCard::Bluetooth:
-    return Pick(lang, L"Bluetooth", L"Bluetooth", L"Bluetooth");
+    return Pick(lang, L"Bluetooth", L"Блютуз", L"Блютуз");
   case SettingsCard::DoNotDisturb:
     return Pick(lang, L"Do not disturb", L"Не турбувати", L"Не беспокоить");
   case SettingsCard::FocusTimer:

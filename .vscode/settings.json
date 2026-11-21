@@ -3,6 +3,7 @@
   "cSpell.language": "en,uk,ru",
   "cSpell.allowCompoundWords": true,
   "files.associations": {
+    "*.h": "cpp",
     "*.rc.in": "rc",
     "*.manifest.in": "xml",
     "*.iss": "innosetup",
@@ -30,6 +31,7 @@
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
   "files.eol": "\n",
+  "editor.wordWrap": "on",
   "editor.formatOnSave": false,
   "clang-format.style": "file",
   "clang-format.fallbackStyle": "LLVM",
@@ -87,6 +89,8 @@
   },
   "cmake.sourceDirectory": "D:/Projects/Dynamic-Island-for-Windows-Lux-main/app",
   "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+  "clangd.onConfigChanged": "restart",
   "clangd.arguments": [
     "--header-insertion=never",
     "--background-index"

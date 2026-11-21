@@ -439,9 +439,6 @@ bool SettingsControlIsEnabled(const wchar_t* key, const SettingsValueLookup& loo
       KeyIs(key, L"Themes.TextSecondaryColor")) {
     return EqualsNoCase(lookup.Value(L"Themes.ThemePreset"), L"custom");
   }
-  if (KeyIs(key, L"Themes.AuraIntensity")) {
-    return !EqualsNoCase(lookup.Value(L"Themes.AuraStyle"), L"off");
-  }
   if (KeyIs(key, L"Themes.BackdropTint") || KeyIs(key, L"Themes.BackdropFillOpacity")) {
     const std::wstring appearance = lookup.Value(L"Appearance.BackdropMaterial");
     const std::wstring themes = lookup.Value(L"Themes.BackdropMaterial");
@@ -681,7 +678,6 @@ bool SettingsThemeSelfTest() {
         {L"Themes.AccentColorMode", L"auto"},
         {L"Themes.ContourBorderMode", L"borderless"},
         {L"Themes.ThemePreset", L"obsidian"},
-        {L"Themes.AuraStyle", L"off"},
         {L"Appearance.BackdropMaterial", L"auto"},
         {L"Themes.BackdropMaterial", L"none"},
         {L"Appearance.SeparateExpandedOffsetY", L"0"},
@@ -706,7 +702,6 @@ bool SettingsThemeSelfTest() {
     check(!SettingsControlIsEnabled(L"Themes.CustomAccentHex", off), L"accent hex off unless custom");
     check(!SettingsControlIsEnabled(L"Themes.ContourBorderHex", off), L"border hex off unless default");
     check(!SettingsControlIsEnabled(L"Themes.PillBgColor", off), L"pill color off unless custom preset");
-    check(!SettingsControlIsEnabled(L"Themes.AuraIntensity", off), L"aura intensity off");
     check(!SettingsControlIsEnabled(L"Themes.BackdropTint", off), L"backdrop tint off");
     check(!SettingsControlIsEnabled(L"Appearance.OffsetYExpanded", off), L"expanded offset off");
     check(!SettingsControlIsEnabled(L"Modules.ClockFormat", off), L"clock format off");
@@ -726,7 +721,6 @@ bool SettingsThemeSelfTest() {
         {L"Themes.AccentColorMode", L"custom"},
         {L"Themes.ContourBorderMode", L"default"},
         {L"Themes.ThemePreset", L"custom"},
-        {L"Themes.AuraStyle", L"glow"},
         {L"Appearance.BackdropMaterial", L"acrylic"},
         {L"Themes.BackdropMaterial", L"none"},
         {L"Appearance.SeparateExpandedOffsetY", L"1"},

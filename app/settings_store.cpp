@@ -568,7 +568,7 @@ bool SettingsStoreInit(bool ephemeral) {
     // Menu writers for these overrides were removed. A leftover value would
     // permanently hide the settings dialog choice.
     const wchar_t* kOrphanRuntimeKeys[] = {
-        L"AdaptiveThemeOverride", L"AuraStyleOverride",     L"BackdropMaterialOverride",
+        L"AdaptiveThemeOverride", L"BackdropMaterialOverride",
         L"PillOpacityOverride",   L"MediaTabLyricsOverride", L"MediaTabLyricsOverrideBase",
         L"W11StyleOverride",      L"NotchStyleOverride",     L"GameOverlayPinned",
         L"CollapsedLyrics",       L"LyricsPinnedFirst",

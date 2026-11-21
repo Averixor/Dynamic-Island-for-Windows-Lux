@@ -1913,10 +1913,8 @@ int CardRank(SettingsUiLoc::SettingsCard card) {
     return 2;
   case SettingsUiLoc::SettingsCard::ThemeBackdrop:
     return 3;
-  case SettingsUiLoc::SettingsCard::ThemeAura:
-    return 4;
   case SettingsUiLoc::SettingsCard::Appearance:
-    return 5;
+    return 4;
   case SettingsUiLoc::SettingsCard::Media:
     return 10;
   case SettingsUiLoc::SettingsCard::MediaClock:
@@ -1997,9 +1995,6 @@ SettingsUiLoc::SettingsCard CardForKey(const wchar_t* key, SettingGroup group) {
   if (KeyEquals(key, L"Themes.BackdropMaterial") || KeyEquals(key, L"Themes.BackdropTint") ||
       KeyEquals(key, L"Themes.BackdropFillOpacity")) {
     return SettingsUiLoc::SettingsCard::ThemeBackdrop;
-  }
-  if (KeyEquals(key, L"Themes.AuraStyle") || KeyEquals(key, L"Themes.AuraIntensity")) {
-    return SettingsUiLoc::SettingsCard::ThemeAura;
   }
   if (KeyEquals(key, L"Modules.Media") || KeyEquals(key, L"Modules.MediaAutoExpand") ||
       KeyEquals(key, L"Modules.MediaExpandBlocklist") || KeyEquals(key, L"Modules.MediaLikeBridge") ||
@@ -2685,7 +2680,7 @@ void SubclassCombo(HWND hwnd) {
 constexpr SettingsUiLoc::SettingsCard kAllCards[] = {
     SettingsUiLoc::SettingsCard::ThemeLook,     SettingsUiLoc::SettingsCard::ThemeAccent,
     SettingsUiLoc::SettingsCard::ThemeSurface,  SettingsUiLoc::SettingsCard::ThemeBackdrop,
-    SettingsUiLoc::SettingsCard::ThemeAura,     SettingsUiLoc::SettingsCard::Media,
+    SettingsUiLoc::SettingsCard::Media,
     SettingsUiLoc::SettingsCard::MediaClock,    SettingsUiLoc::SettingsCard::Volume,
     SettingsUiLoc::SettingsCard::Clipboard,     SettingsUiLoc::SettingsCard::Battery,
     SettingsUiLoc::SettingsCard::Progress,      SettingsUiLoc::SettingsCard::CapsLock,

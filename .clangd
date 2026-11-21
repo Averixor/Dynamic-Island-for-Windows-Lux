@@ -1,8 +1,40 @@
-# Indexing flags for app/island.cpp and other TUs.
-# Force C++20 coroutine feature macro so C++/WinRT does not include MSVC's
-# <experimental/coroutine>, which #errors under Clang. MSVC build stays C++17.
+# Project-wide indexing flags (MSVC build stays C++17; clangd uses C++20 for
+# coroutine feature macros so C++/WinRT does not pull <experimental/coroutine>).
 CompileFlags:
   Add:
+    - -xc++
+    - --target=x86_64-pc-windows-msvc
+    - -std=c++20
+    - -fms-compatibility
+    - -fms-extensions
+    - -DUNICODE
+    - -D_UNICODE
+    - -DNOMINMAX
+    - -DWIN32_LEAN_AND_MEAN
+    - -D_CRT_SECURE_NO_WARNINGS
+    - -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+    - -D__cpp_lib_coroutine=201902L
+    - -Iapp
+    - -I.clangd-support
+  Compiler: clang++
+
+Diagnostics:
+  Suppress:
+    - unused-includes
+    - "-Wunused-*"
+    # Stale/fallback parses of .h as C can emit this before -x is applied.
+    - drv_argument_not_allowed_with
+
+---
+# Headers must not inherit compile_flags.txt as a C TU. Ignore the CDB and
+# supply a self-contained C++-header command with -x before -std.
+If:
+  PathMatch: .*\.(h|hh|hpp|hxx)$
+CompileFlags:
+  CompilationDatabase: None
+  Compiler: clang++
+  Add:
+    - -xc++-header
     - --target=x86_64-pc-windows-msvc
     - -std=c++20
     - -fms-compatibility
@@ -17,16 +49,17 @@ CompileFlags:
     - -Iapp
     - -I.clangd-support
 
-Diagnostics:
-  Suppress:
-    - unused-includes
-    - "-Wunused-*"
-
 ---
-# Extensionless STL-style shims (e.g. experimental/coroutine) produce
-# fe_expected_compiler_job unless the driver language is set explicitly.
+# Extensionless STL-style shims (e.g. experimental/coroutine).
 If:
   PathMatch: .*clangd-support.*
 CompileFlags:
+  CompilationDatabase: None
+  Compiler: clang++
   Add:
     - -xc++-header
+    - --target=x86_64-pc-windows-msvc
+    - -std=c++20
+    - -fms-compatibility
+    - -fms-extensions
+    - -I.clangd-support

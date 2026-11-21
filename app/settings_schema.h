@@ -62,14 +62,6 @@ inline constexpr SettingEnumOption kAppearanceBackdropEnums[] = {
     {L"auto", L"Auto (Themes)"},
 };
 
-inline constexpr SettingEnumOption kAuraStyleEnums[] = {
-    {L"off", L"Off"},
-    {L"glow", L"Glow"},
-    {L"rays", L"Rays"},
-    {L"pulse", L"Rings"},
-    {L"orbit", L"Orbit"},
-};
-
 inline constexpr SettingEnumOption kTargetMonitorEnums[] = {
     {L"primary", L"Primary"},
     {L"cursor", L"Cursor monitor"},
@@ -120,8 +112,6 @@ inline constexpr SettingEnumOption kClickThroughModifierEnums[] = {
 inline constexpr SettingEnumOption kProgressStyleEnums[] = {
     {L"slim", L"Slim"},
     {L"bar", L"Bar"},
-    {L"wavy", L"Wavy"},
-    {L"squiggle", L"Squiggle"},
 };
 
 inline constexpr SettingEnumOption kAnimationStyleEnums[] = {
@@ -259,8 +249,6 @@ inline constexpr SettingDef kSettingSchema[] = {
      sizeof(kClickThroughModifierEnums) / sizeof(kClickThroughModifierEnums[0])},
     {L"Animations.ExpandedMediaTransitions", SettingType::Bool, SettingGroup::Animations, L"0", 0, 1,
      nullptr, 0},
-    {L"Animations.PillCoverSpin", SettingType::Bool, SettingGroup::Animations, L"1", 0, 1, nullptr,
-     0},
     {L"Animations.TargetFPS", SettingType::String, SettingGroup::Animations, L"auto", 0, 0, nullptr,
      0},
     {L"Animations.AnimationStyle", SettingType::Enum, SettingGroup::Animations, L"smooth", 0, 0,
@@ -275,9 +263,6 @@ inline constexpr SettingDef kSettingSchema[] = {
     {L"Themes.PillOpacity", SettingType::Int, SettingGroup::Themes, L"96", 35, 100, nullptr, 0},
     {L"Themes.TintIntensity", SettingType::Int, SettingGroup::Themes, L"72", 0, 100, nullptr, 0},
     {L"Themes.TextScale", SettingType::Int, SettingGroup::Themes, L"100", 70, 160, nullptr, 0},
-    {L"Themes.AuraStyle", SettingType::Enum, SettingGroup::Themes, L"glow", 0, 0, kAuraStyleEnums,
-     sizeof(kAuraStyleEnums) / sizeof(kAuraStyleEnums[0])},
-    {L"Themes.AuraIntensity", SettingType::Int, SettingGroup::Themes, L"70", 0, 100, nullptr, 0},
     {L"Themes.AdaptiveTheme", SettingType::Bool, SettingGroup::Themes, L"1", 0, 1, nullptr, 0},
     {L"Themes.ThemePreset", SettingType::Enum, SettingGroup::Themes, L"obsidian", 0, 0,
      kThemePresetEnums, sizeof(kThemePresetEnums) / sizeof(kThemePresetEnums[0])},

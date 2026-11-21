@@ -47,7 +47,6 @@
 #include <wincodec.h>
 #include <shcore.h>
 #include <windowsx.h>
-#include <audioclient.h>
 #include <audiopolicy.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
@@ -249,10 +248,17 @@ namespace MediaPillLayout {
     constexpr float kWidthQuantum = 2.0f;
     constexpr float kClockFontSize = 20.5f;
     constexpr float kDateFontSize = 15.5f;
-    constexpr float kTitleFontSize = 18.0f;
-    constexpr float kArtistFontSize = 16.0f;
+    constexpr float kTitleFontSize = 15.0f;
+    constexpr float kArtistFontSize = 12.5f;
     constexpr float kMetaFontSize = 14.0f;
     constexpr float kTimeFontSize = 14.0f;
+    constexpr float kCollapsedArtPad = 6.0f;
+    constexpr float kCollapsedPillHeight = 44.0f;
+    constexpr float kCollapsedArtSize = kCollapsedPillHeight - kCollapsedArtPad * 2.0f;
+    constexpr float kCollapsedTextGap = 8.0f;
+    constexpr float kCollapsedRightPad = 14.0f;
+    constexpr float kCollapsedMinText = 72.0f;
+    constexpr float kCollapsedMaxText = 340.0f;
 }
 namespace GameOverlayLayout {
     struct Metrics {
@@ -368,16 +374,7 @@ enum class AnimationStyle {
 };
 enum class ProgressStyle {
     Slim,
-    Wavy,
-    Squiggle,
     Bar,
-};
-enum class AuraStyle {
-    Off,
-    Glow,
-    Rays,
-    Pulse,
-    Orbit,
 };
 enum class ClickThroughModifier {
     Ctrl,
@@ -491,7 +488,6 @@ struct Settings {
     AnimationStyle animationStyle = AnimationStyle::Smooth;
     ProgressStyle progressStyle = ProgressStyle::Slim;
     bool expandedMediaAnim = false;
-    bool pillCoverAnim = true;
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
@@ -559,8 +555,6 @@ struct Settings {
     bool notchStyle = false;
     ThemePreset themePreset = ThemePreset::Obsidian;
     bool adaptiveTheme = true;
-    AuraStyle auraStyle = AuraStyle::Glow;
-    float auraIntensity = 0.70f;
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f);
     D2D1_COLOR_F textPrimaryColor = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
     D2D1_COLOR_F textSecondaryColor = D2D1::ColorF(0.608f, 0.608f, 0.647f, 1.0f);
@@ -940,8 +934,6 @@ struct SharedState {
     LyricsSnapshot lyrics;
     LookupSnapshot lookup;
     std::vector<LookupRecent> lookupRecent;
-    std::array<float, 48> waveform{};
-    size_t waveformWrite = 0;
     bool muted = false;
     std::vector<FileTrayItem> fileTrayItems;
 };
@@ -995,7 +987,6 @@ HANDLE g_renderReadyEvent = nullptr;
 std::atomic<bool> g_renderStarted{false};
 HANDLE g_renderThread = nullptr;
 HANDLE g_mediaThread = nullptr;
-HANDLE g_audioThread = nullptr;
 HANDLE g_weatherThread = nullptr;
 HANDLE g_lyricsThread = nullptr;
 HANDLE g_notificationThread = nullptr;
@@ -1160,7 +1151,6 @@ bool g_oleInitialized = false;
 std::atomic<bool> g_scrubbing = false;
 std::atomic<float> g_scrubDragFraction = 0.0f;
 std::atomic<double> g_lastLiveSeekTime = 0.0;
-std::atomic<bool> g_audioCaptureNeeded = false;
 std::atomic<bool> g_manuallyHidden = false;
 std::atomic<bool> g_islandDragging = false;
 int g_dragBaseOffsetX = 0;
@@ -1201,12 +1191,6 @@ std::atomic<LONG> g_dockCacheRight{0};
 std::atomic<LONG> g_dockCacheBottom{0};
 std::atomic<bool> g_dockCacheValid{false};
 std::atomic<uint64_t> g_fgCacheEpoch{0};  // bump to invalidate foreground title cache
-constexpr GUID kSubTypeIeeeFloat = {
-    0x00000003,
-    0x0000,
-    0x0010,
-    {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71},
-};
 double NowSeconds() {
     using clock = std::chrono::steady_clock;
     static const auto start = clock::now();
@@ -1714,12 +1698,6 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Theme", L"Тема"},
         {L"Custom colors", L"Власні кольори"},
         {L"Adaptive theme", L"Адаптивна тема"},
-        {L"Aura", L"Ореол"},
-        {L"Disabled", L"Вимкнено"},
-        {L"Glow", L"Свічення"},
-        {L"Rays", L"Промені"},
-        {L"Rings", L"Кільця"},
-        {L"Orbit", L"Орбіта"},
         {L"DWM backdrop", L"Фон DWM"},
         {L"No blur", L"Без розмиття"},
         {L"Blur", L"Розмиття"},
@@ -1863,12 +1841,6 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Theme", L"Тема"},
         {L"Custom colors", L"Свои цвета"},
         {L"Adaptive theme", L"Адаптивная тема"},
-        {L"Aura", L"Ореол"},
-        {L"Disabled", L"Выключено"},
-        {L"Glow", L"Свечение"},
-        {L"Rays", L"Лучи"},
-        {L"Rings", L"Кольца"},
-        {L"Orbit", L"Орбита"},
         {L"DWM backdrop", L"Фон DWM"},
         {L"No blur", L"Без размытия"},
         {L"Blur", L"Размытие"},
@@ -3155,33 +3127,13 @@ void LoadSettings() {
         next.animationStyle = AnimationStyle::Smooth;
     }
     const std::wstring progressStr = GetStringSettingCopy(L"Appearance.ProgressStyle");
-    if (EqualsNoCase(progressStr, L"wavy")) {
-        next.progressStyle = ProgressStyle::Wavy;
-    } else if (EqualsNoCase(progressStr, L"squiggle")) {
-        next.progressStyle = ProgressStyle::Squiggle;
-    } else if (EqualsNoCase(progressStr, L"bar")) {
+    if (EqualsNoCase(progressStr, L"bar")) {
         next.progressStyle = ProgressStyle::Bar;
     } else {
         next.progressStyle = ProgressStyle::Slim;
     }
     next.adaptiveTheme = AppSettingGetInt(L"Themes.AdaptiveTheme") != 0;
-    {
-        const std::wstring auraStr = GetStringSettingCopy(L"Themes.AuraStyle");
-        if (EqualsNoCase(auraStr, L"off")) {
-            next.auraStyle = AuraStyle::Off;
-        } else if (EqualsNoCase(auraStr, L"rays")) {
-            next.auraStyle = AuraStyle::Rays;
-        } else if (EqualsNoCase(auraStr, L"pulse")) {
-            next.auraStyle = AuraStyle::Pulse;
-        } else if (EqualsNoCase(auraStr, L"orbit")) {
-            next.auraStyle = AuraStyle::Orbit;
-        } else {
-            next.auraStyle = AuraStyle::Glow;
-        }
-    }
-    next.auraIntensity = Clamp(AppSettingGetInt(L"Themes.AuraIntensity") / 100.0f, 0.0f, 1.5f);
     next.expandedMediaAnim = AppSettingGetInt(L"Animations.ExpandedMediaTransitions") != 0;
-    next.pillCoverAnim = AppSettingGetInt(L"Animations.PillCoverSpin") != 0;
     const std::wstring speed = GetStringSettingWithFallback(L"Animations.AnimationSpeed", L"Appearance.AnimationSpeed", L"Behavior.AnimationSpeed");
     if (EqualsNoCase(speed, L"very-slow")) {
         next.animationSpeed = 0.5f;
@@ -3723,12 +3675,9 @@ void LoadSettings() {
         next.materialDepth = defaults.materialDepth;
         next.dropShadow = defaults.dropShadow;
         next.adaptiveTheme = defaults.adaptiveTheme;
-        next.auraStyle = defaults.auraStyle;
-        next.auraIntensity = defaults.auraIntensity;
         next.clockAccentGlow = defaults.clockAccentGlow;
         next.contourBorderEnabled = defaults.contourBorderEnabled;
         next.expandedMediaAnim = defaults.expandedMediaAnim;
-        next.pillCoverAnim = defaults.pillCoverAnim;
         next.animationStyle = defaults.animationStyle;
         next.animationSpeed = defaults.animationSpeed;
         next.targetFps = defaults.targetFps;
@@ -7098,233 +7047,6 @@ DWORD WINAPI BluetoothThreadProc(void*) {
     return 0;
 }
 #endif
-float SampleAudioAmplitude(BYTE* data, UINT32 frames, WAVEFORMATEX* format) {
-    if (!data || !frames || !format || !format->nChannels) {
-        return 0.0f;
-    }
-    double sum = 0.0;
-    size_t samples = static_cast<size_t>(frames) * format->nChannels;
-    if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
-        (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-         format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
-         IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format)->SubFormat,
-                     kSubTypeIeeeFloat))) {
-        auto* f = reinterpret_cast<float*>(data);
-        for (size_t i = 0; i < samples; ++i) {
-            sum += f[i] * f[i];
-        }
-    } else if (format->wBitsPerSample == 16) {
-        auto* s = reinterpret_cast<int16_t*>(data);
-        for (size_t i = 0; i < samples; ++i) {
-            const double v = s[i] / 32768.0;
-            sum += v * v;
-        }
-    }
-    const double rms = samples ? std::sqrt(sum / samples) : 0.0;
-    return Clamp(static_cast<float>(rms * 4.0), 0.0f, 1.0f);
-}
-// 1024-sample FFT over five low-frequency bands; used only to extract bass energy.
-struct BassAnalyzer {
-    static constexpr size_t kWindow = 1024;
-    static constexpr size_t kHop = 512;
-    static constexpr int kLog2Window = 10;
-    static constexpr int kBassBands = 5;
-    float ring[kWindow]{};
-    float window[kWindow]{};
-    float twCos[kWindow / 2]{};
-    float twSin[kWindow / 2]{};
-    uint16_t bitRev[kWindow]{};
-    int binLo[kBassBands]{};
-    int binHi[kBassBands]{};
-    float smooth[kBassBands]{};
-    float agc = 0.04f;
-    float sampleRate = 0.0f;
-    size_t write = 0;
-    size_t sinceHop = 0;
-    bool windowReady = false;
-    float BassEnvelope() const {
-        float peak = 0.0f;
-        float sum = 0.0f;
-        for (int b = 0; b < kBassBands; ++b) {
-            peak = std::max(peak, smooth[b]);
-            sum += smooth[b];
-        }
-        const float body = sum / static_cast<float>(kBassBands);
-        return Clamp(0.72f * peak + 0.38f * body, 0.0f, 1.0f);
-    }
-    void Configure(float rate) {
-        if (rate < 8000.0f)
-            rate = 48000.0f;
-        if (!windowReady) {
-            for (size_t i = 0; i < kWindow; ++i) {
-                window[i] = 0.5f - 0.5f * std::cos(6.2831853f * i / (kWindow - 1));
-            }
-            for (size_t i = 0; i < kWindow / 2; ++i) {
-                const float a = -6.2831853f * static_cast<float>(i) / static_cast<float>(kWindow);
-                twCos[i] = std::cos(a);
-                twSin[i] = std::sin(a);
-            }
-            for (size_t i = 0; i < kWindow; ++i) {
-                size_t r = 0;
-                for (int bit = 0; bit < kLog2Window; ++bit) {
-                    if (i & (static_cast<size_t>(1) << bit)) {
-                        r |= static_cast<size_t>(1) << (kLog2Window - 1 - bit);
-                    }
-                }
-                bitRev[i] = static_cast<uint16_t>(r);
-            }
-            windowReady = true;
-        }
-        if (rate == sampleRate)
-            return;
-        sampleRate = rate;
-        // Start lower so kick/sub (~40–120 Hz) land in the first bands.
-        const float fMin = 40.0f;
-        const float fMax = std::min(180.0f, rate * 0.45f);
-        const float ratio = std::pow(fMax / fMin, 1.0f / (kBassBands - 1));
-        const float halfStep = std::sqrt(ratio);
-        const float binHz = rate / kWindow;
-        const int nyquistBin = static_cast<int>(kWindow / 2) - 1;
-        for (int b = 0; b < kBassBands; ++b) {
-            const float fc = fMin * std::pow(ratio, static_cast<float>(b));
-            const float lo = fc / halfStep, hi = fc * halfStep;
-            const int centre = static_cast<int>(std::lround(fc / binHz));
-            int b0 = std::min(static_cast<int>(std::floor(lo / binHz)), centre);
-            int b1 = std::max(static_cast<int>(std::ceil(hi / binHz)), centre + 1);
-            b0 = std::clamp(b0, 1, nyquistBin);
-            b1 = std::clamp(b1, b0 + 1, nyquistBin + 1);
-            binLo[b] = b0;
-            binHi[b] = b1;
-        }
-    }
-    void Fft(float* re, float* im) const {
-        for (size_t i = 0; i < kWindow; ++i) {
-            const size_t j = bitRev[i];
-            if (j > i) {
-                std::swap(re[i], re[j]);
-                std::swap(im[i], im[j]);
-            }
-        }
-        for (size_t len = 2; len <= kWindow; len <<= 1) {
-            const size_t half = len >> 1, step = kWindow / len;
-            for (size_t i = 0; i < kWindow; i += len) {
-                for (size_t k = 0; k < half; ++k) {
-                    const float wr = twCos[k * step], wi = twSin[k * step];
-                    const size_t a = i + k, b = a + half;
-                    const float tr = re[b] * wr - im[b] * wi;
-                    const float ti = re[b] * wi + im[b] * wr;
-                    re[b] = re[a] - tr;
-                    im[b] = im[a] - ti;
-                    re[a] += tr;
-                    im[a] += ti;
-                }
-            }
-        }
-    }
-    void Analyze() {
-        float re[kWindow];
-        float im[kWindow];
-        for (size_t i = 0; i < kWindow; ++i) {
-            re[i] = ring[(write + i) % kWindow] * window[i];
-            im[i] = 0.0f;
-        }
-        Fft(re, im);
-        float peak = 0.0f;
-        float raw[kBassBands];
-        for (int b = 0; b < kBassBands; ++b) {
-            float sum = 0.0f, mx = 0.0f;
-            for (int k = binLo[b]; k < binHi[b]; ++k) {
-                const float p = re[k] * re[k] + im[k] * im[k];
-                sum += p;
-                mx = std::max(mx, p);
-            }
-            const float power = 0.5f * (sum / static_cast<float>(binHi[b] - binLo[b])) + 0.5f * mx;
-            float amp = std::sqrt(power) * (4.0f / kWindow);
-            // Light-show bias: lift kick/bass, do not amplify treble fireworks.
-            const float tilt = 1.55f - 0.12f * static_cast<float>(b);
-            amp *= tilt;
-            raw[b] = amp;
-            peak = std::max(peak, amp);
-        }
-        agc = std::max(peak, agc * 0.9985f);
-        const float norm = 1.0f / std::max(agc, 0.02f);
-        for (int b = 0; b < kBassBands; ++b) {
-            float v = std::sqrt(Clamp(raw[b] * norm, 0.0f, 1.0f));
-            v *= Clamp(peak * 40.0f, 0.0f, 1.0f);
-            smooth[b] += (v > smooth[b] ? 0.65f : 0.14f) * (v - smooth[b]);
-        }
-    }
-    void Decay() {
-        for (int b = 0; b < kBassBands; ++b)
-            smooth[b] *= 0.88f;
-    }
-    bool Feed(BYTE* data, UINT32 frames, WAVEFORMATEX* format) {
-        if (!data || !frames || !format || !format->nChannels) {
-            Decay();
-            return true;
-        }
-        const bool isFloat =
-            format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
-            (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-             format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
-             IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format)->SubFormat,
-                         kSubTypeIeeeFloat));
-        const bool is16 = format->wBitsPerSample == 16;
-        if (!isFloat && !is16) {
-            Decay();
-            return true;
-        }
-        Configure(static_cast<float>(format->nSamplesPerSec));
-        const UINT32 ch = format->nChannels;
-        bool produced = false;
-        for (UINT32 f = 0; f < frames; ++f) {
-            float mono = 0.0f;
-            if (isFloat) {
-                const float* p = reinterpret_cast<const float*>(data) + static_cast<size_t>(f) * ch;
-                for (UINT32 c = 0; c < ch; ++c)
-                    mono += p[c];
-            } else {
-                const int16_t* p = reinterpret_cast<const int16_t*>(data) + static_cast<size_t>(f) * ch;
-                for (UINT32 c = 0; c < ch; ++c)
-                    mono += p[c] / 32768.0f;
-            }
-            ring[write] = mono / ch;
-            write = (write + 1) % kWindow;
-            if (++sinceHop >= kHop) {
-                sinceHop = 0;
-                Analyze();
-                produced = true;
-            }
-        }
-        return produced;
-    }
-};
-BassAnalyzer g_bassAnalyzer;
-void PushWaveformSample(float amplitude) {
-    std::lock_guard lock(g_stateMutex);
-    float lastVal = 0.0f;
-    if (g_state.waveformWrite > 0) {
-        lastVal = g_state.waveform[(g_state.waveformWrite - 1) % g_state.waveform.size()];
-    }
-    float smoothed;
-    if (amplitude > lastVal) {
-        smoothed = lastVal * 0.3f + amplitude * 0.7f;
-    } else {
-        smoothed = lastVal * 0.85f + amplitude * 0.15f;
-    }
-    g_state.waveform[g_state.waveformWrite % g_state.waveform.size()] = smoothed;
-    ++g_state.waveformWrite;
-}
-void PushAudioChunks(BYTE* data, UINT32 frames, WAVEFORMATEX* format) {
-    // Always FFT while capturing so aura/waveform can track bass like a light show.
-    g_bassAnalyzer.Feed(data, frames, format);
-    if (!data || !frames || !format || !format->nChannels) {
-        PushWaveformSample(0.0f);
-        return;
-    }
-    const float bass = g_bassAnalyzer.BassEnvelope();
-    PushWaveformSample(bass);
-}
 struct HttpResult {
     bool ok = false;
     DWORD status = 0;
@@ -8891,116 +8613,6 @@ DWORD WINAPI LyricsThreadProc(void*) {
             }
         }
         WaitForSingleObject(g_stopEvent, 500);
-    }
-    return 0;
-}
-// WASAPI loopback. Feeds the bass-only analyzer while playback needs it.
-DWORD WINAPI AudioThreadProc(void*) {
-    HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-        if (!g_audioCaptureNeeded.load(std::memory_order_relaxed)) {
-            WaitForSingleObject(g_stopEvent, 250);
-            continue;
-        }
-        ComPtr<IMMDeviceEnumerator> enumerator;
-        ComPtr<IMMDevice> device;
-        ComPtr<IAudioClient> client;
-        ComPtr<IAudioCaptureClient> capture;
-        WAVEFORMATEX* mixFormat = nullptr;
-        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                      CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-        if (SUCCEEDED(hr)) {
-            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-        }
-        if (SUCCEEDED(hr)) {
-            hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                  reinterpret_cast<void**>(client.GetAddressOf()));
-        }
-        if (SUCCEEDED(hr)) {
-            hr = client->GetMixFormat(&mixFormat);
-        }
-        if (SUCCEEDED(hr)) {
-            REFERENCE_TIME bufferDuration = 10000000 / 5;
-            hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                    AUDCLNT_STREAMFLAGS_LOOPBACK,
-                                    bufferDuration, 0, mixFormat, nullptr);
-        }
-        if (SUCCEEDED(hr)) {
-            hr = client->GetService(IID_PPV_ARGS(&capture));
-        }
-        if (SUCCEEDED(hr)) {
-            hr = client->Start();
-        }
-        if (FAILED(hr)) {
-            if (mixFormat) {
-                CoTaskMemFree(mixFormat);
-            }
-            WaitForSingleObject(g_stopEvent, 2500);
-            continue;
-        }
-        double lastPacketTime = NowSeconds();
-        double nextWatchdogCheck = lastPacketTime + 1.0;
-        while (WaitForSingleObject(g_stopEvent, 16) == WAIT_TIMEOUT) {
-            if (!g_audioCaptureNeeded.load(std::memory_order_relaxed)) {
-                break;
-            }
-            UINT32 packetFrames = 0;
-            if (FAILED(capture->GetNextPacketSize(&packetFrames))) {
-                break;
-            }
-            float amplitude = 0.0f;
-            int packets = 0;
-            while (packetFrames > 0) {
-                BYTE* data = nullptr;
-                UINT32 frames = 0;
-                DWORD flags = 0;
-                if (FAILED(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) {
-                    break;
-                }
-                lastPacketTime = NowSeconds();
-                if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
-                    amplitude = std::max(amplitude, SampleAudioAmplitude(data, frames, mixFormat));
-                    PushAudioChunks(data, frames, mixFormat);
-                } else {
-                    PushWaveformSample(0.0f);
-                    g_bassAnalyzer.Decay();
-                }
-                capture->ReleaseBuffer(frames);
-                ++packets;
-                if (FAILED(capture->GetNextPacketSize(&packetFrames))) {
-                    packetFrames = 0;
-                }
-            }
-            if (packets > 0) {
-                if (amplitude <= 0.001f) {
-                    PushWaveformSample(0.0f);
-                    g_bassAnalyzer.Decay();
-                }
-            } else {
-                PushWaveformSample(0.0f);
-                g_bassAnalyzer.Decay();
-            }
-            const double now = NowSeconds();
-            if (now >= nextWatchdogCheck) {
-                nextWatchdogCheck = now + 1.0;
-                bool mediaPlayingNow = false;
-                {
-                    std::lock_guard lock(g_stateMutex);
-                    mediaPlayingNow = g_state.media.playing;
-                }
-                if (mediaPlayingNow && (now - lastPacketTime) > 5.0) {
-                    AppLog(L"Audio loopback capture appears stalled while media is playing; reconnecting...");
-                    break;
-                }
-            }
-        }
-        client->Stop();
-        if (mixFormat) {
-            CoTaskMemFree(mixFormat);
-        }
-    }
-    if (SUCCEEDED(hrCo)) {
-        CoUninitialize();
     }
     return 0;
 }
@@ -12862,7 +12474,6 @@ void DismissTransientState() {
 static constexpr UINT kMediaSourceMenuIdBase = 100;
 static constexpr UINT kShapeMenuIdBase = 50;
 static constexpr UINT kLyricsSyncMenuIdBase = 60;
-static constexpr UINT kAuraMenuIdBase = 70;
 static constexpr UINT kBackdropMenuIdBase = 80;
 void AdjustLyricsNudge(int deltaMs) {
     const bool bt = g_defaultOutputIsBluetooth.load(std::memory_order_relaxed);
@@ -13181,7 +12792,7 @@ struct CollapsedLyricLine {
     bool isTitle = false;
 };
 // Direct2D / DirectWrite. Owns the layered DC target, brushes, and every
-// pill/tab/aura/vinyl draw. Tick* methods run once per frame before Draw*.
+// pill/tab draw. Tick* methods run once per frame before Draw*.
 class Renderer {
 public:
     bool Initialize(HWND hwnd) {
@@ -13772,10 +13383,6 @@ public:
         titleAnimActive_ = false;
         roundJoinStyle_.Reset();
         artFlipOld_.Reset();
-        pillArtOld_.Reset();
-        pillArtLast_.Reset();
-        pillArtStart_ = -1.0;
-        pillArtInit_ = false;
         swapArtist_.prevCache.layout.Reset();
         swapAlbum_.prevCache.layout.Reset();
         d2dFactory_.Reset();
@@ -13897,6 +13504,102 @@ public:
         mediaPillMetricsCacheValid_ = true;
         return metrics;
     }
+    void CollapsedMediaLabels(const SharedState& state, std::wstring* artistOut,
+                              std::wstring* titleOut) const {
+        std::wstring artist = state.media.artist;
+        std::wstring title = state.media.title;
+        if (artist.empty() && title.empty()) {
+            if (!state.media.sourceName.empty()) {
+                title = state.media.sourceName;
+            } else {
+                title = Loc(L"Media");
+            }
+        }
+        if (artistOut) {
+            *artistOut = std::move(artist);
+        }
+        if (titleOut) {
+            *titleOut = std::move(title);
+        }
+    }
+    // Logical width of the collapsed media pill without the optional clock section.
+    float MeasureCollapsedMediaPillWidth(const SharedState& state, const Settings& settings) {
+        EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
+        IDWriteTextFormat* artistFmt =
+            mediaArtistFormat_ ? mediaArtistFormat_.Get()
+                               : (smallTextFormat_ ? smallTextFormat_.Get() : textFormat_.Get());
+        IDWriteTextFormat* titleFmt =
+            mediaTitleFormat_ ? mediaTitleFormat_.Get()
+                              : (textFormat_ ? textFormat_.Get() : artistFmt);
+        std::wstring artist;
+        std::wstring title;
+        CollapsedMediaLabels(state, &artist, &title);
+        const float artistW =
+            artist.empty() ? 0.0f : MeasureTextWidthCached(artist, artistFmt, collapsedArtistWidthCache_);
+        const float titleW =
+            title.empty() ? 0.0f : MeasureTextWidthCached(title, titleFmt, collapsedTitleWidthCache_);
+        const float textW = Clamp(std::max(artistW, titleW), MediaPillLayout::kCollapsedMinText,
+                                  MediaPillLayout::kCollapsedMaxText);
+        float width = MediaPillLayout::kCollapsedArtPad + MediaPillLayout::kCollapsedArtSize +
+                      MediaPillLayout::kCollapsedTextGap + textW +
+                      MediaPillLayout::kCollapsedTextGap + MediaPillLayout::kCollapsedRightPad;
+        width = std::ceil(width / MediaPillLayout::kWidthQuantum) * MediaPillLayout::kWidthQuantum;
+        return std::max(width, MediaPillLayout::kBaseWidth);
+    }
+    void DrawCollapsedMediaLabels(const SharedState& state, D2D1_RECT_F area) {
+        if (!dwriteFactory_ || area.right - area.left < 8.0f || area.bottom - area.top < 8.0f) {
+            return;
+        }
+        IDWriteTextFormat* artistFmt =
+            mediaArtistFormat_ ? mediaArtistFormat_.Get()
+                               : (smallTextFormat_ ? smallTextFormat_.Get() : textFormat_.Get());
+        IDWriteTextFormat* titleFmt =
+            mediaTitleFormat_ ? mediaTitleFormat_.Get()
+                              : (textFormat_ ? textFormat_.Get() : artistFmt);
+        if (!artistFmt && !titleFmt) {
+            return;
+        }
+        std::wstring artist;
+        std::wstring title;
+        CollapsedMediaLabels(state, &artist, &title);
+        const float midY = (area.top + area.bottom) * 0.5f;
+        const float lineH = (area.bottom - area.top) * 0.48f;
+        const float maxW = std::max(1.0f, area.right - area.left);
+        auto drawLine = [&](const std::wstring& text, IDWriteTextFormat* fmt, D2D1_RECT_F rect,
+                            float opacity) {
+            if (!fmt || text.empty()) {
+                return;
+            }
+            const float boxH = std::max(1.0f, rect.bottom - rect.top);
+            ComPtr<IDWriteTextLayout> layout;
+            if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
+                                                        static_cast<UINT32>(text.size()), fmt, maxW,
+                                                        boxH, &layout)) ||
+                !layout) {
+                return;
+            }
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            ComPtr<IDWriteInlineObject> sign;
+            if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(layout.Get(), &sign)) && sign) {
+                DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                layout->SetTrimming(&trimming, sign.Get());
+            }
+            textBrush_->SetOpacity(opacity);
+            target_->DrawTextLayout(D2D1::Point2F(rect.left, rect.top), layout.Get(), textBrush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            textBrush_->SetOpacity(1.0f);
+        };
+        if (!artist.empty() && !title.empty()) {
+            drawLine(artist, artistFmt, D2D1::RectF(area.left, midY - lineH, area.right, midY), 0.78f);
+            drawLine(title, titleFmt, D2D1::RectF(area.left, midY, area.right, midY + lineH), 0.98f);
+        } else if (!title.empty()) {
+            drawLine(title, titleFmt ? titleFmt : artistFmt, area, 0.98f);
+        } else if (!artist.empty()) {
+            drawLine(artist, artistFmt ? artistFmt : titleFmt, area, 0.90f);
+        }
+    }
     // Size toast to content; never exceed maxW/maxH (usually the island box).
     // Logical (unscaled) size that fits notification text, never exceeding maxW/maxH.
     NotificationCardMetrics MeasureNotificationCard(const NotificationSnapshot& notice,
@@ -14013,6 +13716,8 @@ private:
     float mediaPillCachedDateWidth_ = 0.0f;
     float mediaPillCachedSectionWidth_ = 0.0f;
     bool mediaPillMetricsCacheValid_ = false;
+    TextWidthCache collapsedArtistWidthCache_;
+    TextWidthCache collapsedTitleWidthCache_;
     float MeasureTextWidthCached(const std::wstring& text, IDWriteTextFormat* fmt,
                                  TextWidthCache& cache) {
         if (cache.valid && cache.key == text) {
@@ -14719,7 +14424,6 @@ private:
             pillRadii_[pillCount_] = radius;
             ++pillCount_;
         }
-        DrawMusicAura(state, settings, rect, radius, now);
         DrawSoftShadow(rect, radius);
         DrawPillSurface(rect, radius, activity.kind, settings);
         if (settings.timerContourProgress && settings.timerEnabled && state.timer.active) {
@@ -14796,241 +14500,6 @@ private:
         }
         activeNotice_ = previousNotice;
         target_->SetTransform(oldTransform);
-    }
-    float InstantWaveEnergy(const SharedState& state) const {
-        if (state.waveform.empty()) {
-            return 0.0f;
-        }
-        const size_t n = state.waveform.size();
-        const size_t write = state.waveformWrite;
-        float peak = 0.0f;
-        float sum = 0.0f;
-        constexpr int kLook = 8;
-        for (int i = 1; i <= kLook; ++i) {
-            const float v = state.waveform[(write + n - static_cast<size_t>(i)) % n];
-            peak = std::max(peak, v);
-            sum += v;
-        }
-        return Clamp(0.65f * peak + 0.35f * (sum / static_cast<float>(kLook)), 0.0f, 1.0f);
-    }
-    void TickBassMotion(const SharedState& state, double now) {
-        float dt = bassLastTick_ >= 0.0 ? static_cast<float>(now - bassLastTick_) : 0.016f;
-        dt = Clamp(dt, 0.001f, 0.05f);
-        bassLastTick_ = now;
-        // The waveform buffer now carries only the analyzer's bass envelope.
-        const float bass = InstantWaveEnergy(state);
-        const float wave = bass;
-        specInstant_ += (wave - specInstant_) * (1.0f - std::exp(-dt / 0.018f));
-        specBassSlow_ += (bass - specBassSlow_) * (1.0f - std::exp(-dt / 0.18f));
-        const float beat = std::max(0.0f, bass - specBassSlow_ - 0.010f);
-        specKick_ = std::max(specKick_ * std::exp(-dt / 0.07f), Clamp(beat * 5.4f, 0.0f, 1.0f));
-        specBass_ += (bass - specBass_) * (1.0f - std::exp(-dt / 0.020f));
-        specPhase_ += dt * (1.5f + 5.8f * specBass_ + 8.2f * specKick_);
-        const float cruise = 0.34f + 0.42f * specBass_ + 0.28f * specKick_;
-        specOrbit_ += (cruise - specOrbit_) * (1.0f - std::exp(-dt / 0.28f));
-        specOrbitAng_ += dt * specOrbit_;
-        specDt_ = dt;
-    }
-    float AuraPulseEnv() const {
-        return Clamp(0.78f * specKick_ + 0.52f * specBass_ + 0.10f * specInstant_, 0.0f, 1.25f);
-    }
-    void DrawMusicAura(const SharedState& state, const Settings& settings, D2D1_RECT_F rect,
-                       float radius, double now) {
-        if (settings.auraStyle == AuraStyle::Off || settings.auraIntensity <= 0.01f) {
-            return;
-        }
-        TickBassMotion(state, now);
-        const float energy = Clamp(0.58f * specBass_ + 0.42f * specKick_ + 0.08f * specInstant_,
-                                   0.0f, 1.0f);
-        const float idle = state.media.playing ? 0.03f : 0.05f;
-        const float strength = Clamp((idle + 1.20f * energy) * settings.auraIntensity, 0.0f, 1.0f);
-        if (strength <= 0.02f) {
-            return;
-        }
-        switch (settings.auraStyle) {
-        case AuraStyle::Rays:
-            DrawAuraRays(rect, radius, strength);
-            break;
-        case AuraStyle::Pulse:
-            DrawAuraPulse(rect, radius, strength, state.media.playing);
-            break;
-        case AuraStyle::Orbit:
-            DrawAuraOrbit(rect, radius, strength);
-            break;
-        case AuraStyle::Glow:
-        default:
-            DrawAuraGlow(rect, radius, strength);
-            break;
-        }
-        if (state.media.playing || energy > 0.04f) {
-            g_layoutDirty = true;
-        }
-    }
-    void DrawAuraGlow(D2D1_RECT_F rect, float radius, float strength) {
-        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
-        if (!brush) {
-            return;
-        }
-        const float pulse = 1.0f + 0.32f * AuraPulseEnv();
-        constexpr int kLayers = 5;
-        for (int i = kLayers; i >= 1; --i) {
-            const float t = static_cast<float>(i) / static_cast<float>(kLayers);
-            const float grow = (8.0f + 15.0f * strength) * t * pulse;
-            const float alpha = strength * (1.0f - t) * (1.0f - t) * 0.62f;
-            if (alpha <= 0.012f) {
-                continue;
-            }
-            brush->SetOpacity(alpha);
-            FillIslandShape(D2D1::RectF(rect.left - grow, rect.top - grow,
-                                        rect.right + grow, rect.bottom + grow),
-                            radius + grow, frameSettings_.w11Style, frameSettings_.notchStyle,
-                            brush);
-        }
-        brush->SetOpacity(1.0f);
-    }
-    float StationaryAuraBand() const {
-        // Keep every aura ray/dot on the same low-frequency envelope.
-        const float bassDrive = specBass_ * 0.50f + specKick_ * 0.55f;
-        return Clamp(bassDrive, 0.0f, 1.25f);
-    }
-    struct IslandRimHit {
-        D2D1_POINT_2F point{};
-        float nx = 1.0f;
-        float ny = 0.0f;
-    };
-    IslandRimHit IslandRimAt(D2D1_RECT_F rect, float radius, float ang, float outset) const {
-        const float cx = (rect.left + rect.right) * 0.5f;
-        const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float hw = std::max((rect.right - rect.left) * 0.5f, 1.0f);
-        const float hh = std::max((rect.bottom - rect.top) * 0.5f, 1.0f);
-        const float r = Clamp(radius, 0.5f, std::min(hw, hh));
-        const float dx = std::max(hw - r, 0.0f);
-        const float dy = std::max(hh - r, 0.0f);
-        const float dirX = std::cos(ang);
-        const float dirY = std::sin(ang);
-        const float tBoxX = hw / std::max(std::fabs(dirX), 1.0e-5f);
-        const float tBoxY = hh / std::max(std::fabs(dirY), 1.0e-5f);
-        float t = std::min(tBoxX, tBoxY);
-        float nx = (tBoxX <= tBoxY) ? (dirX >= 0.0f ? 1.0f : -1.0f) : 0.0f;
-        float ny = (tBoxX <= tBoxY) ? 0.0f : (dirY >= 0.0f ? 1.0f : -1.0f);
-        const float hx = dirX * t;
-        const float hy = dirY * t;
-        if (std::fabs(hx) > dx && std::fabs(hy) > dy) {
-            const float ix = (dirX >= 0.0f) ? dx : -dx;
-            const float iy = (dirY >= 0.0f) ? dy : -dy;
-            const float b = dirX * ix + dirY * iy;
-            const float c = ix * ix + iy * iy - r * r;
-            const float disc = std::max(b * b - c, 0.0f);
-            t = b + std::sqrt(disc);
-            const float px = dirX * t - ix;
-            const float py = dirY * t - iy;
-            const float plen = std::max(std::sqrt(px * px + py * py), 1.0e-5f);
-            nx = px / plen;
-            ny = py / plen;
-        }
-        return {D2D1::Point2F(cx + dirX * t + nx * outset, cy + dirY * t + ny * outset), nx, ny};
-    }
-    void DrawAuraRays(D2D1_RECT_F rect, float radius, float strength) {
-        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
-        if (!brush) {
-            return;
-        }
-        constexpr int kRays = 16;
-        constexpr float kTwoPi = 6.28318531f;
-        ID2D1StrokeStyle* stroke = RoundStroke();
-        const float attack = 1.0f - std::exp(-specDt_ / 0.040f);
-        const float release = 1.0f - std::exp(-specDt_ / 0.15f);
-        const float bass = Clamp(0.48f * specBass_ + 0.82f * specKick_, 0.0f, 1.25f);
-        for (int i = 0; i < kRays; ++i) {
-            const float ang = static_cast<float>(i) * kTwoPi / kRays;
-            const IslandRimHit rim = IslandRimAt(rect, radius, ang, 3.4f);
-            const float target =
-                Clamp(bass + StationaryAuraBand() * 0.10f, 0.0f, 1.25f);
-            float& smooth = specRayLen_[i];
-            smooth += (target - smooth) * (target > smooth ? attack : release);
-            const float seed = 1.25f + 0.85f * smooth * strength;
-            brush->SetOpacity(Clamp(0.28f + 0.55f * smooth * strength, 0.0f, 0.92f));
-            target_->FillEllipse(D2D1::Ellipse(rim.point, seed, seed), brush);
-            const float len = 17.0f * smooth * strength;
-            if (len <= 1.1f) {
-                continue;
-            }
-            const D2D1_POINT_2F from = D2D1::Point2F(rim.point.x + rim.nx * seed,
-                                                     rim.point.y + rim.ny * seed);
-            const D2D1_POINT_2F tip = D2D1::Point2F(rim.point.x + rim.nx * (seed + len),
-                                                    rim.point.y + rim.ny * (seed + len));
-            const float core = 1.15f + 1.55f * smooth;
-            brush->SetOpacity(Clamp(0.08f + 0.20f * smooth * strength, 0.0f, 0.32f));
-            target_->DrawLine(from, tip, brush, core * 1.70f, stroke);
-            brush->SetOpacity(Clamp(0.24f + 0.68f * smooth * strength, 0.0f, 0.94f));
-            target_->DrawLine(from, tip, brush, core, stroke);
-        }
-        brush->SetOpacity(1.0f);
-    }
-    void DrawAuraPulse(D2D1_RECT_F rect, float radius, float strength, bool playing) {
-        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
-        if (!brush) {
-            return;
-        }
-        const float energy = AuraPulseEnv();
-        const float spread = playing
-                                 ? Clamp(0.22f + 0.78f * energy, 0.0f, 1.0f)
-                                 : Clamp(energy * 0.35f, 0.0f, 1.0f);
-        constexpr int kRings = 3;
-        for (int i = 0; i < kRings; ++i) {
-            const float slot = static_cast<float>(i);
-            const float grow = 2.8f + 1.45f * slot + (3.2f + 7.4f * slot) * spread * strength;
-            const float alpha = (0.78f - 0.10f * slot) * (0.70f + 0.30f * spread) *
-                                Clamp(0.55f + 0.55f * strength, 0.0f, 1.0f);
-            brush->SetOpacity(Clamp(alpha, 0.0f, 0.96f));
-            DrawIslandShape(D2D1::RectF(rect.left - grow, rect.top - grow,
-                                        rect.right + grow, rect.bottom + grow),
-                            radius + grow, frameSettings_.w11Style, frameSettings_.notchStyle,
-                            brush, 1.45f);
-        }
-        brush->SetOpacity(1.0f);
-    }
-    void DrawAuraOrbit(D2D1_RECT_F rect, float radius, float strength) {
-        ID2D1SolidColorBrush* brush = AcquireBrush(material_.accent);
-        if (!brush) {
-            return;
-        }
-        constexpr int kDots = 6;
-        constexpr int kTrail = 5;
-        constexpr float kTwoPi = 6.28318531f;
-        constexpr float kTrailStep = 0.11f;
-        ID2D1StrokeStyle* stroke = RoundStroke();
-        const float bass = Clamp(0.45f * specBass_ + 0.85f * specKick_, 0.0f, 1.25f);
-        for (int i = 0; i < kDots; ++i) {
-            const float ang = specOrbitAng_ + static_cast<float>(i) * kTwoPi / kDots;
-            const float drive =
-                Clamp(bass + StationaryAuraBand() * 0.10f, 0.0f, 1.25f);
-            const float satWave = 0.5f + 0.5f * std::sin(specOrbitAng_ * 1.15f +
-                                                         static_cast<float>(i) * (kTwoPi / kDots));
-            const float bounce = Clamp(drive * (0.86f + 0.14f * satWave), 0.0f, 1.0f);
-            const float outset = 7.0f + 18.0f * bounce * strength;
-            const IslandRimHit head = IslandRimAt(rect, radius, ang, outset);
-            const float r = 1.75f + 3.0f * strength * drive;
-            const float headA = Clamp(0.22f + 0.70f * strength * drive, 0.0f, 0.95f);
-            IslandRimHit prev = head;
-            for (int t = 1; t <= kTrail; ++t) {
-                const float u = static_cast<float>(t) / static_cast<float>(kTrail);
-                const float tailOut = outset * (1.0f - 0.18f * u);
-                const IslandRimHit tail = IslandRimAt(rect, radius, ang - kTrailStep * static_cast<float>(t),
-                                                      tailOut);
-                const float fade = (1.0f - u) * (1.0f - u);
-                brush->SetOpacity(headA * 0.42f * fade);
-                target_->DrawLine(prev.point, tail.point, brush, std::max(1.0f, r * (1.0f - u * 0.55f)),
-                                  stroke);
-                brush->SetOpacity(headA * 0.55f * fade);
-                const float tr = std::max(0.7f, r * (0.70f - 0.10f * static_cast<float>(t)));
-                target_->FillEllipse(D2D1::Ellipse(tail.point, tr, tr), brush);
-                prev = tail;
-            }
-            brush->SetOpacity(headA);
-            target_->FillEllipse(D2D1::Ellipse(head.point, r, r), brush);
-        }
-        brush->SetOpacity(1.0f);
     }
     void DrawSoftShadow(D2D1_RECT_F rect, float radius) {
         if (!frameSettings_.dropShadow || frameSettings_.backdropMaterial != BackdropMaterial::None) {
@@ -17495,7 +16964,6 @@ private:
             islandSettled_ = (now - islandSizeMovedAt_) > 0.15;
         }
         expandedAnim_ = settings.expandedMediaAnim;
-        pillCoverAnim_ = settings.pillCoverAnim;
         const bool sideLyricsOn = false;
         const float immersiveMix = UpdateImmersiveMix(settings, height, now);
         g_immersiveMixPub.store(immersiveMix, std::memory_order_relaxed);
@@ -17895,29 +17363,7 @@ private:
                     if (CollapsedLyricsActive(state, settings)) {
                         DrawCollapsedLyrics(state, titleArea, now, 1.0f);
                     } else {
-                        IDWriteTextFormat* marqueeFmt = mediaArtistFormat_ ? mediaArtistFormat_.Get()
-                                                                           : (mediaTitleFormat_ ? mediaTitleFormat_.Get()
-                                                                                                : (textFormat_ ? textFormat_.Get() : idleTextFormat_.Get()));
-                        if (marqueeFmt) {
-                            const std::wstring& title = state.media.title;
-                            const std::wstring& artist = state.media.artist;
-                            std::wstring marqueeText;
-                            if (!artist.empty() && !title.empty()) {
-                                marqueeText = artist + L"  —  " + title;
-                            } else if (!title.empty()) {
-                                marqueeText = title;
-                            } else if (!artist.empty()) {
-                                marqueeText = artist;
-                            } else if (!state.media.sourceName.empty()) {
-                                marqueeText = state.media.sourceName;
-                            } else {
-                                marqueeText = Loc(L"Media");
-                            }
-                            textBrush_->SetOpacity(0.98f);
-                            DrawMarqueeText(marqueeText, titleArea, marqueeFmt, textBrush_.Get(), now,
-                                            38.0f, marqueeCollapsedTitleCache_, true);
-                            textBrush_->SetOpacity(1.0f);
-                        }
+                        DrawCollapsedMediaLabels(state, titleArea);
                     }
                 }
             }
@@ -18179,12 +17625,6 @@ private:
                                fadeLayer);
         }
         {
-            float level = 0.0f;
-            if (state.media.playing) {
-                const size_t n = state.waveform.size();
-                level = Clamp(state.waveform[(state.waveformWrite + n - 1) % n], 0.0f, 1.0f);
-            }
-            immGlow_ += (level - immGlow_) * (1.0f - std::exp(-dt / 0.12f));
             const D2D1_COLOR_F a = material_.accent;
             const D2D1_GRADIENT_STOP stops[2] = {
                 {0.0f, D2D1::ColorF(a.r, a.g, a.b, 1.0f)},
@@ -18194,7 +17634,7 @@ private:
             const float rx = width * 0.46f;
             const float ry = 66.0f;
             if (ID2D1RadialGradientBrush* glow = UseRadialGradient(bloomGrad_, stops, 2, gc, rx, ry)) {
-                const float strength = (0.10f + 0.10f * immGlow_) * Clamp(settings.accentBloom, 0.0f, 2.0f);
+                const float strength = 0.10f * Clamp(settings.accentBloom, 0.0f, 2.0f);
                 glow->SetOpacity(Clamp(strength, 0.0f, 0.8f) * settingsOpacity_);
                 target_->FillEllipse(D2D1::Ellipse(gc, rx, ry), glow);
             }
@@ -19877,23 +19317,8 @@ private:
         if (FAILED(target_->CreateSolidColorBrush(material_.raisedStrong, &track)) || !track)
             return;
         EnsureRoundJoinStyle();
-        {
-            const bool fresh = progressLastTime_ >= 0.0 && (now - progressLastTime_) < 0.25;
-            const float target = playing ? 1.0f : 0.0f;
-            if (!fresh) {
-                progressAmp_ = target;
-            } else {
-                const float dt = static_cast<float>(now - progressLastTime_);
-                progressAmp_ += (target - progressAmp_) * (1.0f - std::exp(-dt / 0.16f));
-                if (std::fabs(target - progressAmp_) < 0.004f) {
-                    progressAmp_ = target;
-                } else {
-                    g_layoutDirty = true;
-                }
-            }
-            progressLastTime_ = now;
-        }
-        const float amp = progressAmp_;
+        (void)playing;
+        (void)now;
         auto drawEndDot = [&](float x) {
             ComPtr<ID2D1SolidColorBrush> dot;
             if (SUCCEEDED(target_->CreateSolidColorBrush(WithAlpha(material_.accent, 0.9f), &dot)) && dot) {
@@ -19924,65 +19349,26 @@ private:
                 accent.Get());
             return;
         }
-        const bool wavy = (style == ProgressStyle::Wavy);
-        const float A = (wavy ? 3.2f : 1.8f) * amp;
-        const float lambda = wavy ? 26.0f : 15.0f;
-        const double freq = wavy ? 0.9 : 0.45;
-        const float strokeW = wavy ? 3.4f : 3.0f;
-        const float k = 6.2831853f / lambda;
-        const float phase = static_cast<float>(std::fmod(now * freq, 1.0) * 6.2831853);
-        const float endTaper = wavy ? 16.0f : 10.0f;
-        if (thumbX - barLeft > 1.5f) {
-            std::vector<D2D1_POINT_2F> pts;
-            pts.reserve(static_cast<size_t>((thumbX - barLeft) / 1.25f) + 3);
-            for (float x = barLeft;; x += 1.25f) {
-                const float xx = std::min(x, thumbX);
-                const float taper = std::min(SkipSmooth((xx - barLeft) / 10.0f),
-                                             SkipSmooth((thumbX - xx) / endTaper));
-                pts.push_back(D2D1::Point2F(xx, cy + A * taper * std::sin(k * (xx - barLeft) - phase)));
-                if (x >= thumbX)
-                    break;
-            }
-            ComPtr<ID2D1PathGeometry> path;
-            if (SUCCEEDED(d2dFactory_->CreatePathGeometry(&path)) && path) {
-                ComPtr<ID2D1GeometrySink> sink;
-                if (SUCCEEDED(path->Open(&sink)) && sink) {
-                    sink->BeginFigure(pts[0], D2D1_FIGURE_BEGIN_HOLLOW);
-                    if (pts.size() > 1)
-                        sink->AddLines(pts.data() + 1, static_cast<UINT32>(pts.size() - 1));
-                    sink->EndFigure(D2D1_FIGURE_END_OPEN);
-                    if (SUCCEEDED(sink->Close())) {
-                        target_->DrawGeometry(path.Get(), accent.Get(), strokeW, roundJoinStyle_.Get());
-                    }
-                }
-            }
-        }
-        const float thumbR = dragging ? 7.0f : 5.5f;
-        const float trackStart = thumbX + (wavy ? thumbR + 3.0f : 4.0f);
-        if (barRight - trackStart > 2.0f) {
-            const float tw = wavy ? 2.2f : 2.8f;
-            target_->DrawLine(D2D1::Point2F(trackStart, cy), D2D1::Point2F(barRight - 2.0f, cy),
-                              track.Get(), tw, roundJoinStyle_.Get());
-            if (wavy)
-                drawEndDot(barRight - 1.7f);
-        }
-        if (wavy) {
-            if (dragging) {
-                ComPtr<ID2D1SolidColorBrush> halo;
-                if (SUCCEEDED(target_->CreateSolidColorBrush(WithAlpha(material_.accent, 0.22f), &halo)) && halo) {
-                    target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, cy), thumbR * 2.0f, thumbR * 2.0f),
-                                         halo.Get());
-                }
-            }
-            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, cy), thumbR, thumbR), accent.Get());
-        } else {
-            const float tw = dragging ? 4.0f : 3.0f;
-            const float th = dragging ? 22.0f : 18.0f;
+        // Slim progress line (default).
+        const float half = dragging ? 2.2f : 1.8f;
+        if (thumbX - barLeft > 1.0f) {
             target_->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(thumbX - tw * 0.5f, cy - th * 0.5f, thumbX + tw * 0.5f, cy + th * 0.5f),
-                                  tw * 0.5f, tw * 0.5f),
+                D2D1::RoundedRect(D2D1::RectF(barLeft, cy - half, thumbX, cy + half), half, half),
                 accent.Get());
         }
+        if (barRight - thumbX > 1.0f) {
+            track->SetOpacity(0.55f);
+            target_->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(thumbX, cy - half, barRight, cy + half), half, half),
+                track.Get());
+            track->SetOpacity(1.0f);
+        }
+        const float tw = dragging ? 3.4f : 2.6f;
+        const float th = dragging ? 16.0f : 12.0f;
+        target_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(thumbX - tw * 0.5f, cy - th * 0.5f, thumbX + tw * 0.5f, cy + th * 0.5f),
+                              tw * 0.5f, tw * 0.5f),
+            accent.Get());
     }
     void DrawSwapMarquee(SwapTextState& st, const std::wstring& text, D2D1_RECT_F rect,
                          IDWriteTextFormat* format, ID2D1Brush* brush, double now, float speed,
@@ -20093,12 +19479,7 @@ private:
             }
         }
         if (p < 0.0f) {
-            if (pillCoverAnim_) {
-                TickVinyl(now, media.playing);
-                DrawVinylCover(media, rect, now, radius, drawBadge);
-            } else {
-                DrawAlbumArt(media, rect, now, radius, drawBadge);
-            }
+            DrawAlbumArt(media, rect, now, radius, drawBadge);
             return;
         }
         g_layoutDirty = true;
@@ -20135,276 +19516,8 @@ private:
             artGeneration_ = art.generation;
         }
     }
-    void DrawArtDisc(ID2D1Bitmap* bitmap, D2D1_RECT_F rect, float radius,
-                     float scale, float angle, float lag, float alpha) {
-        if (alpha <= 0.004f || scale <= 0.02f)
-            return;
-        const D2D1_POINT_2F c = D2D1::Point2F((rect.left + rect.right) * 0.5f,
-                                              (rect.top + rect.bottom) * 0.5f);
-        D2D1_MATRIX_3X2_F base;
-        target_->GetTransform(&base);
-        ComPtr<ID2D1RoundedRectangleGeometry> mask;
-        const bool haveMask =
-            SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
-                D2D1::RoundedRect(rect, radius, radius), &mask)) &&
-            mask;
-        const float speed = std::min(std::fabs(lag) / 16.0f, 1.0f);
-        const int ghosts = (bitmap && speed > 0.05f) ? 3 : 0;
-        for (int k = ghosts; k >= 0; --k) {
-            const float a = (k == 0) ? 1.0f : 0.30f * speed * (1.0f - 0.30f * static_cast<float>(k - 1));
-            const float opacity = Clamp(alpha * a, 0.0f, 1.0f);
-            if (opacity <= 0.004f)
-                continue;
-            // Rotation must be current before PushLayer. A geometric mask ignores
-            // SetTransform made after the layer is pushed, so the cover stayed still.
-            target_->SetTransform(D2D1::Matrix3x2F::Rotation(angle - lag * static_cast<float>(k), c) *
-                                  D2D1::Matrix3x2F::Scale(scale, scale, c) * base);
-            ComPtr<ID2D1Layer> layer;
-            const bool clipped = haveMask && SUCCEEDED(target_->CreateLayer(nullptr, &layer)) && layer;
-            if (clipped) {
-                target_->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), mask.Get(),
-                                                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                         D2D1::IdentityMatrix(), opacity),
-                                   layer.Get());
-            } else {
-                target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            }
-            if (bitmap) {
-                target_->DrawBitmap(bitmap, rect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-            } else {
-                accentBrush_->SetOpacity(0.24f);
-                target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush_.Get());
-                accentBrush_->SetOpacity(1.0f);
-            }
-            if (clipped) {
-                target_->PopLayer();
-            } else {
-                target_->PopAxisAlignedClip();
-            }
-        }
-        target_->SetTransform(base);
-    }
-    void DrawArtLandingFx(D2D1_RECT_F rect, float radius, float ringP, float sheenP, float dir) {
-        const D2D1_POINT_2F c = D2D1::Point2F((rect.left + rect.right) * 0.5f,
-                                              (rect.top + rect.bottom) * 0.5f);
-        const float r0 = std::min(rect.right - rect.left, rect.bottom - rect.top) * 0.5f;
-        if (sheenP > 0.0f && sheenP < 1.0f) {
-            const float e = SkipEaseInOut(sheenP);
-            const float pos = (e * 2.0f - 1.0f) * 1.3f * r0;
-            const float half = 0.55f * r0;
-            const float dx = 0.82f * dir, dy = -0.57f;
-            const float peak = 0.34f * std::sin(3.14159265f * sheenP);
-            D2D1_GRADIENT_STOP stops[3] = {
-                {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
-                {0.5f, D2D1::ColorF(1.0f, 1.0f, 1.0f, peak)},
-                {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
-            };
-            ComPtr<ID2D1GradientStopCollection> coll;
-            ComPtr<ID2D1LinearGradientBrush> glint;
-            if (SUCCEEDED(target_->CreateGradientStopCollection(stops, 3, &coll)) && coll &&
-                SUCCEEDED(target_->CreateLinearGradientBrush(
-                    D2D1::LinearGradientBrushProperties(
-                        D2D1::Point2F(c.x + dx * (pos - half), c.y + dy * (pos - half)),
-                        D2D1::Point2F(c.x + dx * (pos + half), c.y + dy * (pos + half))),
-                    coll.Get(), &glint)) &&
-                glint) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), glint.Get());
-            }
-        }
-        for (int i = 0; i < 2; ++i) {
-            const float p = (ringP - 0.16f * static_cast<float>(i)) / (1.0f - 0.16f * static_cast<float>(i));
-            if (p <= 0.0f || p >= 1.0f)
-                continue;
-            const float e = 1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p);
-            const float a = (i == 0 ? 0.60f : 0.28f) * (1.0f - p) * (1.0f - p);
-            const float rr = r0 + 0.8f + 4.2f * e;
-            accentBrush_->SetOpacity(a);
-            target_->DrawEllipse(D2D1::Ellipse(c, rr, rr), accentBrush_.Get(), 0.6f + 1.4f * (1.0f - p));
-        }
-        accentBrush_->SetOpacity(1.0f);
-    }
-    void TickVinyl(double now, bool playing) {
-        float dt = 0.016f;
-        if (vinylLast_ > 0.0) {
-            dt = Clamp(static_cast<float>(now - vinylLast_), 0.001f, 0.05f);
-        }
-        vinylLast_ = now;
-        const float cruise = 78.0f * AnimSpeedOf(frameSettings_);
-        const float target = playing ? cruise : 0.0f;
-        const float tau = playing ? 0.40f : 0.90f;
-        vinylSpeed_ += (target - vinylSpeed_) * (1.0f - std::exp(-dt / tau));
-        if (std::fabs(vinylSpeed_) < 0.35f && !playing) {
-            vinylSpeed_ = 0.0f;
-        }
-        vinylAngle_ = std::fmod(vinylAngle_ + vinylSpeed_ * dt, 360.0f);
-        if (vinylAngle_ < 0.0f) {
-            vinylAngle_ += 360.0f;
-        }
-        if (playing || std::fabs(vinylSpeed_) > 0.35f) {
-            g_layoutDirty = true;
-        }
-    }
-    void DrawVinylCover(const MediaSnapshot& media, D2D1_RECT_F rect, double now, float radius,
-                        bool drawBadge = false) {
-        (void)now;
-        EnsureArtBitmap(media);
-        ID2D1Bitmap* bitmap = media.art ? artBitmap_.Get() : nullptr;
-        const float lag = vinylSpeed_ * 0.012f;
-        DrawArtDisc(bitmap, rect, radius, 1.0f, vinylAngle_, lag, 1.0f);
-        const D2D1_POINT_2F c = D2D1::Point2F((rect.left + rect.right) * 0.5f,
-                                              (rect.top + rect.bottom) * 0.5f);
-        const float r = std::min(rect.right - rect.left, rect.bottom - rect.top) * 0.5f;
-        const auto paintBadge = [&]() {
-            if (!drawBadge || !media.sourceIcon || artBadgeAlpha_ <= 0.01f)
-                return;
-            D2D1_RECT_F badge = D2D1::RectF(rect.right - 24, rect.bottom - 22, rect.right - 3, rect.bottom - 3);
-            DrawCircularBitmapPixels(*media.sourceIcon,
-                                     D2D1::Point2F((badge.left + badge.right) * 0.5f,
-                                                   (badge.top + badge.bottom) * 0.5f),
-                                     9.5f, mediaSourceIconBitmap_, mediaSourceIconGeneration_,
-                                     0.98f * artBadgeAlpha_);
-        };
-        if (r < 4.0f) {
-            paintBadge();
-            return;
-        }
-        ComPtr<ID2D1SolidColorBrush> ink;
-        if (FAILED(target_->CreateSolidColorBrush(D2D1::ColorF(0.04f, 0.04f, 0.05f, 0.55f), &ink)) ||
-            !ink) {
-            paintBadge();
-            return;
-        }
-        target_->DrawEllipse(D2D1::Ellipse(c, r - 0.55f, r - 0.55f), ink.Get(), 1.15f);
-        ink->SetOpacity(0.22f);
-        target_->DrawEllipse(D2D1::Ellipse(c, r * 0.70f, r * 0.70f), ink.Get(), 0.70f);
-        ink->SetOpacity(0.16f);
-        target_->DrawEllipse(D2D1::Ellipse(c, r * 0.48f, r * 0.48f), ink.Get(), 0.60f);
-        ComPtr<ID2D1SolidColorBrush> hub;
-        if (SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(0.07f, 0.07f, 0.08f, 0.92f), &hub)) &&
-            hub) {
-            target_->FillEllipse(D2D1::Ellipse(c, r * 0.17f, r * 0.17f), hub.Get());
-        }
-        ComPtr<ID2D1SolidColorBrush> pin;
-        if (SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f), &pin)) &&
-            pin) {
-            target_->FillEllipse(D2D1::Ellipse(c, r * 0.055f, r * 0.055f), pin.Get());
-        }
-        ComPtr<ID2D1SolidColorBrush> hole;
-        if (SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(0.02f, 0.02f, 0.03f, 1.0f), &hole)) &&
-            hole) {
-            target_->FillEllipse(D2D1::Ellipse(c, r * 0.028f, r * 0.028f), hole.Get());
-        }
-        paintBadge();
-    }
     void DrawAlbumArtDrop(const MediaSnapshot& media, D2D1_RECT_F rect, double now, float radius) {
-        constexpr double kFullDur = 0.95;
-        constexpr double kPulseDur = 0.55;
-        constexpr double kTitleWait = 0.9;
-        const bool recentlyDrawn = pillArtLastDrawn_ >= 0.0 && (now - pillArtLastDrawn_) < 0.25;
-        pillArtLastDrawn_ = now;
-        const uint64_t hash = ArtContentHash(media);
-        if (!pillArtInit_ || !recentlyDrawn || !pillCoverAnim_) {
-            pillArtInit_ = true;
-            pillArtHash_ = hash;
-            pillTitle_ = media.title;
-            pillArtStart_ = -1.0;
-            pillTitlePendingAt_ = -1.0;
-            pillArtOld_.Reset();
-            pillArtLast_.Reset();
-        } else {
-            float dir = 1.0f;
-            if (lastSkipClickAt_ >= 0.0 && (now - lastSkipClickAt_) < 6.0)
-                dir = lastSkipDir_;
-            if (hash != pillArtHash_) {
-                if (pillArtStart_ < 0.0 && hash != 0) {
-                    pillArtOld_ = pillArtLast_;
-                    pillArtStart_ = now;
-                    pillArtPulse_ = false;
-                    pillArtDir_ = dir;
-                    pillArtFullAt_ = now;
-                    pillTitlePendingAt_ = -1.0;
-                }
-                pillArtHash_ = hash;
-            }
-            if (media.title != pillTitle_) {
-                const bool hadTitle = !pillTitle_.empty();
-                pillTitle_ = media.title;
-                if (hadTitle && !media.title.empty() && pillArtStart_ < 0.0 &&
-                    (now - pillArtFullAt_) > 1.6) {
-                    pillTitlePendingAt_ = now;
-                }
-            }
-            if (pillTitlePendingAt_ >= 0.0) {
-                if (pillArtStart_ >= 0.0) {
-                    pillTitlePendingAt_ = -1.0;
-                } else if (now - pillTitlePendingAt_ >= kTitleWait) {
-                    pillTitlePendingAt_ = -1.0;
-                    pillArtOld_.Reset();
-                    pillArtStart_ = now;
-                    pillArtPulse_ = true;
-                    pillArtDir_ = dir;
-                } else {
-                    g_layoutDirty = true;
-                }
-            }
-        }
-        EnsureArtBitmap(media);
-        ID2D1Bitmap* fresh = !media.art ? nullptr : artBitmap_.Get();
-        float p = -1.0f;
-        if (pillArtStart_ >= 0.0) {
-            p = AnimProgress(frameSettings_, now - pillArtStart_, pillArtPulse_ ? kPulseDur : kFullDur);
-            if (p >= 1.0f) {
-                pillArtStart_ = -1.0;
-                pillArtOld_.Reset();
-                p = -1.0f;
-            }
-        }
-        if (pillCoverAnim_) {
-            TickVinyl(now, media.playing);
-        }
-        if (p < 0.0f) {
-            DrawVinylCover(media, rect, now, radius);
-        } else {
-            g_layoutDirty = true;
-            const float dir = pillArtDir_;
-            if (!pillArtPulse_) {
-                if (pillArtOld_) {
-                    const float u = Clamp(p / 0.40f, 0.0f, 1.0f);
-                    if (u < 1.0f) {
-                        const float up = std::max(u - 0.058f, 0.0f);
-                        const float k = u * u * u, kp = up * up * up;
-                        DrawArtDisc(pillArtOld_.Get(), rect, radius,
-                                    1.0f - 0.26f * k,
-                                    dir * 150.0f * k,
-                                    dir * 150.0f * (k - kp),
-                                    1.0f - SkipSmooth(u / 0.9f));
-                    }
-                }
-                if (p > 0.14f) {
-                    const float u = Clamp((p - 0.14f) / 0.86f, 0.0f, 1.0f);
-                    const float up = std::max(u - 0.027f, 0.0f);
-                    const float settle = 1.0f - SkipSmooth((u - 0.8f) / 0.2f);
-                    const float scale = 1.0f + 0.30f * std::exp(-5.2f * u) * std::cos(7.5f * u) * settle;
-                    const float angle = -dir * 220.0f * std::pow(1.0f - u, 3.0f);
-                    const float anglePrev = -dir * 220.0f * std::pow(1.0f - up, 3.0f);
-                    DrawArtDisc(fresh, rect, radius, scale, angle, angle - anglePrev,
-                                SkipSmooth(u / 0.28f));
-                }
-                DrawArtLandingFx(rect, radius, (p - 0.32f) / 0.60f, (p - 0.34f) / 0.46f, dir);
-            } else {
-                auto wob = [](float x) { return std::exp(-5.5f * x) * std::sin(11.0f * x); };
-                const float w = wob(p);
-                const float wp = wob(std::max(p - 0.04f, 0.0f));
-                DrawArtDisc(fresh, rect, radius, 1.0f - 0.20f * w, dir * 18.0f * w,
-                            dir * 18.0f * (w - wp), 1.0f);
-                DrawArtLandingFx(rect, radius, (p - 0.08f) / 0.62f, (p - 0.12f) / 0.55f, dir);
-            }
-        }
-        if (fresh) {
-            pillArtLast_ = artBitmap_;
-        } else {
-            pillArtLast_.Reset();
-        }
+        DrawAlbumArt(media, rect, now, radius);
     }
     void DrawLevelBanner(D2D1_RECT_F rect, const wchar_t* glyph, const std::wstring& label,
                          const wchar_t* value, float pct, bool drained) {
@@ -22267,11 +21380,6 @@ private:
     uint64_t artHashGen_ = 0;
     uint64_t artHashValue_ = 0;
     bool artFlipInit_ = false;
-    ComPtr<ID2D1Bitmap> pillArtOld_;
-    ComPtr<ID2D1Bitmap> pillArtLast_;
-    double pillArtStart_ = -1.0;
-    double pillArtLastDrawn_ = -1.0;
-    double pillArtFullAt_ = -1.0;
     double artOuterLast_ = -1.0;
     float artOuterAlpha_ = 1.0f;
     bool upkeepPending_ = false;
@@ -22280,29 +21388,7 @@ private:
     float artMorphLin_ = 0.0f;
     double artMorphLast_ = -1.0;
     float artBadgeAlpha_ = 1.0f;
-    double pillTitlePendingAt_ = -1.0;
-    uint64_t pillArtHash_ = 0;
-    std::wstring pillTitle_;
-    float pillArtDir_ = 1.0f;
-    bool pillArtPulse_ = false;
-    bool pillArtInit_ = false;
     bool expandedAnim_ = false;
-    bool pillCoverAnim_ = false;
-    float vinylAngle_ = 0.0f;
-    float vinylSpeed_ = 0.0f;
-    double vinylLast_ = -1.0;
-    double bassLastTick_ = -1.0;
-    float specPhase_ = 0.0f;
-    float specDt_ = 0.016f;
-    float specBass_ = 0.0f;
-    float specBassSlow_ = 0.0f;
-    float specKick_ = 0.0f;
-    float specInstant_ = 0.0f;
-    float specOrbit_ = 0.38f;
-    float specOrbitAng_ = 0.0f;
-    float specRayLen_[16] = {};
-    float progressAmp_ = 1.0f;
-    double progressLastTime_ = -1.0;
     int swapPhase_ = 0;
     double swapStart_ = 0.0;
     double swapLastUpdate_ = -1.0;
@@ -24584,7 +23670,6 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (!wasManuallyHidden) {
                 ShowWindow(hwnd, SW_HIDE);
                 DwmBackdrop::HideAll();
-                g_audioCaptureNeeded.store(false, std::memory_order_relaxed);
                 wasManuallyHidden = true;
             }
             previousFrame = std::chrono::steady_clock::now();
@@ -24993,7 +24078,9 @@ DWORD WINAPI RenderThreadProc(void*) {
                 if (CollapsedLyricsActive(snapshot, frame)) {
                     primary.width = (kCollapsedLyricsWidth + clockSection) * frame.sizeScale;
                 } else {
-                    primary.width = (MediaPillLayout::kBaseWidth + clockSection) * frame.sizeScale;
+                    primary.width =
+                        (renderer.MeasureCollapsedMediaPillWidth(snapshot, frame) + clockSection) *
+                        frame.sizeScale;
                 }
             }
         }
@@ -25030,10 +24117,6 @@ DWORD WINAPI RenderThreadProc(void*) {
             leftPill.reset();
             rightPill.reset();
         }
-        const bool mediaWaveformVisible =
-            frame.media && snapshot.media.playing && primary.kind == IslandKind::Media &&
-            primary.width > 1.0f && primary.height > 1.0f;
-        g_audioCaptureNeeded.store(mediaWaveformVisible, std::memory_order_relaxed);
         // Springs track the center island only. Side pills are seam-anchored.
         float targetWidth = primary.width;
         float targetHeight = primary.height;
@@ -25158,11 +24241,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             prevPinned = pinned;
         }
         const bool mediaShown = primary.kind == IslandKind::Media;
-        // Keep continuous frames only when the waveform/aura is actually on-screen or the
-        // media pill is expanded. A collapsed "playing" glance must not spin at 60 Hz.
-        const bool mediaAnimating =
-            (mediaWaveformVisible && snapshot.media.playing) ||
-            (mediaShown && (isHoverExpanded || pinned));
+        // Keep continuous frames when the media pill is expanded/pinned.
+        const bool mediaAnimating = mediaShown && (isHoverExpanded || pinned);
         const auto isTransientPill = [](IslandKind kind) {
             return kind == IslandKind::BatteryLow || kind == IslandKind::Clipboard ||
                    kind == IslandKind::Notification || kind == IslandKind::CapsLock ||
@@ -25299,7 +24379,6 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_autoHiddenParked = true;
             ShowWindow(hwnd, SW_HIDE);
             DwmBackdrop::HideAll();
-            g_audioCaptureNeeded.store(false, std::memory_order_relaxed);
             setHighResTimer(false);
             continue;
         }
@@ -25326,7 +24405,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             std::fabs(volumeBarSpring.velocity) > 0.5f ||
             g_tabAnimating.load(std::memory_order_relaxed);
         if (continuousAnimation && !springsAnimating) {
-            // Expanded media stays smooth; collapsed waveform is capped at 30 FPS.
+            // Expanded media stays smooth; collapsed glance can run at a lower FPS.
             const double continuousFps = (isHoverExpanded || pinned) ? 60.0 : 30.0;
             const double continuousFrameMs = 1000.0 / continuousFps;
             targetFrameMs = std::max(targetFrameMs, continuousFrameMs);
@@ -25432,7 +24511,6 @@ bool StartThreads() {
     }
 
     if (!startThread(&g_mediaThread, MediaThreadProc, L"media thread") ||
-        !startThread(&g_audioThread, AudioThreadProc, L"audio thread") ||
         !startThread(&g_weatherThread, WeatherThreadProc, L"weather thread") ||
         !startThread(&g_lyricsThread, LyricsThreadProc, L"lyrics thread") ||
         !startThread(&g_keyboardThread, KeyboardThreadProc, L"keyboard thread",
@@ -25500,7 +24578,6 @@ void StopThreads() {
     HANDLE threadHandles[] = {
         g_renderThread,
         g_mediaThread,
-        g_audioThread,
         g_weatherThread,
         g_lyricsThread,
         g_notificationThread,
@@ -25519,7 +24596,7 @@ void StopThreads() {
 
     // Never wait forever — a stuck worker would pin Local\DynamicIslandLux.
     const wchar_t* threadNames[] = {
-        L"render", L"media", L"audio", L"weather", L"lyrics", L"notification",
+        L"render", L"media", L"weather", L"lyrics", L"notification",
         L"keyboard", L"mouse", L"bluetooth",
     };
     DWORD waitMs = INFINITE;
@@ -25569,7 +24646,6 @@ void StopThreads() {
 
     g_renderThread = nullptr;
     g_mediaThread = nullptr;
-    g_audioThread = nullptr;
     g_weatherThread = nullptr;
     g_lyricsThread = nullptr;
     g_notificationThread = nullptr;
