@@ -33,7 +33,6 @@ Aus
 Ausdruck
 autostart
 Avanzamento
-Averixor
 Avviso
 backdrop
 Bağlandı
@@ -347,7 +346,7 @@ minimized
 Minuteur
 Minutnik
 MIT
-modstorage
+storage
 Mola
 molestar
 mon
@@ -627,7 +626,7 @@ werden
 Wetter
 Wiatr
 Wilgotność
-windhawk
+
 Windows
 Wird
 Wł
@@ -997,7 +996,6 @@ Zwischenablage
 інакше
 інваріанти
 Індикатори
-інжект
 інсталер
 інструкція
 Інтенсивність

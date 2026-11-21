@@ -28,7 +28,7 @@ constexpr UINT32 kCopyDataProtocolVersion = 1;
 // Process exit codes (smoke / CI). Keep stable — scripts branch on these.
 enum class LuxExitCode : int {
   Ok = 0,
-  InitFailure = 1,      // mutex/host/overlay/WhTool init failed
+  InitFailure = 1,      // mutex/host/overlay/runtime initialization failed
   WorkersStuck = 2,     // Uninit timed out waiting for a worker thread
   FrameFailure = 3,     // smoke: renderedFrames==0 or lastFrameHr failed
   JsonTestFailure = 4,  // --test-json round-trip failed

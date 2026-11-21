@@ -7,7 +7,7 @@
 Any new key must:
 
 1. Be added to `kSettingSchema` (type, default, group, enums if needed).
-2. Be read in `.wh.cpp` `LoadSettings()` **only** via `Wh_GetIntSetting` / `GetStringSettingCopy` (→ SettingsStore), never hard-coded `?? 1`.
+2. Be read in `island.cpp` `LoadSettings()` **only** via `AppSettingGetInt` / `GetStringSettingCopy` (→ SettingsStore), never hard-coded `?? 1`.
 3. Get EN/UK/RU labels in `app/settings_ui_loc.h` (`SettingLabel` / enum labels). Dialog rows are schema-driven — do not add one-off controls that bypass the schema.
 4. Treat OS-backed toggles specially when needed (example: `General.LaunchAtStartup` ↔ `app/autostart.*` / HKCU Run).
 
@@ -17,7 +17,7 @@ Settings dialog: **Apply** / **OK** write store + reload (dirty `runtime.json` i
 
 ## Workers / smoke
 
-Background threads and LL hooks must start only from `WhTool_ModInit` → `StartThreads` (gated by `LuxShouldStartWorkers` / `--no-workers`).
+Background threads and LL hooks must start only from `IslandRuntimeStart` → `StartThreads` (gated by `LuxShouldStartWorkers` / `--no-workers`).
 
 Threads created outside `StartThreads` are invisible to `--smoke-test` Uninit waits — do not add them without extending smoke.
 
@@ -38,8 +38,8 @@ UI / loc tokens live in `dictionaries/lux-ui.txt` (cspell). After adding visible
 
 ## Legacy body
 
-`Dynamic Island for Windows Lux.wh.cpp` is the island implementation TU (also the Windhawk archive). Keep it; do not delete as junk.
+`app/island.cpp` is the island implementation TU. Keep it; do not delete as junk.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright: (c) 2026 devcode90 and Averixor and contributors. Lux derives from Dynamic Island for Windows by Himanshu (devcode90).
+MIT — see [LICENSE](LICENSE).

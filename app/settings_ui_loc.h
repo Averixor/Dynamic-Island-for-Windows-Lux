@@ -7,7 +7,7 @@
 
 #include <string>
 
-// UI strings for the settings dialog (standalone). Independent of .wh.cpp Loc().
+// UI strings for the settings dialog. Independent of island.cpp localization.
 namespace SettingsUiLoc {
 
 enum class Lang { En, Uk, Ru };
@@ -258,9 +258,6 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Appearance.TargetMonitor") == 0) {
     return Pick(lang, L"Target monitor", L"Цільовий монітор", L"Целевой монитор");
   }
-  if (wcscmp(key, L"Appearance.SpectrumStyle") == 0) {
-    return Pick(lang, L"Spectrum style", L"Стиль спектра", L"Стиль спектра");
-  }
   if (wcscmp(key, L"Appearance.BackdropMaterial") == 0) {
     return Pick(lang, L"Backdrop material", L"Матеріал підложки", L"Материал подложки");
   }
@@ -343,9 +340,6 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
   if (wcscmp(key, L"Indicators.PrivacyDotsCam") == 0) {
     return Pick(lang, L"Camera dot", L"Точка камери", L"Точка камеры");
   }
-  if (wcscmp(key, L"Modules.LyricsVisualizer") == 0) {
-    return Pick(lang, L"Lyrics visualizer", L"Візуалізатор тексту пісні", L"Визуализатор текста песни");
-  }
   if (wcscmp(key, L"Themes.BackdropMaterial") == 0) {
     return Pick(lang, L"Backdrop material", L"Матеріал фону", L"Материал фона");
   }
@@ -366,9 +360,9 @@ inline const wchar_t* SettingLabel(Lang lang, const wchar_t* key) {
                 L"Автораскрытие при смене трека");
   }
   if (wcscmp(key, L"Modules.MediaLikeBridge") == 0) {
-    return Pick(lang, L"Like / Dislike for players",
-                L"Лайк / дизлайк для плеєрів",
-                L"Лайк / дизлайк для плееров");
+    return Pick(lang, L"Like / Dislike for players (YTMDesktop: Companion Server)",
+                L"Лайк / дизлайк для плеєрів (YTMDesktop: Companion Server)",
+                L"Лайк / дизлайк для плееров (YTMDesktop: Companion Server)");
   }
   if (wcscmp(key, L"Modules.MediaLikeBridgePort") == 0) {
     return Pick(lang, L"Browser bridge port (127.0.0.1)", L"Порт браузерного моста (127.0.0.1)",
@@ -593,9 +587,6 @@ inline const wchar_t* AuraLabel(Lang lang, const wchar_t* value) {
   if (_wcsicmp(value, L"glow") == 0) {
     return Pick(lang, L"Glow", L"Свічення", L"Свечение");
   }
-  if (_wcsicmp(value, L"equalizer") == 0) {
-    return Pick(lang, L"Equalizer", L"Еквалайзер", L"Эквалайзер");
-  }
   if (_wcsicmp(value, L"rays") == 0) {
     return Pick(lang, L"Rays", L"Промені", L"Лучи");
   }
@@ -641,22 +632,6 @@ inline const wchar_t* BlacklistModeLabel(Lang lang, const wchar_t* value) {
   return value;
 }
 
-inline const wchar_t* SpectrumStyleLabel(Lang lang, const wchar_t* value) {
-  if (_wcsicmp(value, L"bars") == 0) {
-    return Pick(lang, L"Bars", L"Стовпчики", L"Столбики");
-  }
-  if (_wcsicmp(value, L"orb") == 0) {
-    return Pick(lang, L"Orb", L"Орб", L"Орб");
-  }
-  if (_wcsicmp(value, L"plasma") == 0) {
-    return Pick(lang, L"Plasma", L"Плазма", L"Плазма");
-  }
-  if (_wcsicmp(value, L"led") == 0) {
-    return Pick(lang, L"LED", L"LED", L"LED");
-  }
-  return value;
-}
-
 inline const wchar_t* ClickThroughModifierLabel(Lang lang, const wchar_t* value) {
   if (_wcsicmp(value, L"ctrl") == 0) {
     return Pick(lang, L"Ctrl", L"Ctrl", L"Ctrl");
@@ -683,9 +658,6 @@ inline const wchar_t* EnumLabel(Lang lang, const SettingDef& def, size_t index) 
   }
   if (wcscmp(def.key, L"Appearance.TargetMonitor") == 0) {
     return TargetMonitorLabel(lang, def.enums[index].value);
-  }
-  if (wcscmp(def.key, L"Appearance.SpectrumStyle") == 0) {
-    return SpectrumStyleLabel(lang, def.enums[index].value);
   }
   if (wcscmp(def.key, L"Appearance.ShapeStyle") == 0) {
     const wchar_t* v = def.enums[index].value;

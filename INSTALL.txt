@@ -1,13 +1,13 @@
 Dynamic Island for Windows Lux — install
 
 Recommended (installer):
-  1. Run DynamicIslandLux-Setup-1.0.8.exe
+  1. Run DynamicIslandLux-Setup-1.0.10.exe
   2. Finish the wizard (installs to %LOCALAPPDATA%\DynamicIslandLux\, no admin)
   3. Optional: enable “Start with Windows” in the wizard or later in Settings
   4. Tray icon appears; right-click → Settings… / Show island
 
 Portable (no installer):
-  1. Copy DynamicIslandLux.exe somewhere permanent (e.g. %LOCALAPPDATA%\DynamicIslandLux\)
+  1. Copy Dynamic Island Lux.exe somewhere permanent (e.g. %LOCALAPPDATA%\DynamicIslandLux\)
   2. Double-click to run
   3. Optional: enable “Start with Windows” / Autostart in Settings
      (HKCU Run: starts with --minimized — tray only until you show the island)
@@ -15,7 +15,7 @@ Portable (no installer):
 Data (created on first launch):
   %AppData%\DynamicIslandLux\settings.json
   %AppData%\DynamicIslandLux\runtime.json
-  %AppData%\DynamicIslandLux\modstorage\
+  %AppData%\DynamicIslandLux\storage\
   %LocalAppData%\DynamicIslandLux\logs\lux.log
 
 Uninstall:

@@ -2,13 +2,13 @@
 ; Build: scripts\make-installer.bat  (requires Inno Setup 6+)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.8"
+  #define MyAppVersion "1.0.10"
 #endif
 
 #define MyAppName "Dynamic Island for Windows Lux"
 #define MyAppNameShort "Dynamic Island Lux"
-#define MyAppPublisher "Averixor"
-#define MyAppExeName "DynamicIslandLux.exe"
+#define MyAppPublisher "Dynamic Island Lux"
+#define MyAppExeName "Dynamic Island Lux.exe"
 #define MyAppId "{{A7C4E2F1-9B8D-4E6A-9F31-2D5C8B0A1E77}"
 
 [Setup]
@@ -17,10 +17,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppCopyright=Copyright (c) 2026 devcode90. Copyright (c) Averixor and contributors
-AppPublisherURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux
-AppSupportURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/issues
-AppUpdatesURL=https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases
+AppCopyright=MIT License
 DefaultDirName={localappdata}\DynamicIslandLux
 DefaultGroupName={#MyAppNameShort}
 DisableProgramGroupPage=yes
@@ -43,7 +40,7 @@ RestartApplications=no
 AllowNoIcons=yes
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoCopyright=Copyright (c) 2026 devcode90. Copyright (c) Averixor and contributors
+VersionInfoCopyright=MIT License
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}

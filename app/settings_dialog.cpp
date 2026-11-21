@@ -303,7 +303,7 @@ void ApplyControlTheme(HWND hwnd) {
       wcscmp(cls, kContentClass) == 0) {
     return;
   }
-  SetWindowTheme(hwnd, L"", L"");
+    SetWindowTheme(hwnd, L"", L"");
 }
 
 void FrameControl(HWND hwnd, COLORREF color) {
@@ -1756,7 +1756,7 @@ struct DialogLookup final : SettingsValueLookup {
 };
 
 void WriteRowValue(const RowRef& row, const std::wstring& value) {
-  const SettingDef& def = kSettingSchema[row.schemaIndex];
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
   if (def.type == SettingType::Bool) {
     SendMessageW(row.control, BM_SETCHECK, value == L"1" ? BST_CHECKED : BST_UNCHECKED, 0);
     InvalidateRect(row.control, nullptr, FALSE);
@@ -2201,7 +2201,7 @@ void PlaceControl(HWND hwnd, const RECT& rc, UINT flags) {
 }
 
 void PlaceRow(DialogState& st, RowRef& row, int left, int top, int width) {
-  const SettingDef& def = kSettingSchema[row.schemaIndex];
+    const SettingDef& def = kSettingSchema[row.schemaIndex];
   const UINT flags = kMoveNoPaint | SWP_SHOWWINDOW;
   const RowPlacement place = MeasureRow(st.dpi, def.type, row.swatch != nullptr, left, top, width);
   if (place.hasLabel) {
@@ -2415,8 +2415,8 @@ void UpdateEnabled(DialogState& st) {
     const bool enabled = SettingsControlIsEnabled(kSettingSchema[row.schemaIndex].key, lookup);
     auto apply = [&](HWND hwnd) {
       if (!hwnd) {
-        return;
-      }
+    return;
+  }
       const bool current = IsWindowEnabled(hwnd) != FALSE;
       if (current != enabled) {
         EnableWindow(hwnd, enabled ? TRUE : FALSE);
@@ -3118,7 +3118,7 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     break;
   case WM_GETMINMAXINFO:
-    if (DialogState* st = State(hwnd)) {
+      if (DialogState* st = State(hwnd)) {
       RECT minRc = {0, 0, Px(*st, kMinClientW), Px(*st, kMinClientH)};
       const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
       const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
@@ -3189,7 +3189,7 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     const WORD code = HIWORD(wParam);
     if (code == EN_CHANGE && id == kIdSearch) {
       if (DialogState* st = State(hwnd); !st || !st->updating) {
-        SetTimer(hwnd, kFilterTimer, 120, nullptr);
+      SetTimer(hwnd, kFilterTimer, 120, nullptr);
       }
       return TRUE;
     }
@@ -3222,7 +3222,7 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       if (!st) {
         return TRUE;
       }
-      if (SaveFromControls(hwnd, *st)) {
+        if (SaveFromControls(hwnd, *st)) {
         CaptureBaseline(*st);
         ClearBanner(hwnd, *st);
       }
@@ -3539,7 +3539,7 @@ bool SettingsDialogSelfTestImpl() {
                L"Месенджери (через кому)") == 0,
         L"messenger uk");
   check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::En, L"Modules.MediaLikeBridge"),
-               L"Like / Dislike for players") == 0,
+               L"Like / Dislike for players (YTMDesktop: Companion Server)") == 0,
         L"like bridge en");
   check(wcscmp(SettingsUiLoc::SettingLabel(SettingsUiLoc::Lang::Uk, L"Modules.MediaLikeBridgePort"),
                L"Порт браузерного моста (127.0.0.1)") == 0,

@@ -62,7 +62,7 @@ echo Commit: %HASH%
 echo.
 echo Notes and the CMake version must already be committed. Do not edit RELEASE_NOTES.md after tagging.
 echo After the cold-start checklist passes, run:
-echo   git tag -a v%VER% %HASH% -m "Dynamic Island Lux standalone v%VER%"
+echo   git tag -a v%VER% %HASH% -m "Dynamic Island Lux v%VER%"
 echo   git push origin v%VER%
 echo.
 echo Attach dist\v%VER%\* to the GitHub Release. The tag, not a hash in the notes, identifies the commit.

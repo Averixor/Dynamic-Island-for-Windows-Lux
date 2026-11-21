@@ -3,7 +3,7 @@
 #include "app_context.h"
 #include "logging.h"
 #include "settings_store.h"
-#include "windhawk_compat.h"
+#include "settings_api.h"
 
 #include <algorithm>
 #include <d2d1.h>
@@ -150,18 +150,18 @@ bool CreateScaffoldPill(AppState& app) {
 }  // namespace
 
 bool LuxOverlay_Init(AppState& app) {
-  // Smoke / --no-workers: local scaffold pill (no WhTool render thread).
-  // Normal run: island HWND comes solely from WhTool_ModInit → StartThreads.
+  // Smoke / --no-workers: local scaffold pill (no island render thread).
+  // Normal run: island HWND comes solely from IslandRuntimeStart → StartThreads.
   if (LuxSmokeTestFlag() || !LuxShouldStartWorkers()) {
     if (!CreateScaffoldPill(app)) {
       return false;
     }
-    const bool lookup = Wh_GetIntSetting(L"Modules.QuickLookup") != 0;
-    Wh_Log(L"LuxOverlay_Init scaffold ready (QuickLookup=%d)", lookup ? 1 : 0);
+    const bool lookup = AppSettingGetInt(L"Modules.QuickLookup") != 0;
+    AppLog(L"LuxOverlay_Init scaffold ready (QuickLookup=%d)", lookup ? 1 : 0);
     return true;
   }
 
-  LUX_LOGI(L"LuxOverlay_Init deferred UI to WhTool_ModInit (workers path)");
+  LUX_LOGI(L"LuxOverlay_Init deferred UI to IslandRuntimeStart (workers path)");
   return true;
 }
 
@@ -183,16 +183,16 @@ bool LuxOverlay_PumpFrame(AppState& app) {
 }
 
 void LuxOverlay_OnSettingsChanged() {
-  // Store reload on main (fast). WhTool_ModSettingsChanged posts LoadSettings to the
+  // Store reload on main (fast). IslandRuntimeSettingsChanged posts LoadSettings to the
   // render thread when the island HWND exists — OK click must not stall the island.
   SettingsStoreReload();
-  WhTool_ModSettingsChanged();
+  IslandRuntimeSettingsChanged();
   LUX_LOGI(L"LuxOverlay_OnSettingsChanged queued/applied");
 }
 
 void LuxOverlay_Reload() {
   SettingsStoreReload();
-  WhTool_ModSettingsChanged();
+  IslandRuntimeSettingsChanged();
   LuxOverlay_ShowIsland();
   LUX_LOGI(L"LuxOverlay_Reload: settings reloaded from disk");
 }
@@ -208,13 +208,13 @@ bool LuxOverlay_StartWorkers(AppState& app) {
     return true;
   }
 
-  LUX_LOGI(L"worker bootstrap: calling WhTool_ModInit");
-  if (!WhTool_ModInit()) {
-    LUX_LOGE(L"WhTool_ModInit failed");
+  LUX_LOGI(L"worker bootstrap: calling IslandRuntimeStart");
+  if (!IslandRuntimeStart()) {
+    LUX_LOGE(L"IslandRuntimeStart failed");
     return false;
   }
   g_workersStarted = true;
-  LUX_LOGI(L"worker bootstrap: WhTool_ModInit OK (render/media/audio/weather/...)");
+  LUX_LOGI(L"worker bootstrap: IslandRuntimeStart OK (render/media/audio/weather/...)");
   return true;
 }
 
@@ -223,8 +223,8 @@ void LuxOverlay_StopWorkers(AppState& app) {
   if (!g_workersStarted) {
     return;
   }
-  LUX_LOGI(L"worker shutdown: calling WhTool_ModUninit");
-  WhTool_ModUninit();
+  LUX_LOGI(L"worker shutdown: calling IslandRuntimeStop");
+  IslandRuntimeStop();
   g_workersStarted = false;
-  LUX_LOGI(L"worker shutdown: WhTool_ModUninit returned");
+  LUX_LOGI(L"worker shutdown: IslandRuntimeStop returned");
 }

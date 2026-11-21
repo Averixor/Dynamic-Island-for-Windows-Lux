@@ -1,10 +1,9 @@
 # Dynamic Island for Windows Lux
 
-Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island.  
-**Standalone app** — Windhawk is not required.
+Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island. A Win32 application with its own settings, tray icon, and autostart.
 
-**Current release:** [v1.0.8](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/tag/v1.0.8)  
-**Author:** [Averixor](https://github.com/Averixor) · **Upstream:** [devcode90](https://github.com/devcode90/Dynamic-Island-for-Windows) · **License:** [MIT](LICENSE)
+**Current release:** v1.0.10
+**License:** [MIT](LICENSE)
 
 ---
 
@@ -12,14 +11,14 @@ Living pill overlay for Windows 10 / 11, inspired by the iPhone Dynamic Island.
 
 ### Recommended (installer)
 
-1. Download `DynamicIslandLux-Setup-1.0.8.exe` from the [latest release](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases/latest).
+1. Download `DynamicIslandLux-Setup-1.0.10.exe` from the project release.
 2. Run the wizard (per-user install to `%LOCALAPPDATA%\DynamicIslandLux\`, no admin).
 3. Optional: enable **Start with Windows** in the wizard or later in Settings.
 4. Tray icon appears — right-click for **Settings…** / **Show island**.
 
 ### Portable
 
-1. Download `DynamicIslandLux.exe` from the release.
+1. Download `Dynamic Island Lux.exe` from the release.
 2. Put it somewhere permanent (for example `%LOCALAPPDATA%\DynamicIslandLux\`).
 3. Run it. Optional: enable autostart in Settings.
 
@@ -54,7 +53,7 @@ Collapsed pill: clock, date, media glance. Expand on hover or click for tabs and
 Like and Dislike sit on the title row of the expanded player. The same toggle covers three ways to reach the real button, and only the app that owns the current system media session is used:
 
 - **Browser** — the companion extension in `extensions/youtube-bridge` talks to `127.0.0.1` (default port **18473**).
-- **YouTube Music Desktop** — [Pear Desktop](https://github.com/pear-devs/pear-desktop) (`th-ch/youtube-music`) API server on `127.0.0.1:26538`, and [ytmdesktop](https://github.com/ytmdesktop/ytmdesktop) companion server on `127.0.0.1:9863`, when those local servers are enabled.
+- **YouTube Music Desktop** — [Pear Desktop](https://github.com/pear-devs/pear-desktop) (`th-ch/youtube-music`) API server on `127.0.0.1:26538`, and [ytmdesktop](https://github.com/ytmdesktop/ytmdesktop) Companion Server on `127.0.0.1:9863`. For **YTMDesktop v2**, turn on **Settings → Integrations → Companion Server** and approve Lux once (token under `%AppData%\DynamicIslandLux\ytmdesktop_v2_token.txt`). UI Automation cannot reach Like/Dislike inside that Electron app when Companion is off.
 - **Other desktop players** — Windows UI Automation finds Like / Dislike (or Spotify’s Save to Your Library) in YouTube Music, Spotify, TIDAL, Deezer, Apple Music, and Chrome/Edge YouTube Music windows. No plugin is required. A player that only exposes Like does not get a fake Dislike.
 
 ---
@@ -67,7 +66,7 @@ Created on first launch:
 | --- | --- |
 | `%AppData%\DynamicIslandLux\settings.json` | User settings |
 | `%AppData%\DynamicIslandLux\runtime.json` | Runtime state |
-| `%AppData%\DynamicIslandLux\modstorage\` | Mod-compatible storage |
+| `%AppData%\DynamicIslandLux\storage\` | App-owned data storage |
 | `%LocalAppData%\DynamicIslandLux\logs\lux.log` | Rotating log |
 
 Weather, lyrics, and Quick Lookup send the city or the query you type to third-party services (wttr.in, lrclib.net, dictionaryapi.dev, Wikipedia, Wiktionary). A blank weather city lets wttr.in choose a place from your IP address. Uninstall leaves these files in place; delete the two folders above if you want them gone. Track and city lines are written to the log only at Debug level.
@@ -89,7 +88,7 @@ Needs **Visual Studio 2022 or 2026** (Desktop C++) and **CMake ≥ 3.20** (CMake
 app\build.bat
 ```
 
-Output: `build\Release\DynamicIslandLux.exe`
+Output: `build\Release\Dynamic Island Lux.exe`
 
 Version for packaging/installer is parsed from `app\CMakeLists.txt` via `scripts\_version.cmd` (keep that `project(… VERSION …)` in sync with tags).
 
@@ -114,13 +113,7 @@ Changelog: **[RELEASE_NOTES.md](RELEASE_NOTES.md)**.
 
 ## Architecture note
 
-The root file `Dynamic Island for Windows Lux.wh.cpp` is the Windhawk single-file mod **and** the translation unit linked into the standalone exe. Keep it — it is not leftover junk. Lux is a derivative of [Dynamic Island for Windows](https://github.com/devcode90/Dynamic-Island-for-Windows) by Himanshu (devcode90), MIT. See [NOTICE](NOTICE).
-
-| Windhawk mod | Standalone |
-| --- | --- |
-| Injected / tool-mod process | Own Win32 exe + tray |
-| YAML settings in Windhawk | Flat `settings.json` + schema dialog |
-| Windhawk storage API | `%AppData%\DynamicIslandLux\` |
+The island implementation is in `app/island.cpp` and is compiled into `Dynamic Island Lux.exe`. The application owns its process lifecycle, settings, tray icon, and autostart.
 
 ---
 
@@ -132,8 +125,6 @@ The root file `Dynamic Island for Windows Lux.wh.cpp` is the Windhawk single-fil
 
 ---
 
-## Links
+## License
 
-- [Releases](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/releases)
-- [Issues](https://github.com/Averixor/Dynamic-Island-for-Windows-Lux/issues)
-- [License](LICENSE)
+[MIT](LICENSE)

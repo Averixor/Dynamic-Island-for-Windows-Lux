@@ -3,7 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
-// Process-wide flags shared by main / lux_overlay / .wh.cpp (LUX_STANDALONE).
+// Process-wide flags shared by main / lux_overlay / island.cpp.
 // Set from wWinMain before workers start; workers only write StuckOnExit.
 
 inline bool& LuxSmokeTestFlag() {

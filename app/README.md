@@ -1,9 +1,8 @@
-# Dynamic Island Lux (standalone)
+# Dynamic Island Lux
 
-Окремий Win32-застосунок для Windows 10/11. **Windhawk не потрібен.**
+Win32-застосунок для Windows 10/11. Працює як самостійний процес із власними налаштуваннями, системним треєм та автозапуском.
 
-Derivative of [Dynamic Island for Windows](https://github.com/devcode90/Dynamic-Island-for-Windows) by **Himanshu (devcode90)**, maintained by **[Averixor](https://github.com/Averixor)** — license **MIT** (see `/LICENSE` and `/NOTICE`).  
-Root file `Dynamic Island for Windows Lux.wh.cpp` is the **intentional archive** of the original single-file mod and the TU linked into this app — do not delete it as “junk”.
+Код острова міститься в `app/island.cpp` і збирається безпосередньо у виконуваний файл застосунку. Налаштування та життєвий цикл належать самому застосунку.
 
 ## Збірка
 
@@ -19,20 +18,20 @@ app\build.bat
 VERSIONINFO (`FileVersion` / `ProductVersion` / `CompanyName` / `ProductName`) генерується з `project(VERSION …)` через `version.rc.in` → `version.gen.rc`.  
 Маніфест + іконка: `resources.rc.in` → `resources.gen.rc` (`DynamicIslandLux.manifest.in`, `app.ico`). Не компілювати `resources.rc` вручну.
 
-Результат: `build\Release\DynamicIslandLux.exe` (прапорці `--smoke-test` / `--test-json` доступні в **Release**, не лише Debug).
+Результат: `build\Release\Dynamic Island Lux.exe` (прапорці `--smoke-test` / `--test-json` доступні в **Release**, не лише Debug).
 
 ## Запуск
 
 ```bat
-build\Release\DynamicIslandLux.exe
-build\Release\DynamicIslandLux.exe --settings
-build\Release\DynamicIslandLux.exe --minimized
-build\Release\DynamicIslandLux.exe --test-json
-build\Release\DynamicIslandLux.exe --smoke-test --no-workers
-build\Release\DynamicIslandLux.exe --smoke-test
-build\Release\DynamicIslandLux.exe --smoke-test --backdrop=blur
-build\Release\DynamicIslandLux.exe --smoke-test --backdrop=acrylic
-build\Release\DynamicIslandLux.exe --log-level=debug
+build\Release\Dynamic Island Lux.exe
+build\Release\Dynamic Island Lux.exe --settings
+build\Release\Dynamic Island Lux.exe --minimized
+build\Release\Dynamic Island Lux.exe --test-json
+build\Release\Dynamic Island Lux.exe --smoke-test --no-workers
+build\Release\Dynamic Island Lux.exe --smoke-test
+build\Release\Dynamic Island Lux.exe --smoke-test --backdrop=blur
+build\Release\Dynamic Island Lux.exe --smoke-test --backdrop=acrylic
+build\Release\Dynamic Island Lux.exe --log-level=debug
 ```
 
 | Flag | Effect |
@@ -68,7 +67,9 @@ build\Release\DynamicIslandLux.exe --log-level=debug
 
 ## Like / Dislike
 
-The expanded player’s Like and Dislike buttons follow the active SMTC source. A browser session uses `extensions/youtube-bridge` on `127.0.0.1` (setting `Modules.MediaLikeBridgePort`, default 18473). YouTube Music desktop apps can use their loopback APIs (Pear Desktop `127.0.0.1:26538`, ytmdesktop `127.0.0.1:9863`). Spotify, TIDAL, Deezer, Apple Music, and the YouTube Music desktop/PWA windows are driven with UI Automation on a background thread, with no extra plugin. The master switch stays `Modules.MediaLikeBridge`.
+The expanded player’s Like and Dislike buttons follow the active SMTC source. A browser session uses `extensions/youtube-bridge` on `127.0.0.1` (setting `Modules.MediaLikeBridgePort`, default 18473). YouTube Music desktop apps can use their loopback APIs (Pear Desktop `127.0.0.1:26538`, YTMDesktop Companion Server `127.0.0.1:9863`). Spotify, TIDAL, Deezer, Apple Music, and Chrome/Edge YouTube Music windows are driven with UI Automation on a background thread, with no extra plugin. The master switch stays `Modules.MediaLikeBridge`.
+
+**YTMDesktop v2** (`youtube-music-desktop-app.exe`): enable **Settings → Integrations → Companion Server**, then approve the one-time Lux authorization prompt. The token is stored in `%AppData%\DynamicIslandLux\ytmdesktop_v2_token.txt`. Electron disables the renderer accessibility tree by default, so UI Automation alone cannot drive Like/Dislike in YTMDesktop v2 when Companion Server is off.
 
 ## Known limitations
 
@@ -78,7 +79,7 @@ The expanded player’s Like and Dislike buttons follow the active SMTC source. 
 - **`Local\` mutex** — per-session; у RDP з кількома сесіями кожна має свій екземпляр (свідомо).
 - **Мінімальна ОС:** Win10 **1809+** (SMTC + WCA); Win11 для acrylic backdrop.
 
-## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.8**)
+## Acceptance перед тегом (версія = `project(VERSION)` у `CMakeLists.txt`, зараз **1.0.10**)
 
 ### Автоматичні (`app\build.bat`)
 
@@ -117,9 +118,9 @@ scripts\release.bat
 1. `app\build.bat` — Release + smoke (exit ≠ 0 → стоп)
 2. Cold-start чекліст вище (corrupt JSON обовʼязково)
 3. `scripts\make-release-assets.bat` — копіює **той самий** `.exe`, SHA256, VERSIONINFO≠`@PROJECT_VERSION@` (exit ≠ 0 → стоп)
-4. `git tag -a v1.0.8 -m "Dynamic Island Lux standalone v1.0.8"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
+4. `git tag -a v1.0.10 -m "Dynamic Island Lux v1.0.10"` на **поточний** `HEAD` після зеленого build (версію беріть з `CMakeLists.txt` / `_version.cmd`)
 
-Assets: `dist\v1.0.8\` (папка = `scripts\_version.cmd`).
+Assets: `dist\v1.0.10\` (папка = `scripts\_version.cmd`).
 
 ## Архітектурні інваріанти
 
@@ -134,5 +135,5 @@ Assets: `dist\v1.0.8\` (папка = `scripts\_version.cmd`).
 
 - `%AppData%\DynamicIslandLux\settings.json`
 - `%AppData%\DynamicIslandLux\runtime.json`
-- `%AppData%\DynamicIslandLux\modstorage`
+- `%AppData%\DynamicIslandLux\storage`
 - `%LocalAppData%\DynamicIslandLux\logs\lux.log`

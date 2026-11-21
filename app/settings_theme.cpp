@@ -483,7 +483,7 @@ bool SettingsControlIsEnabled(const wchar_t* key, const SettingsValueLookup& loo
   if (KeyIs(key, L"Modules.StatusCountdownProgress")) {
     return EnabledFlag(lookup, L"Modules.Progress");
   }
-  if (KeyIs(key, L"Modules.LyricsVisualizer") || KeyIs(key, L"Modules.KaraokeLyrics") ||
+  if (KeyIs(key, L"Modules.KaraokeLyrics") ||
       KeyIs(key, L"Modules.LyricsNeighborLinesVisible") || KeyIs(key, L"Modules.LyricsOffsetMs") ||
       KeyIs(key, L"Modules.LyricsOffsetBluetoothMs") || KeyIs(key, L"Modules.LyricsCache") ||
       KeyIs(key, L"Modules.CollapsedLyrics") || KeyIs(key, L"Modules.LyricsPinnedFirst") ||

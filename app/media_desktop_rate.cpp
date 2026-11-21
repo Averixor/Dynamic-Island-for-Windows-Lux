@@ -14,8 +14,15 @@
 #include <winhttp.h>
 #include <wrl/client.h>
 
+#include "app_context.h"
 #include "logging.h"
 #include "media_desktop_rate.h"
+
+#ifndef LUX_APP_VERSION_STR
+#define LUX_APP_VERSION_STR "1.0.10"
+#endif
+
+#include <shlobj.h>
 
 #include <algorithm>
 #include <atomic>
@@ -944,6 +951,7 @@ BrowserProduct BrowserFromText(const std::string& lowerBlob) {
 bool IsYtmImage(const std::string& baseLower) {
   return baseLower == "youtube music.exe" || baseLower == "youtube-music.exe" ||
          baseLower == "youtubemusic.exe" || baseLower == "ytmdesktop.exe" ||
+         baseLower == "youtube-music-desktop-app.exe" ||
          baseLower == "youtube music desktop app.exe" || baseLower == "pear desktop.exe" ||
          baseLower == "peardesktop.exe";
 }
@@ -990,9 +998,11 @@ bool DesktopBlob(const std::string& raw) {
   return raw.find("th-ch") != std::string::npos || raw.find("ytmdesktop") != std::string::npos ||
          raw.find("pear-desktop") != std::string::npos || raw.find("pear desktop") != std::string::npos ||
          raw.find("peardesktop") != std::string::npos || raw.find("youtube-music") != std::string::npos ||
+         raw.find("youtube_music_desktop") != std::string::npos ||
          raw.find("youtubemusic") != std::string::npos ||
          raw.find("youtube music.exe") != std::string::npos ||
-         raw.find("youtube music desktop") != std::string::npos;
+         raw.find("youtube music desktop") != std::string::npos ||
+         raw.find("youtube-music-desktop-app") != std::string::npos;
 }
 
 BackendChoice ChoiceFrom(DesktopRateBackend backend, bool canLike, bool canDislike, ParsedLike like) {
@@ -1187,15 +1197,22 @@ void ReadHttpBody(HINTERNET request, std::string* body) {
   }
 }
 
+enum class LoopbackAuthMode {
+  None,
+  Bearer,
+  RawToken,
+};
+
 HttpResult LoopbackRequest(HINTERNET session, int port, const wchar_t* method, const wchar_t* path,
-                           const std::string* body, const std::string& bearer, int timeoutMs) {
+                           const std::string* body, const std::string& authToken,
+                           LoopbackAuthMode authMode, int timeoutMs) {
   HttpResult result;
   if (!session || !method || !path || path[0] != L'/' ||
       (port != kPearDesktopApiPort && port != kYtmDesktopApiPort) || timeoutMs < 50 ||
-      timeoutMs > 20000) {
+      timeoutMs > 35000) {
     return result;
   }
-  if (!bearer.empty() && !SaneToken(bearer)) {
+  if (!authToken.empty() && !SaneToken(authToken)) {
     return result;
   }
   if (g_stop.load(std::memory_order_acquire)) {
@@ -1227,9 +1244,12 @@ HttpResult LoopbackRequest(HINTERNET session, int port, const wchar_t* method, c
   if (body) {
     headers += L"Content-Type: application/json; charset=utf-8\r\n";
   }
-  if (!bearer.empty()) {
-    headers += L"Authorization: Bearer ";
-    headers += WidenAscii(bearer);
+  if (!authToken.empty() && authMode != LoopbackAuthMode::None) {
+    headers += L"Authorization: ";
+    if (authMode == LoopbackAuthMode::Bearer) {
+      headers += L"Bearer ";
+    }
+    headers += WidenAscii(authToken);
     headers += L"\r\n";
   }
   if (!g_inflight.Arm(request)) {
@@ -1263,15 +1283,112 @@ HttpResult LoopbackRequest(HINTERNET session, int port, const wchar_t* method, c
   return result;
 }
 
+constexpr const char* kYtmCompanionAppIdValue = "dynamicislandlux";
+constexpr const char* kYtmCompanionAppNameValue = "Dynamic Island Lux";
+constexpr int kYtmAuthCodeTimeoutMs = 2500;
+constexpr int kYtmAuthRequestTimeoutMs = 32000;
+constexpr uint64_t kYtmAuthDeniedBackoffMs = 600000;
+constexpr uint64_t kYtmAuthFailBackoffMs = 180000;
+
+std::wstring YtmTokenStorePath() {
+  wchar_t base[MAX_PATH] = {};
+  if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, base))) {
+    return {};
+  }
+  std::wstring dir = base;
+  dir += L"\\DynamicIslandLux";
+  SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+  return dir + L"\\ytmdesktop_v2_token.txt";
+}
+
+std::string LoadYtmTokenFromDisk() {
+  const std::wstring path = YtmTokenStorePath();
+  if (path.empty()) {
+    return {};
+  }
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return {};
+  }
+  LARGE_INTEGER size = {};
+  if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > 8192) {
+    CloseHandle(file);
+    return {};
+  }
+  std::string raw(static_cast<size_t>(size.QuadPart), '\0');
+  DWORD read = 0;
+  const BOOL ok = ReadFile(file, raw.data(), static_cast<DWORD>(raw.size()), &read, nullptr);
+  CloseHandle(file);
+  if (!ok) {
+    return {};
+  }
+  raw.resize(read);
+  std::string token;
+  if (!ParseYtmTokenStore(raw, &token) || !SaneToken(token)) {
+    return {};
+  }
+  return token;
+}
+
+void SaveYtmTokenToDisk(const std::string& token) {
+  if (LuxSmokeTestFlag() || !SaneToken(token)) {
+    return;
+  }
+  const std::wstring path = YtmTokenStorePath();
+  if (path.empty()) {
+    return;
+  }
+  const std::string body = FormatYtmTokenStore(token);
+  const std::wstring tmp = path + L".tmp";
+  HANDLE file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  DWORD written = 0;
+  const BOOL ok =
+      WriteFile(file, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
+  CloseHandle(file);
+  if (!ok || written != body.size()) {
+    DeleteFileW(tmp.c_str());
+    return;
+  }
+  if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DeleteFileW(tmp.c_str());
+  }
+}
+
+void ClearYtmTokenOnDisk() {
+  if (LuxSmokeTestFlag()) {
+    return;
+  }
+  const std::wstring path = YtmTokenStorePath();
+  if (!path.empty()) {
+    DeleteFileW(path.c_str());
+  }
+}
+
 struct ProbeCache {
   uint64_t pearRetryAt = 0;
   uint64_t ytmRetryAt = 0;
   uint64_t pearAuthRetryAt = 0;
+  uint64_t ytmAuthRetryAt = 0;
+  uint64_t uiaRetryAt = 0;
   bool pearAuthDenied = false;
   bool pearAuthLogged = false;
+  bool ytmAuthDenied = false;
+  bool ytmAuthLogged = false;
+  bool ytmTokenLoaded = false;
+  bool uiaCachedValid = false;
   std::string pearToken;
+  std::string ytmToken;
   bool ytmLegacy = false;
   bool ytmV1 = false;
+  bool uiaReady = false;
+  bool uiaCanLike = false;
+  bool uiaCanDislike = false;
+  ParsedLike uiaLike = ParsedLike::Unknown;
 };
 
 bool HttpOk(const HttpResult& result) {
@@ -1286,8 +1403,10 @@ void ProbePear(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, Backe
   if (now < cache->pearRetryAt) {
     return;
   }
-  HttpResult song = LoopbackRequest(session, kPearDesktopApiPort, L"GET", L"/api/v1/song", nullptr,
-                                    cache->pearToken, kDesktopRateProbeTimeoutMs);
+  HttpResult song =
+      LoopbackRequest(session, kPearDesktopApiPort, L"GET", L"/api/v1/song", nullptr, cache->pearToken,
+                      cache->pearToken.empty() ? LoopbackAuthMode::None : LoopbackAuthMode::Bearer,
+                      kDesktopRateProbeTimeoutMs);
   if (!song.transportOk) {
     cache->pearRetryAt = now + 2000;
     return;
@@ -1304,12 +1423,12 @@ void ProbePear(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, Backe
     }
     const HttpResult auth =
         LoopbackRequest(session, kPearDesktopApiPort, L"POST", L"/auth/dynamic-island-lux", nullptr,
-                        "", 15000);
+                        "", LoopbackAuthMode::None, 15000);
     std::string token;
     if (HttpOk(auth) && ParsePearAuthJson(auth.body, &token) && SaneToken(token)) {
       cache->pearToken = token;
       song = LoopbackRequest(session, kPearDesktopApiPort, L"GET", L"/api/v1/song", nullptr,
-                             cache->pearToken, kDesktopRateProbeTimeoutMs);
+                             cache->pearToken, LoopbackAuthMode::Bearer, kDesktopRateProbeTimeoutMs);
     } else {
       if (auth.status == 403) {
         cache->pearAuthDenied = true;
@@ -1342,7 +1461,9 @@ void ProbePear(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, Backe
   if (offer->pearTrackMatch) {
     const HttpResult like =
         LoopbackRequest(session, kPearDesktopApiPort, L"GET", L"/api/v1/like-state", nullptr,
-                        cache->pearToken, kDesktopRateProbeTimeoutMs);
+                        cache->pearToken,
+                        cache->pearToken.empty() ? LoopbackAuthMode::None : LoopbackAuthMode::Bearer,
+                        kDesktopRateProbeTimeoutMs);
     ParsedLike state = ParsedLike::Unknown;
     if (like.status == 200 && ParsePearLikeStateJson(like.body, &state) &&
         state != ParsedLike::Unknown) {
@@ -1350,6 +1471,70 @@ void ProbePear(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, Backe
     }
   }
   cache->pearRetryAt = now + 400;
+}
+
+bool EnsureYtmToken(HINTERNET session, ProbeCache* cache, uint64_t now) {
+  if (!session || !cache) {
+    return false;
+  }
+  if (!cache->ytmTokenLoaded) {
+    cache->ytmToken = LoadYtmTokenFromDisk();
+    cache->ytmTokenLoaded = true;
+  }
+  if (SaneToken(cache->ytmToken)) {
+    return true;
+  }
+  const YtmAuthAction action =
+      DecideYtmAuth(false, true, 401, cache->ytmAuthDenied, now, cache->ytmAuthRetryAt);
+  if (action == YtmAuthAction::Backoff || action == YtmAuthAction::Unavailable) {
+    return false;
+  }
+  if (LuxSmokeTestFlag()) {
+    cache->ytmAuthRetryAt = now + kYtmAuthFailBackoffMs;
+    return false;
+  }
+  if (!cache->ytmAuthLogged) {
+    cache->ytmAuthLogged = true;
+    LUX_LOGI(L"media-rate: YTMDesktop Companion Server needs one-time approval "
+             L"(Settings → Integrations → Companion Server)");
+  }
+  const std::string codeBody =
+      YtmAuthRequestCodeBody(kYtmCompanionAppIdValue, kYtmCompanionAppNameValue, LUX_APP_VERSION_STR);
+  const HttpResult codeResult =
+      LoopbackRequest(session, kYtmDesktopApiPort, L"POST", L"/api/v1/auth/requestcode", &codeBody, "",
+                      LoopbackAuthMode::None, kYtmAuthCodeTimeoutMs);
+  std::string code;
+  if (!HttpOk(codeResult) || !ParseYtmAuthCodeJson(codeResult.body, &code) || code.empty() ||
+      code.size() > 8) {
+    if (codeResult.status == 403 || codeResult.status == 429) {
+      cache->ytmAuthDenied = codeResult.status == 403;
+      cache->ytmAuthRetryAt = now + kYtmAuthDeniedBackoffMs;
+    } else {
+      cache->ytmAuthRetryAt = now + kYtmAuthFailBackoffMs;
+    }
+    return false;
+  }
+  if (g_stop.load(std::memory_order_acquire)) {
+    return false;
+  }
+  const std::string tokenBody = YtmAuthRequestTokenBody(kYtmCompanionAppIdValue, code.c_str());
+  const HttpResult tokenResult =
+      LoopbackRequest(session, kYtmDesktopApiPort, L"POST", L"/api/v1/auth/request", &tokenBody, "",
+                      LoopbackAuthMode::None, kYtmAuthRequestTimeoutMs);
+  std::string token;
+  if (HttpOk(tokenResult) && ParseYtmAuthTokenJson(tokenResult.body, &token) && SaneToken(token)) {
+    cache->ytmToken = token;
+    cache->ytmAuthDenied = false;
+    SaveYtmTokenToDisk(token);
+    return true;
+  }
+  if (tokenResult.status == 403) {
+    cache->ytmAuthDenied = true;
+    cache->ytmAuthRetryAt = now + kYtmAuthDeniedBackoffMs;
+  } else {
+    cache->ytmAuthRetryAt = now + kYtmAuthFailBackoffMs;
+  }
+  return false;
 }
 
 void ProbeYtm(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, BackendOffer* offer) {
@@ -1360,33 +1545,65 @@ void ProbeYtm(HINTERNET session, const SmtcHint& hint, ProbeCache* cache, Backen
   if (now < cache->ytmRetryAt) {
     return;
   }
-  const HttpResult state = LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/api/v1/state",
-                                           nullptr, "", kDesktopRateProbeTimeoutMs);
+  if (!cache->ytmTokenLoaded) {
+    cache->ytmToken = LoadYtmTokenFromDisk();
+    cache->ytmTokenLoaded = true;
+  }
+
+  HttpResult state =
+      LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/api/v1/state", nullptr, cache->ytmToken,
+                      cache->ytmToken.empty() ? LoopbackAuthMode::None : LoopbackAuthMode::RawToken,
+                      kDesktopRateProbeTimeoutMs);
   if (!state.transportOk) {
     cache->ytmRetryAt = now + 2000;
     cache->ytmV1 = false;
     cache->ytmLegacy = false;
     return;
   }
-  DesktopApiSong parsed;
-  bool usedLegacy = false;
-  if (state.status == 200 && ParseYtmV1StateJson(state.body, &parsed) && parsed.ok) {
-    cache->ytmV1 = true;
-    cache->ytmLegacy = false;
-  } else if (state.status == 401) {
-    cache->ytmV1 = false;
-    const HttpResult legacy = LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/query", nullptr,
-                                              "", kDesktopRateProbeTimeoutMs);
-    if (legacy.status == 200 && ParseYtmLegacyQueryJson(legacy.body, &parsed) && parsed.ok) {
-      usedLegacy = true;
-      cache->ytmLegacy = true;
-    } else {
+
+  if (state.status == 401 || state.status == 403) {
+    if (!cache->ytmToken.empty()) {
+      cache->ytmToken.clear();
+      ClearYtmTokenOnDisk();
+    }
+    const YtmAuthAction decision =
+        DecideYtmAuth(false, true, state.status, cache->ytmAuthDenied, now, cache->ytmAuthRetryAt);
+    if (decision == YtmAuthAction::BeginInteractiveAuth && EnsureYtmToken(session, cache, now)) {
+      state = LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/api/v1/state", nullptr,
+                              cache->ytmToken, LoopbackAuthMode::RawToken, kDesktopRateProbeTimeoutMs);
+    } else if (decision != YtmAuthAction::BeginInteractiveAuth || !SaneToken(cache->ytmToken)) {
+      // Fall through to legacy /query (v1 Companion without auth).
+      const HttpResult legacy =
+          LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/query", nullptr, "",
+                          LoopbackAuthMode::None, kDesktopRateProbeTimeoutMs);
+      DesktopApiSong parsed;
+      if (legacy.status == 200 && ParseYtmLegacyQueryJson(legacy.body, &parsed) && parsed.ok) {
+        offer->ytmReachable = true;
+        offer->ytmLegacy = true;
+        offer->ytmTrackMatch = TracksMatch(hint.title, hint.artist, parsed.title, parsed.artist);
+        offer->ytmCanLike = parsed.canLike;
+        offer->ytmCanDislike = parsed.canDislike;
+        offer->ytmLike = parsed.like;
+        cache->ytmLegacy = true;
+        cache->ytmV1 = false;
+        cache->ytmRetryAt = now + 400;
+        return;
+      }
       cache->ytmRetryAt = now + 2000;
       return;
     }
+  }
+
+  DesktopApiSong parsed;
+  bool usedLegacy = false;
+  if (state.transportOk && state.status == 200 && ParseYtmV1StateJson(state.body, &parsed) &&
+      parsed.ok) {
+    cache->ytmV1 = true;
+    cache->ytmLegacy = false;
   } else {
-    const HttpResult legacy = LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/query", nullptr,
-                                              "", kDesktopRateProbeTimeoutMs);
+    const HttpResult legacy =
+        LoopbackRequest(session, kYtmDesktopApiPort, L"GET", L"/query", nullptr, "",
+                        LoopbackAuthMode::None, kDesktopRateProbeTimeoutMs);
     if (!legacy.transportOk) {
       cache->ytmRetryAt = now + 2000;
       return;
@@ -1720,12 +1937,16 @@ bool ScanWindow(IUIAutomation* automation, HWND hwnd, const WindowIdentity& iden
   }
   UiaRateSelection pick = SelectUiaRateControls(candidates, box, preferBar, trust);
   if (pick.likeIndex < 0 && pick.dislikeIndex < 0) {
-    candidates.clear();
-    found.clear();
-    if (!CollectControls(automation, root.Get(), true, &candidates, &found)) {
-      return false;
+    // YTMDesktop/Electron often exposes only window chrome. A second full-tree walk
+    // with custom AutomationIds rarely helps and burns CPU — skip it.
+    if (kind != DesktopWindowKind::YouTubeMusicDesktop) {
+      candidates.clear();
+      found.clear();
+      if (!CollectControls(automation, root.Get(), true, &candidates, &found)) {
+        return false;
+      }
+      pick = SelectUiaRateControls(candidates, box, preferBar, trust);
     }
-    pick = SelectUiaRateControls(candidates, box, preferBar, trust);
   }
   ApplySelection(pick, offer);
   if (elements) {
@@ -1738,12 +1959,20 @@ bool ScanWindow(IUIAutomation* automation, HWND hwnd, const WindowIdentity& iden
 }
 
 void ProbeUia(IUIAutomation* automation, const SmtcHint& hint, const std::string& aumid,
-              BackendOffer* offer) {
-  if (!automation || !offer || g_stop.load(std::memory_order_acquire)) {
+              ProbeCache* cache, BackendOffer* offer) {
+  if (!automation || !cache || !offer || g_stop.load(std::memory_order_acquire)) {
     return;
   }
   const SourceRoute route = ClassifyPlaybackSource(hint.source, aumid);
   if (!route.allowUiAutomation) {
+    return;
+  }
+  const uint64_t now = GetTickCount64();
+  if (now < cache->uiaRetryAt && cache->uiaCachedValid) {
+    offer->uiaReady = cache->uiaReady;
+    offer->uiaCanLike = cache->uiaCanLike;
+    offer->uiaCanDislike = cache->uiaCanDislike;
+    offer->uiaLike = cache->uiaLike;
     return;
   }
   std::vector<LiveWindow> windows;
@@ -1758,15 +1987,33 @@ void ProbeUia(IUIAutomation* automation, const SmtcHint& hint, const std::string
     }
   }
   if (!best || bestScore <= 0) {
+    cache->uiaCachedValid = true;
+    cache->uiaReady = false;
+    cache->uiaCanLike = false;
+    cache->uiaCanDislike = false;
+    cache->uiaLike = ParsedLike::Unknown;
+    cache->uiaRetryAt = now + 4000;
     return;
   }
   ScanWindow(automation, best->hwnd, best->id, offer, nullptr, nullptr);
+  cache->uiaCachedValid = true;
+  cache->uiaReady = offer->uiaReady;
+  cache->uiaCanLike = offer->uiaCanLike;
+  cache->uiaCanDislike = offer->uiaCanDislike;
+  cache->uiaLike = offer->uiaLike;
+  // Electron shells (YTMDesktop) often expose only chrome buttons — back off hard.
+  const bool thinTree = !offer->uiaReady &&
+                        ClassifyDesktopWindow(best->id.imageBase, best->id.title) ==
+                            DesktopWindowKind::YouTubeMusicDesktop;
+  cache->uiaRetryAt = now + (offer->uiaReady ? 2500 : (thinTree ? 8000 : 4500));
 }
 
 bool SendPear(HINTERNET session, ProbeCache* cache, RateAction action) {
   const wchar_t* path = action == RateAction::Dislike ? L"/api/v1/dislike" : L"/api/v1/like";
-  HttpResult result = LoopbackRequest(session, kPearDesktopApiPort, L"POST", path, nullptr,
-                                      cache->pearToken, kDesktopRateProbeTimeoutMs);
+  HttpResult result =
+      LoopbackRequest(session, kPearDesktopApiPort, L"POST", path, nullptr, cache->pearToken,
+                      cache->pearToken.empty() ? LoopbackAuthMode::None : LoopbackAuthMode::Bearer,
+                      kDesktopRateProbeTimeoutMs);
   if (result.status == 401 || result.status == 403) {
     cache->pearToken.clear();
     return false;
@@ -1774,24 +2021,35 @@ bool SendPear(HINTERNET session, ProbeCache* cache, RateAction action) {
   return HttpOk(result);
 }
 
-bool SendYtm(HINTERNET session, const ProbeCache& cache, RateAction action) {
-  if (cache.ytmV1 && !cache.ytmLegacy) {
+bool SendYtm(HINTERNET session, ProbeCache* cache, RateAction action) {
+  if (!cache) {
+    return false;
+  }
+  if (cache->ytmV1 && !cache->ytmLegacy) {
     const std::string body = YtmV1CommandBody(action);
-    const HttpResult result = LoopbackRequest(session, kYtmDesktopApiPort, L"POST", L"/api/v1/command",
-                                              &body, "", kDesktopRateProbeTimeoutMs);
+    const HttpResult result = LoopbackRequest(
+        session, kYtmDesktopApiPort, L"POST", L"/api/v1/command", &body, cache->ytmToken,
+        cache->ytmToken.empty() ? LoopbackAuthMode::None : LoopbackAuthMode::RawToken,
+        kDesktopRateProbeTimeoutMs);
+    if (result.status == 401 || result.status == 403) {
+      cache->ytmToken.clear();
+      ClearYtmTokenOnDisk();
+      return false;
+    }
     return HttpOk(result);
   }
   const std::string legacyBody =
       std::string("{\"command\":\"") + YtmLegacyCommand(action) + "\"}";
-  HttpResult result = LoopbackRequest(session, kYtmDesktopApiPort, L"POST", L"/query", &legacyBody, "",
-                                      kDesktopRateProbeTimeoutMs);
+  HttpResult result =
+      LoopbackRequest(session, kYtmDesktopApiPort, L"POST", L"/query", &legacyBody, "",
+                      LoopbackAuthMode::None, kDesktopRateProbeTimeoutMs);
   if (HttpOk(result)) {
     return true;
   }
   const wchar_t* path =
       action == RateAction::Dislike ? L"/query/track-thumbs-down" : L"/query/track-thumbs-up";
   result = LoopbackRequest(session, kYtmDesktopApiPort, L"GET", path, nullptr, "",
-                           kDesktopRateProbeTimeoutMs);
+                           LoopbackAuthMode::None, kDesktopRateProbeTimeoutMs);
   return HttpOk(result);
 }
 
@@ -1847,12 +2105,14 @@ bool PerformCommand(const CommandSlot& command, HINTERNET session, IUIAutomation
     if (command.action == RateAction::Dislike && !offer.ytmCanDislike) {
       return false;
     }
-    return SendYtm(session, *cache, command.action);
+    return SendYtm(session, cache, command.action);
   }
   case DesktopRateBackend::UiAutomation: {
     if (!automation || !route.allowUiAutomation) {
       return false;
     }
+    cache->uiaRetryAt = 0;
+    cache->uiaCachedValid = false;
     std::vector<LiveWindow> windows;
     EnumWindows(EnumPlayerWindows, reinterpret_cast<LPARAM>(&windows));
     const LiveWindow* best = nullptr;
@@ -1954,31 +2214,23 @@ DWORD WINAPI DesktopRateThread(LPVOID) {
     if (hasSession && !g_stop.load(std::memory_order_acquire)) {
       const SourceRoute route = ClassifyPlaybackSource(sessionState.source, sessionState.aumid);
       const bool skipDesktop = sessionState.browserCovers && !route.preferDesktopApi;
+      SmtcHint hint;
+      hint.title = sessionState.title;
+      hint.artist = sessionState.artist;
+      hint.source = sessionState.source;
+      hint.playing = sessionState.playing;
+      // One successful desktop API match is enough — skip the rest this cycle.
       if (!skipDesktop && route.allowPear) {
-        SmtcHint hint;
-        hint.title = sessionState.title;
-        hint.artist = sessionState.artist;
-        hint.source = sessionState.source;
-        hint.playing = sessionState.playing;
         ProbePear(session, hint, &cache, &offer);
       }
-      if (!skipDesktop && route.allowYtmDesktop && !g_stop.load(std::memory_order_acquire)) {
-        SmtcHint hint;
-        hint.title = sessionState.title;
-        hint.artist = sessionState.artist;
-        hint.source = sessionState.source;
-        hint.playing = sessionState.playing;
+      if (!skipDesktop && route.allowYtmDesktop && !offer.pearTrackMatch &&
+          !g_stop.load(std::memory_order_acquire)) {
         ProbeYtm(session, hint, &cache, &offer);
       }
       const bool apiMatched = offer.pearTrackMatch || offer.ytmTrackMatch;
       if (!skipDesktop && route.allowUiAutomation && !apiMatched &&
           !g_stop.load(std::memory_order_acquire)) {
-        SmtcHint hint;
-        hint.title = sessionState.title;
-        hint.artist = sessionState.artist;
-        hint.source = sessionState.source;
-        hint.playing = sessionState.playing;
-        ProbeUia(automation.Get(), hint, sessionState.aumid, &offer);
+        ProbeUia(automation.Get(), hint, sessionState.aumid, &cache, &offer);
       }
       PublishOffer(sessionState.serial, offer);
     }
@@ -1992,7 +2244,14 @@ DWORD WINAPI DesktopRateThread(LPVOID) {
     if (g_stop.load(std::memory_order_acquire)) {
       break;
     }
-    const DWORD waitMs = hasSession ? 420 : 800;
+    // Prefer long sleeps: HTTP/UIA probes are the expensive part, not latency to Like.
+    DWORD waitMs = 1500;
+    if (hasSession) {
+      waitMs = sessionState.playing ? 900 : 1200;
+    }
+    if (hasCommand) {
+      waitMs = 200;
+    }
     if (g_event) {
       WaitForSingleObject(g_event, waitMs);
     } else {
@@ -2178,6 +2437,103 @@ bool ParsePearAuthJson(const std::string& json, std::string* tokenOut) {
   *tokenOut = token->s;
   return true;
 }
+
+bool ParseYtmAuthCodeJson(const std::string& json, std::string* codeOut) {
+  if (!codeOut) {
+    return false;
+  }
+  codeOut->clear();
+  JVal root;
+  if (!ParseJson(json, &root) || root.type != JVal::Type::Object) {
+    return false;
+  }
+  const JVal* code = FindField(root, "code");
+  if (!code || code->type != JVal::Type::String || code->s.empty() || code->s.size() > 8) {
+    return false;
+  }
+  for (unsigned char ch : code->s) {
+    if (ch < '0' || ch > '9') {
+      return false;
+    }
+  }
+  *codeOut = code->s;
+  return true;
+}
+
+bool ParseYtmAuthTokenJson(const std::string& json, std::string* tokenOut) {
+  if (!tokenOut) {
+    return false;
+  }
+  tokenOut->clear();
+  JVal root;
+  if (!ParseJson(json, &root) || root.type != JVal::Type::Object) {
+    return false;
+  }
+  const JVal* token = FindField(root, "token");
+  if (!token || token->type != JVal::Type::String || token->s.size() < 8 || token->s.size() > 4096) {
+    return false;
+  }
+  *tokenOut = token->s;
+  return true;
+}
+
+bool ParseYtmTokenStore(const std::string& text, std::string* tokenOut) {
+  if (!tokenOut) {
+    return false;
+  }
+  tokenOut->clear();
+  size_t begin = 0;
+  while (begin < text.size() &&
+         (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\r' || text[begin] == '\n')) {
+    ++begin;
+  }
+  size_t end = text.size();
+  while (end > begin &&
+         (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\r' ||
+          text[end - 1] == '\n')) {
+    --end;
+  }
+  if (end <= begin) {
+    return false;
+  }
+  *tokenOut = text.substr(begin, end - begin);
+  return true;
+}
+
+std::string FormatYtmTokenStore(const std::string& token) { return token + "\n"; }
+
+std::string YtmAuthRequestCodeBody(const char* appId, const char* appName, const char* appVersion) {
+  if (!appId || !appName || !appVersion) {
+    return {};
+  }
+  return std::string("{\"appId\":\"") + appId + "\",\"appName\":\"" + appName +
+         "\",\"appVersion\":\"" + appVersion + "\"}";
+}
+
+std::string YtmAuthRequestTokenBody(const char* appId, const char* code) {
+  if (!appId || !code) {
+    return {};
+  }
+  return std::string("{\"appId\":\"") + appId + "\",\"code\":\"" + code + "\"}";
+}
+
+YtmAuthAction DecideYtmAuth(bool haveToken, bool transportOk, int httpStatus, bool authDenied,
+                            uint64_t nowMs, uint64_t authRetryAtMs) {
+  if (!transportOk) {
+    return YtmAuthAction::Unavailable;
+  }
+  if (haveToken && httpStatus != 401 && httpStatus != 403) {
+    return YtmAuthAction::ProbeWithToken;
+  }
+  if (authDenied || nowMs < authRetryAtMs) {
+    return YtmAuthAction::Backoff;
+  }
+  return YtmAuthAction::BeginInteractiveAuth;
+}
+
+const char* YtmCompanionAppId() { return kYtmCompanionAppIdValue; }
+
+const char* YtmCompanionAppName() { return kYtmCompanionAppNameValue; }
 
 bool ParseYtmLegacyQueryJson(const std::string& json, DesktopApiSong* out) {
   if (!out) {
@@ -2785,6 +3141,16 @@ bool DesktopRateSelfTest() {
       "YouTube",
       "C:\\Program Files\\YouTube Music Desktop App\\YouTube Music Desktop App.exe");
   RATE_CHECK(ytmExe.family == PlayerFamily::YouTubeMusicDesktop);
+  const SourceRoute ytmV2Exe = ClassifyPlaybackSource(
+      "YouTube",
+      "C:\\Users\\w\\AppData\\Local\\youtube_music_desktop_app\\app-2.1.0\\"
+      "youtube-music-desktop-app.exe");
+  RATE_CHECK(ytmV2Exe.family == PlayerFamily::YouTubeMusicDesktop);
+  RATE_CHECK(ClassifyDesktopWindow("youtube-music-desktop-app.exe",
+                                   "Night Drive - Ada Lore | YTMDesktop") ==
+             DesktopWindowKind::YouTubeMusicDesktop);
+  RATE_CHECK(ClassifyDesktopWindow("ytmdesktop.exe", "YTMDesktop") ==
+             DesktopWindowKind::YouTubeMusicDesktop);
 
   const SourceRoute ambiguous = ClassifyPlaybackSource("YouTube", "");
   RATE_CHECK(ambiguous.family == PlayerFamily::YouTubeAmbiguous);
@@ -2898,6 +3264,35 @@ bool DesktopRateSelfTest() {
   RATE_CHECK(std::string(YtmLegacyCommand(RateAction::Dislike)) == "track-thumbs-down");
   RATE_CHECK(YtmV1CommandBody(RateAction::Like) == "{\"command\":\"toggleLike\"}");
   RATE_CHECK(YtmV1CommandBody(RateAction::Dislike) == "{\"command\":\"toggleDislike\"}");
+  RATE_CHECK(std::string(YtmCompanionAppId()) == "dynamicislandlux");
+  RATE_CHECK(std::string(YtmCompanionAppName()) == "Dynamic Island Lux");
+  {
+    const std::string expectedAuth =
+        std::string("{\"appId\":\"dynamicislandlux\",\"appName\":\"Dynamic Island Lux\","
+                    "\"appVersion\":\"") +
+        LUX_APP_VERSION_STR + "\"}";
+    RATE_CHECK(YtmAuthRequestCodeBody("dynamicislandlux", "Dynamic Island Lux",
+                                      LUX_APP_VERSION_STR) == expectedAuth);
+  }
+  RATE_CHECK(YtmAuthRequestTokenBody("dynamicislandlux", "1337") ==
+             "{\"appId\":\"dynamicislandlux\",\"code\":\"1337\"}");
+  std::string ytmCode;
+  RATE_CHECK(ParseYtmAuthCodeJson("{\"code\":\"1337\"}", &ytmCode) && ytmCode == "1337");
+  RATE_CHECK(!ParseYtmAuthCodeJson("{\"code\":\"ab\"}", &ytmCode));
+  RATE_CHECK(!ParseYtmAuthCodeJson("{\"code\":\"\"}", &ytmCode));
+  std::string ytmTok;
+  RATE_CHECK(ParseYtmAuthTokenJson(
+                 "{\"token\":\"ea845423977fcbe9535547db2c09134b5087c352\"}", &ytmTok) &&
+             ytmTok == "ea845423977fcbe9535547db2c09134b5087c352");
+  RATE_CHECK(!ParseYtmAuthTokenJson("{\"token\":\"short\"}", &ytmTok));
+  RATE_CHECK(ParseYtmTokenStore("  abcdefghijklmnop\r\n", &ytmTok) && ytmTok == "abcdefghijklmnop");
+  RATE_CHECK(FormatYtmTokenStore("abcdefghijklmnop") == "abcdefghijklmnop\n");
+  RATE_CHECK(DecideYtmAuth(true, true, 200, false, 1000, 0) == YtmAuthAction::ProbeWithToken);
+  RATE_CHECK(DecideYtmAuth(false, false, 0, false, 1000, 0) == YtmAuthAction::Unavailable);
+  RATE_CHECK(DecideYtmAuth(false, true, 401, false, 1000, 0) ==
+             YtmAuthAction::BeginInteractiveAuth);
+  RATE_CHECK(DecideYtmAuth(false, true, 401, true, 1000, 0) == YtmAuthAction::Backoff);
+  RATE_CHECK(DecideYtmAuth(false, true, 401, false, 1000, 5000) == YtmAuthAction::Backoff);
   RATE_CHECK(OptimisticRate(BridgeLikeState::None, RateAction::Like) == BridgeLikeState::Liked);
   RATE_CHECK(OptimisticRate(BridgeLikeState::Liked, RateAction::Like) == BridgeLikeState::None);
   RATE_CHECK(OptimisticRate(BridgeLikeState::Liked, RateAction::Dislike) == BridgeLikeState::Disliked);

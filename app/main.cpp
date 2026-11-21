@@ -792,12 +792,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
                fromFlag ? L"flag" : L"schema", appearance.c_str(), themes.c_str(),
                requested.c_str());
       if (!LuxOverlay_StartWorkers(g_app)) {
-        LUX_LOGE(L"smoke-test: WhTool_ModInit failed");
+        LUX_LOGE(L"smoke-test: IslandRuntimeStart failed");
         initOk = false;
       }
     }
 
-    LuxOverlay_Uninit(g_app);  // WhTool_ModUninit → wait threads → destroy scaffold
+    LuxOverlay_Uninit(g_app);  // IslandRuntimeStop → wait threads → destroy scaffold
     const bool workersStuck = LuxWorkersStuckOnExit();
     if (workersStuck) {
       LUX_LOGE(L"smoke-test: worker(s) stuck on Uninit (see worker … did not stop)");

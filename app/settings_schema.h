@@ -4,7 +4,7 @@
 
 #ifndef LUX_APP_VERSION_STR
 // Fallback when not compiling via CMake (CMake overrides with project VERSION).
-#define LUX_APP_VERSION_STR "1.0.8"
+#define LUX_APP_VERSION_STR "1.0.10"
 #endif
 #define LUX_WIDEN_HELPER(x) L##x
 #define LUX_WIDEN(x) LUX_WIDEN_HELPER(x)
@@ -65,7 +65,6 @@ inline constexpr SettingEnumOption kAppearanceBackdropEnums[] = {
 inline constexpr SettingEnumOption kAuraStyleEnums[] = {
     {L"off", L"Off"},
     {L"glow", L"Glow"},
-    {L"equalizer", L"Equalizer"},
     {L"rays", L"Rays"},
     {L"pulse", L"Rings"},
     {L"orbit", L"Orbit"},
@@ -98,13 +97,6 @@ inline constexpr SettingEnumOption kPositionEnums[] = {
     {L"bottom-center", L"Bottom center"},
     {L"bottom-left", L"Bottom left"},
     {L"bottom-right", L"Bottom right"},
-};
-
-inline constexpr SettingEnumOption kSpectrumStyleEnums[] = {
-    {L"bars", L"Bars"},
-    {L"orb", L"Orb"},
-    {L"plasma", L"Plasma"},
-    {L"led", L"LED"},
 };
 
 inline constexpr SettingEnumOption kShapeStyleEnums[] = {
@@ -221,7 +213,7 @@ inline constexpr SettingEnumOption kDateFormatEnums[] = {
 };
 
 // Single source of truth for defaults. LoadSettings must read via SettingsStore
-// so every Wh_Get* key used by the island has a schema row (missing → fallback 0).
+// so every app setting key used by the island has a schema row (missing → fallback 0).
 inline constexpr SettingDef kSettingSchema[] = {
     {L"Appearance.Position", SettingType::Enum, SettingGroup::Appearance, L"top-center", 0, 0,
      kPositionEnums, sizeof(kPositionEnums) / sizeof(kPositionEnums[0])},
@@ -238,8 +230,6 @@ inline constexpr SettingDef kSettingSchema[] = {
      nullptr, 0},
     {L"Appearance.TargetMonitor", SettingType::Enum, SettingGroup::Appearance, L"primary", 0, 0,
      kTargetMonitorEnums, sizeof(kTargetMonitorEnums) / sizeof(kTargetMonitorEnums[0])},
-    {L"Appearance.SpectrumStyle", SettingType::Enum, SettingGroup::Appearance, L"bars", 0, 0,
-     kSpectrumStyleEnums, sizeof(kSpectrumStyleEnums) / sizeof(kSpectrumStyleEnums[0])},
     {L"Appearance.ProgressStyle", SettingType::Enum, SettingGroup::Appearance, L"slim", 0, 0,
      kProgressStyleEnums, sizeof(kProgressStyleEnums) / sizeof(kProgressStyleEnums[0])},
     // Prefer Themes when Appearance is auto so one Themes row drives blur/acrylic/none.
@@ -368,7 +358,6 @@ inline constexpr SettingDef kSettingSchema[] = {
      kFirstDayOfWeekEnums, sizeof(kFirstDayOfWeekEnums) / sizeof(kFirstDayOfWeekEnums[0])},
     {L"Modules.QuickLookup", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.Lyrics", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1, nullptr, 0},
-    {L"Modules.LyricsVisualizer", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.KaraokeLyrics", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.KaraokeLetterGlow", SettingType::Bool, SettingGroup::Modules, L"1", 0, 1, nullptr, 0},
     {L"Modules.LyricsNeighborLinesVisible", SettingType::Bool, SettingGroup::Modules, L"0", 0, 1,

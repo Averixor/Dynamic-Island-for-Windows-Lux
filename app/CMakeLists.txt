@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DynamicIslandLux VERSION 1.0.8 LANGUAGES CXX)
+project(DynamicIslandLux VERSION 1.0.10 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,8 +35,7 @@ add_executable(DynamicIslandLux WIN32
   lux_overlay.cpp
   media_like_bridge.cpp
   media_desktop_rate.cpp
-  # Island implementation TU (Windhawk archive + standalone body).
-  "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"
+  island.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/resources.gen.rc"
 )
 
@@ -55,7 +54,6 @@ target_compile_definitions(DynamicIslandLux PRIVATE
   LUX_APP_VERSION_MINOR=${PROJECT_VERSION_MINOR}
   LUX_APP_VERSION_PATCH=${PROJECT_VERSION_PATCH}
   "LUX_APP_VERSION_STR=\"${PROJECT_VERSION}\""
-  LUX_STANDALONE=1
 )
 
 if(MSVC)
@@ -72,7 +70,7 @@ if(MSVC)
   # Legacy overlay TUs: keep /W3 until warning cleanup is complete.
   set_source_files_properties(
     lux_overlay.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../Dynamic Island for Windows Lux.wh.cpp"
+    island.cpp
     PROPERTIES COMPILE_OPTIONS "/W3"
   )
   set_property(TARGET DynamicIslandLux PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -117,7 +115,7 @@ target_link_libraries(DynamicIslandLux PRIVATE
 )
 
 set_target_properties(DynamicIslandLux PROPERTIES
-  OUTPUT_NAME "DynamicIslandLux"
+  OUTPUT_NAME "Dynamic Island Lux"
   WIN32_EXECUTABLE TRUE
 )
 

@@ -5,7 +5,7 @@ cd /d "%~dp0\.."
 call "%~dp0_version.cmd"
 if errorlevel 1 exit /b 1
 
-set EXE=build\Release\DynamicIslandLux.exe
+set EXE=build\Release\Dynamic Island Lux.exe
 set ISS=installer\DynamicIslandLux.iss
 set OUT=dist\v%VER%\DynamicIslandLux-Setup-%VER%.exe
 

@@ -11,7 +11,6 @@
   ],
   "dictionaries": ["lux-ui"],
   "words": [
-    "Windhawk",
     "Nord",
     "winrt",
     "oled",
@@ -29,9 +28,6 @@
     "жовт",
     "Увімк",
     "Вимк",
-    "Averixor",
-    "devcode90",
-    "Himanshu",
     "wttr",
     "lrclib",
     "оверлей",
@@ -74,8 +70,6 @@
     "трею",
     "воркери",
     "воркер",
-    "Інжект",
-    "інжект",
     "dxgi",
     "dcomp",
     "dxva",
@@ -109,7 +103,14 @@
     "плеєрів",
     "Dislike",
     "dpis",
-    "cdit"
+    "cdit",
+    "ytmdesktop",
+    "YTMDesktop",
+    "Companion",
+    "Deezer",
+    "Contoso",
+    "pshhgkwm",
+    "gvanyjgm"
   ],
   "ignorePaths": [
     "LICENSE",

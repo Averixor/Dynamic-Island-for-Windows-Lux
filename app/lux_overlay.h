@@ -2,10 +2,10 @@
 
 #include "main.h"
 
-// Overlay bridge between WinMain and the island body (.wh.cpp).
+// Overlay bridge between WinMain and the island implementation.
 // - Smoke / --no-workers: local D2D scaffold HWND (frame criterion).
-// - Normal run: WhTool_ModInit owns the real island HWND + workers.
-// Create COM/D2D only here or inside WhTool — never in static constructors.
+// - Normal run: IslandRuntimeStart owns the real island HWND + workers.
+// Create COM/D2D only here or inside the app runtime — never in static constructors.
 
 bool LuxOverlay_Init(AppState& app);
 void LuxOverlay_Uninit(AppState& app);
@@ -30,7 +30,7 @@ bool LuxOverlay_PumpFrame(AppState& app);
 bool LuxOverlay_StartWorkers(AppState& app);
 void LuxOverlay_StopWorkers(AppState& app);
 
-// Legacy body entry (from .wh.cpp under LUX_STANDALONE).
-BOOL WhTool_ModInit();
-void WhTool_ModSettingsChanged();
-void WhTool_ModUninit();
+// Island runtime entry points.
+BOOL IslandRuntimeStart();
+void IslandRuntimeSettingsChanged();
+void IslandRuntimeStop();

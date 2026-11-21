@@ -7,7 +7,7 @@ dictionaries/
 **/*.pdb
 **/*.ico
 **/*.png
-*.wh.cpp
+*island.cpp
 *.cpp
 *.h
 *.hpp

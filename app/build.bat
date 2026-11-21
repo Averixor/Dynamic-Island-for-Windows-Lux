@@ -74,15 +74,15 @@ if not defined HAS_MSVC_CRT (
 rem Ask a running copy to quit (WM_CLOSE on the host window) before taskkill.
 powershell -NoProfile -Command "Add-Type -MemberDefinition '[DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string w); [DllImport(\"user32.dll\")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);' -Name LuxClose -Namespace DynIsland -ErrorAction SilentlyContinue; $h = [DynIsland.LuxClose]::FindWindow('DynamicIslandLux.Host', $null); if ($h -ne [IntPtr]::Zero) { [DynIsland.LuxClose]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }"
 ping -n 3 127.0.0.1 >nul
-tasklist /FI "IMAGENAME eq DynamicIslandLux.exe" | find /I "DynamicIslandLux.exe" >nul
+tasklist /FI "IMAGENAME eq Dynamic Island Lux.exe" | find /I "Dynamic Island Lux.exe" >nul
 if not errorlevel 1 (
-  taskkill /IM DynamicIslandLux.exe >nul 2>&1
+  taskkill /IM "Dynamic Island Lux.exe" >nul 2>&1
   ping -n 2 127.0.0.1 >nul
 )
-tasklist /FI "IMAGENAME eq DynamicIslandLux.exe" | find /I "DynamicIslandLux.exe" >nul
+tasklist /FI "IMAGENAME eq Dynamic Island Lux.exe" | find /I "Dynamic Island Lux.exe" >nul
 if not errorlevel 1 (
-  echo WARNING: DynamicIslandLux.exe did not exit; forcing taskkill /F
-  taskkill /F /IM DynamicIslandLux.exe >nul 2>&1
+  echo WARNING: Dynamic Island Lux.exe did not exit; forcing taskkill /F
+  taskkill /F /IM "Dynamic Island Lux.exe" >nul 2>&1
 )
 rem ping instead of timeout: timeout prints "Input redirection is not supported" under redirected stdin.
 ping -n 2 127.0.0.1 >nul
@@ -114,7 +114,7 @@ if errorlevel 1 exit /b 1
 "%CMAKE%" --build build --config Release
 if errorlevel 1 exit /b 1
 
-set EXE=build\Release\DynamicIslandLux.exe
+set EXE=build\Release\Dynamic Island Lux.exe
 if not exist "%EXE%" (
   echo ERROR: %EXE% missing after build
   exit /b 1

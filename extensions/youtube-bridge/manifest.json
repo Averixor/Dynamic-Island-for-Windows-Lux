@@ -27,7 +27,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "dynamic-island-lux-bridge@averixor.github.io",
+      "id": "dynamic-island-lux-bridge@local.invalid",
       "strict_min_version": "115.0"
     }
   }

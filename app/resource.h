@@ -1,7 +1,7 @@
 #pragma once
 
 // Host-process resource / command IDs (tray + message-only HWND).
-// Island render thread uses its own WM_APP + 0x442… range in the .wh.cpp body —
+// Island render thread uses its own WM_APP + 0x442… range in the island.cpp body body —
 // keep these below WM_APP + 0x100 to avoid collisions.
 
 #define IDI_APP 101

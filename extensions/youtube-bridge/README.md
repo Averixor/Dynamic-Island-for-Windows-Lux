@@ -37,7 +37,7 @@ Firefox 115 and newer run this folder's Manifest V3 service worker (`background.
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on…**.
 3. Select `manifest.json` inside this folder.
-4. Temporary add-ons are removed when Firefox exits. Load it again next launch, or package it for a permanent install with the id `dynamic-island-lux-bridge@averixor.github.io`.
+4. Temporary add-ons are removed when Firefox exits. Load it again next launch, or package it for a permanent install with the id `dynamic-island-lux-bridge@local.invalid`.
 
 ## Change the port
 
@@ -52,5 +52,5 @@ Firefox 115 and newer run this folder's Manifest V3 service worker (`background.
 - **Like state is wrong or clicks do nothing.** Reload the YouTube page. YouTube and YouTube Music are single-page apps; the content script watches navigation, but a hard refresh clears a stuck player DOM.
 - **Several YouTube tabs are open.** The island follows the tab that is playing and whose title matches the current system media session.
 - **PWA does nothing.** Install the unpacked extension in the same profile that owns the YouTube app window, then restart the app window.
-- **Firewall prompt.** Allow `DynamicIslandLux.exe` to listen on localhost only. The bridge never binds `0.0.0.0`.
+- **Firewall prompt.** Allow `Dynamic Island Lux.exe` to listen on localhost only. The bridge never binds `0.0.0.0`.
 - **After a Dynamic Island restart.** The extension backs off and reconnects within a few seconds. Leave the YouTube tab open.

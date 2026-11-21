@@ -172,9 +172,27 @@ bool ParsePearLikeStateJson(const std::string& json, ParsedLike* out);
 bool ParsePearAuthJson(const std::string& json, std::string* tokenOut);
 bool ParseYtmLegacyQueryJson(const std::string& json, DesktopApiSong* out);
 bool ParseYtmV1StateJson(const std::string& json, DesktopApiSong* out);
+bool ParseYtmAuthCodeJson(const std::string& json, std::string* codeOut);
+bool ParseYtmAuthTokenJson(const std::string& json, std::string* tokenOut);
+bool ParseYtmTokenStore(const std::string& text, std::string* tokenOut);
+std::string FormatYtmTokenStore(const std::string& token);
+std::string YtmAuthRequestCodeBody(const char* appId, const char* appName, const char* appVersion);
+std::string YtmAuthRequestTokenBody(const char* appId, const char* code);
+
+enum class YtmAuthAction {
+  ProbeWithToken,
+  BeginInteractiveAuth,
+  Backoff,
+  Unavailable,
+};
+
+YtmAuthAction DecideYtmAuth(bool haveToken, bool transportOk, int httpStatus, bool authDenied,
+                            uint64_t nowMs, uint64_t authRetryAtMs);
 
 const char* YtmLegacyCommand(RateAction action);
 std::string YtmV1CommandBody(RateAction action);
+const char* YtmCompanionAppId();
+const char* YtmCompanionAppName();
 
 DesktopWindowKind ClassifyDesktopWindow(const std::string& imageBase, const std::string& title);
 
