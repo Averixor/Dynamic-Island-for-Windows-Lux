@@ -22,12 +22,12 @@ jobs:
       - name: JSON self-test
         shell: pwsh
         run: |
-          & ".\build\Release\Dynamic Island Lux.exe" --test-json
+          & './build/Release/Dynamic Island Lux.exe' --test-json
 
       - name: Smoke without workers
         shell: pwsh
         run: |
-          & ".\build\Release\Dynamic Island Lux.exe" --smoke-test --no-workers
+          & './build/Release/Dynamic Island Lux.exe' --smoke-test --no-workers
 
       - name: Validate YouTube bridge extension
         shell: pwsh
