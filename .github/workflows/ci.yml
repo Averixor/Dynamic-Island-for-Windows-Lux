@@ -20,10 +20,12 @@ jobs:
         run: cmake --build build --config Release
 
       - name: JSON self-test
-        run: .\build\Release\DynamicIslandLux.exe --test-json
+        shell: pwsh
+        run: & ".\build\Release\Dynamic Island Lux.exe" --test-json
 
       - name: Smoke without workers
-        run: .\build\Release\DynamicIslandLux.exe --smoke-test --no-workers
+        shell: pwsh
+        run: & ".\build\Release\Dynamic Island Lux.exe" --smoke-test --no-workers
 
       - name: Validate YouTube bridge extension
         shell: pwsh
